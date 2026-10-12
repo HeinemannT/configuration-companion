@@ -1,6 +1,6 @@
 {
   "name": "configuration-companion",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
@@ -16,7 +16,10 @@
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "qa:devtools-package": "npm run build && node scripts/prepare-devtools-package.mjs",
-    "verify": "npm audit --audit-level=high && npm run notices:check && npm run typecheck && npm run lint && npm test && npm run build"
+    "verify": "npm audit --audit-level=high && npm run notices:check && npm run typecheck && npm run lint && npm test && npm run build",
+    "prebuild": "node scripts/generate-pbac-palette.mjs",
+    "pbac:palette": "node scripts/generate-pbac-palette.mjs",
+    "pbac:palette:check": "node scripts/generate-pbac-palette.mjs --check"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -35,6 +38,7 @@
     "@codemirror/lang-css": "^6.3.1",
     "@codemirror/lang-html": "^6.4.11",
     "@codemirror/lang-javascript": "^6.2.5",
+    "@codemirror/lang-json": "^6.0.2",
     "@codemirror/language": "^6.12.2",
     "@codemirror/lint": "^6.9.4",
     "@codemirror/merge": "^6.12.1",
@@ -42,9 +46,7 @@
     "@codemirror/state": "^6.5.4",
     "@codemirror/view": "^6.39.15",
     "@lezer/highlight": "^1.2.3",
+    "@lezer/json": "^1.0.3",
     "js-beautify": "^1.15.4"
-  },
-  "overrides": {
-    "brace-expansion": "2.1.4"
   }
 }

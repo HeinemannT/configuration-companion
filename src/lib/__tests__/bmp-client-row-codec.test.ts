@@ -16,14 +16,16 @@ import { EcQueryService } from '../ec-query-service';
 import type { EcResult } from '../bmp-client';
 
 describe('buildAccessSubjectsEc (golden)', () => {
-  it('emits the exact user+role EC as before the codec migration', () => {
+  it('includes nested users and roles, excludes delegation nodes and assembles each row once', () => {
     expect(buildAccessSubjectsEc()).toBe([
       '_out := ""',
-      'root.user.children().forEach(_u:',
-      '     _out := _out + "user" + "|||" + _u.rid + "|||" + _u.id.whenMissing("") + "|||" + _u.name.whenMissing("") + "\\n"',
+      'root.user.descendants.filter(className = "User").forEach(_u:',
+      '     _row := "user" + "|||" + _u.rid + "|||" + _u.id.whenMissing("") + "|||" + _u.name.whenMissing("") + "\\n"',
+      '     _out := _out + _row',
       ')',
-      'root.role.children().forEach(_r:',
-      '     _out := _out + "role" + "|||" + _r.rid + "|||" + _r.id.whenMissing("") + "|||" + _r.name.whenMissing("") + "\\n"',
+      'root.role.descendants.filter(className = "Role").forEach(_r:',
+      '     _row := "role" + "|||" + _r.rid + "|||" + _r.id.whenMissing("") + "|||" + _r.name.whenMissing("") + "\\n"',
+      '     _out := _out + _row',
       ')',
       '_out',
     ].join('\n'));
@@ -31,6 +33,12 @@ describe('buildAccessSubjectsEc (golden)', () => {
 });
 
 describe('parseAccessSubjectsLog (golden)', () => {
+  it('reports failed or incomplete directory queries instead of hiding them as an empty picker', async () => {
+    for (const result of [{ ok: false, error: 'Denied' }, { ok: true, hasWarning: true, log: 'Incomplete' }]) {
+      const service = new EcQueryService(async () => result as EcResult, async rid => `lookup(${rid})`, []);
+      await expect(service.listAccessSubjects()).rejects.toThrow(/Denied|Incomplete/);
+    }
+  });
   it('parses users and roles, sorted by name', () => {
     const log = [
       'user|||111|||u1|||Zed User',

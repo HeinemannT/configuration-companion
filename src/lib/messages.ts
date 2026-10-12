@@ -2,6 +2,8 @@
 // sub-type by domain; each group is a standalone type for narrowing in handlers.
 // Re-exported from './types' for back-compat. Imports domain interfaces from './types'
 // (type-only) — messages depend on types, never the reverse.
+import type { AccessRequest } from './access-workspace/model';
+import type { AccessDestination } from './access-workspace/entry';
 import type {
   AccessSubject,
   AccessTraceAction,
@@ -150,7 +152,7 @@ export type ServerLookupMessage =
   | { type: 'SERVER_LOOKUP_BATCH_RESULT'; objects: Record<string, BmpObject | null>; error?: string }
   | { type: 'LINKED_LOOKUP'; rid: string; objectType: string }
   | { type: 'LINKED_LOOKUP_RESULT'; rid: string; key: string; label: string; linkedId?: string; linkedName?: string; linkedRid?: string; error?: string }
-  | { type: 'HOVER_LOOKUP'; rid: string }
+  | { type: 'HOVER_LOOKUP'; rid: string; environment?: string }
   | { type: 'HOVER_LOOKUP_RESULT'; rid: string; name?: string; objectType?: string; businessId?: string; templateBusinessId?: string; codePreview?: string }
   | { type: 'HOVER_RESOLVE'; ref: string }
   | { type: 'HOVER_RESOLVE_RESULT'; ref: string; name?: string; objectType?: string; rid?: string; businessId?: string; codePreview?: string }
@@ -573,6 +575,10 @@ export type AiMessage =
   | { type: 'AI_GET_EDITOR_CONTEXT' };
 
 export type InspectorMessage =
+  | { type: 'OPEN_ACCESS_WORKSPACE'; environment?: string; destination?: AccessDestination }
+  | { type: 'ACCESS_WORKSPACE_NAVIGATE'; tabId: number; environment: string; destination: AccessDestination }
+  | { type: 'ACCESS_WORKSPACE_REQUEST'; environment: string; request: AccessRequest }
+  | { type: 'ACCESS_WORKSPACE_RESULT'; ok: boolean; data?: unknown; error?: string }
   | PageMessage | InspectMessage | CacheMessage | ServerLookupMessage
   | ConnectionMessage | ProfileMessage | EcMessage | StudioMessage | FrameOverlayMessage | EnrichMessage
   | DetectionMessage | ActivityMessage

@@ -15,6 +15,7 @@ Regenerate it with `npm run notices`; CI verifies it with `npm run notices:check
 | @codemirror/lang-css | 6.3.1 | MIT |
 | @codemirror/lang-html | 6.4.11 | MIT |
 | @codemirror/lang-javascript | 6.2.5 | MIT |
+| @codemirror/lang-json | 6.0.2 | MIT |
 | @codemirror/language | 6.12.2 | MIT |
 | @codemirror/lint | 6.9.4 | MIT |
 | @codemirror/merge | 6.12.1 | MIT |
@@ -27,6 +28,7 @@ Regenerate it with `npm run notices`; CI verifies it with `npm run notices:check
 | @lezer/highlight | 1.2.3 | MIT |
 | @lezer/html | 1.3.13 | MIT |
 | @lezer/javascript | 1.5.4 | MIT |
+| @lezer/json | 1.0.3 | MIT |
 | @lezer/lr | 1.4.8 | MIT |
 | @marijn/find-cluster-break | 1.0.2 | MIT |
 | @one-ini/wasm | 0.1.1 | MIT |
@@ -37,7 +39,7 @@ Regenerate it with `npm run notices`; CI verifies it with `npm run notices:check
 | ansi-styles | 4.3.0 | MIT |
 | ansi-styles | 6.2.3 | MIT |
 | balanced-match | 1.0.2 | MIT |
-| brace-expansion | 2.1.4 | MIT |
+| brace-expansion | 2.1.7 | MIT |
 | color-convert | 2.0.1 | MIT |
 | color-name | 1.1.4 | MIT |
 | commander | 10.0.1 | MIT |
@@ -80,7 +82,7 @@ Regenerate it with `npm run notices`; CI verifies it with `npm run notices:check
 
 ## License and notice texts
 
-### @codemirror/autocomplete@6.20.0 (LICENSE), @codemirror/commands@6.10.2 (LICENSE), @codemirror/lang-css@6.3.1 (LICENSE), @codemirror/lang-html@6.4.11 (LICENSE), @codemirror/lang-javascript@6.2.5 (LICENSE), @codemirror/language@6.12.2 (LICENSE), @codemirror/lint@6.9.4 (LICENSE), @codemirror/search@6.6.0 (LICENSE), @codemirror/state@6.5.4 (LICENSE), @codemirror/view@6.39.15 (LICENSE)
+### @codemirror/autocomplete@6.20.0 (LICENSE), @codemirror/commands@6.10.2 (LICENSE), @codemirror/lang-css@6.3.1 (LICENSE), @codemirror/lang-html@6.4.11 (LICENSE), @codemirror/lang-javascript@6.2.5 (LICENSE), @codemirror/lang-json@6.0.2 (LICENSE), @codemirror/language@6.12.2 (LICENSE), @codemirror/lint@6.9.4 (LICENSE), @codemirror/search@6.6.0 (LICENSE), @codemirror/state@6.5.4 (LICENSE), @codemirror/view@6.39.15 (LICENSE)
 
 ```text
 MIT License
@@ -157,6 +159,32 @@ ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 MIT License
 
 Copyright (C) 2018 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
+### @lezer/json@1.0.3 (LICENSE)
+
+```text
+MIT License
+
+Copyright (C) 2020 by Marijn Haverbeke <marijn@haverbeke.berlin>, Arun Srinivasan <rulfzid@gmail.com>, and others
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -540,7 +568,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### brace-expansion@2.1.4 (LICENSE)
+### brace-expansion@2.1.7 (LICENSE)
 
 ```text
 MIT License

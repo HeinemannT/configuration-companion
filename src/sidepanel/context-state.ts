@@ -1,6 +1,6 @@
 import type { InspectorMessage, ObjectReference } from '../lib/types';
 
-export type PanelObjectContext = ObjectReference;
+export type PanelObjectContext = ObjectReference & { environment?: string };
 
 /** Apply the service worker's canonical context message. Sparse updates for the
  *  same RID retain identity already learned by the detail pane; a different RID
@@ -16,5 +16,6 @@ export function contextFromData(
     name: msg.name ?? same?.name,
     type: msg.objectType ?? same?.type,
     businessId: msg.businessId ?? same?.businessId,
+    ...(same?.environment ? { environment: same.environment } : {}),
   };
 }

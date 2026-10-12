@@ -75,4 +75,12 @@ export default tseslint.config(
       'no-useless-assignment': 'off',
     },
   },
+  {
+    files: ['src/access/**/*.js'],
+    extends: [tseslint.configs.disableTypeChecked],
+    languageOptions: {
+      globals: Object.fromEntries(['window', 'document', 'localStorage', 'innerWidth', 'innerHeight', 'requestAnimationFrame', 'cancelAnimationFrame', 'setTimeout', 'clearTimeout', 'queueMicrotask', 'MutationObserver', 'ResizeObserver', 'Event', 'KeyboardEvent', 'navigator', 'URL', 'Blob', 'getComputedStyle', 'getSelection', 'structuredClone', 'CSS', 'Node', 'HTMLElement'].map(name => [name, 'readonly'])),
+    },
+    rules: { 'no-unused-vars': 'off', '@typescript-eslint/no-unused-vars': 'off', '@typescript-eslint/no-unused-expressions': 'off', 'no-useless-assignment': 'off', 'preserve-caught-error': 'off' },
+  },
 );

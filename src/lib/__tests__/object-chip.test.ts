@@ -72,6 +72,56 @@ describe('objectChip', () => {
     expect(host?.textContent).toContain('results_template');
     expect(host?.textContent).toContain('t.results');
   });
+
+  it('captures the original connection for Access, even when the caller reuses its options', async () => {
+    const options = { environment: 'original@https://bmp.example/' };
+    const chip = objectChip({ rid: '9007199254740993', type: 'Role' }, options);
+    options.environment = 'different@https://bmp.example/';
+    document.body.append(chip);
+    chip.dispatchEvent(new Event('focusin'));
+    await vi.advanceTimersByTimeAsync(0);
+    document.querySelector<HTMLButtonElement>('[aria-label="Open role in Access"]')!.click();
+    expect(sendMessage).toHaveBeenCalledWith({ type: 'OPEN_ACCESS_WORKSPACE',
+      environment: 'original@https://bmp.example/', destination: { kind: 'role', rid: '9007199254740993' } });
+    expect(sendMessage).toHaveBeenCalledWith({ type: 'HOVER_LOOKUP', rid: '9007199254740993', environment: 'original@https://bmp.example/' });
+  });
+
+  it('does not offer contextual Access when the identity has no connection provenance', async () => {
+    const chip = objectChip({ rid: '9007199254740993', type: 'Role' });
+    document.body.append(chip);
+    chip.dispatchEvent(new Event('focusin'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(document.querySelector('.object-preview-host--visible')).not.toBeNull();
+    expect(document.querySelector('[aria-label="Open role in Access"]')).toBeNull();
+  });
+
+  it('does not reuse another connection’s metadata for the same RID', async () => {
+    sendMessage.mockResolvedValueOnce({ type: 'HOVER_LOOKUP_RESULT', name: 'Original role', objectType: 'Role' })
+      .mockResolvedValueOnce({ type: 'HOVER_LOOKUP_RESULT', name: 'Different role', objectType: 'Role' });
+    for (const environment of ['original', 'different']) {
+      const chip = objectChip({ rid: '9007199254740993' }, { environment });
+      document.body.append(chip);
+      chip.dispatchEvent(new Event('focusin'));
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(document.querySelector('.object-preview-host')?.textContent).toContain('Different role');
+    expect(document.querySelector('.object-preview-host')?.textContent).not.toContain('Original role');
+  });
+
+  it('dismisses the card and ignores its pending lookup after a connection reset', async () => {
+    let finish!: (value: unknown) => void;
+    sendMessage.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const chip = objectChip({ rid: '9007199254740993', type: 'Role' }, { environment: 'original' });
+    document.body.append(chip);
+    chip.dispatchEvent(new Event('focusin'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(document.querySelector('[aria-label="Open role in Access"]')).not.toBeNull();
+    resetObjectPreview();
+    finish({ type: 'HOVER_LOOKUP_RESULT', name: 'Late response', objectType: 'Role' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(document.querySelector('.object-preview-host')).toBeNull();
+  });
 });
 
 describe('wireBadgeCopy', () => {

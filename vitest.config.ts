@@ -2,11 +2,12 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'src/access/**/*.test.js'],
     exclude: ['src/**/integration/**'],
-    // Node 24 exposes an incomplete experimental localStorage global. The VM
-    // pool gives happy-dom its own browser global instead of probing Node's
-    // getter once per worker and flooding otherwise clean test output.
-    pool: 'vmForks',
+    // Keep test modules/mocks isolated while letting happy-dom own localStorage.
+    // Recent Node versions expose a conflicting experimental browser global.
+    pool: 'forks',
+    execArgv: process.allowedNodeEnvironmentFlags.has('--no-experimental-webstorage')
+      ? ['--no-experimental-webstorage'] : [],
   },
 });

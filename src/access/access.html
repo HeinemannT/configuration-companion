@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <link rel="icon" href="../../icons/configuration-companion.svg">
+  <title>Companion · Access</title>
+  <link rel="stylesheet" href="native.css">
+  <link rel="stylesheet" href="polish.css">
+  <link rel="stylesheet" href="builder.css">
+  <link rel="stylesheet" href="workspace-ux.css">
+  <link rel="stylesheet" href="audit-fixes.css">
+  <link rel="stylesheet" href="pbac-highlighting.css">
+  <link rel="stylesheet" href="dropdown-ux.css">
+  <link rel="stylesheet" href="workspace-layout.css">
+  <link rel="stylesheet" href="json-editor.css">
+  <link rel="stylesheet" href="connection.css">
+</head>
+
+<body>
+  <div id="connection-banner" role="status" hidden></div>
+  <div id="access-busy" role="status" hidden></div>
+  <div class="workspace">
+    <aside class="explorer" aria-label="Roles and policies">
+      <header class="sidebar-top">
+        <div><strong>Access</strong><span id="environment-name"></span></div><button class="icon-button" data-command="help"
+          aria-label="Help" title="Help and shortcuts"></button>
+      </header>
+      <div class="explorer-controls">
+        <div class="search"><span data-icon="search"></span><input id="search" placeholder="Find name, ID or policy text…"
+            aria-label="Find a role or policy"><button id="search-clear" data-command="clear-search" class="icon-button"
+            title="Clear search" aria-label="Clear search" hidden><span data-icon="close"></span></button></div>
+        <div id="search-scopes" aria-label="Search scope"></div>
+        <div id="search-filter"></div>
+      </div>
+      <div id="tree" aria-label="Configuration collections"></div>
+      <div id="pending-review"></div>
+    </aside>
+    <button class="sidebar-backdrop" data-command="explorer" aria-label="Close sidebar"></button>
+    <div class="splitter" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize sidebar"></div>
+    <main class="workarea">
+      <div class="tabstrip"><button class="icon-button sidebar-toggle" data-command="explorer" aria-label="Toggle sidebar"
+          title="Show or hide sidebar"></button>
+        <button class="icon-button" data-command="navigate-back" aria-label="Go back" title="Go back (Alt+Left)"></button>
+        <button class="icon-button" data-command="navigate-forward" aria-label="Go forward" title="Go forward (Alt+Right)"></button>
+        <div id="tabs" class="document-tabs" aria-label="Open records"></div>
+        <div class="history-actions"><button class="icon-button" data-command="history" aria-label="History"
+            title="Edit history"></button><button class="icon-button" data-command="undo" aria-label="Undo" title="Undo"></button><button
+            class="icon-button" data-command="redo" aria-label="Redo" title="Redo"></button></div>
+      </div>
+      <div id="editor" class="editor" tabindex="-1"></div>
+      <section id="dock" class="context-test" aria-label="Access test" hidden></section>
+      <footer class="statusbar"><span id="selection-kind">Role</span><span class="status-divider"></span><span id="status" role="status"
+          aria-live="polite">Ready</span><span class="spacer"></span><button data-command="about">Connection</button></footer>
+    </main>
+  </div>
+  <dialog id="dialog">
+    <form id="dialog-form">
+      <div id="dialog-content"></div>
+    </form>
+  </dialog>
+  <div id="menu" class="popup-menu" hidden></div>
+  <script type="module" src="access.ts"></script>
+</body>
+
+</html>

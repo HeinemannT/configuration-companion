@@ -33,6 +33,7 @@ import { identityBusinessIdError } from '../lib/object-identity';
 import { appendEcPreview } from '../lib/ec-format';
 import { installDirtyGuards } from '../editor-core/overlay';
 import { sendFireForget, sendRequest, sendRequestBounded } from '../lib/messaging';
+import { accessDestinationForObject } from '../lib/access-workspace/entry';
 import { LOOKUP_WATCHDOG_TIMEOUT } from '../lib/constants';
 import { findPropDef } from '../sidepanel/pane-schema';
 import { buildChangesPayload, clearCommittedValues, paneValueEquals } from '../sidepanel/pane-edit';
@@ -713,8 +714,12 @@ function renderPane(): void {
         ),
         h('button', {
           class: 'btn btn-small',
-          title: 'Test access: trace whether a user or role can read, write, add, or delete this object',
-          onClick: () => openAccessTrace({ rid: s.rid, name: s.identity.name, type: s.identity.type }),
+          title: ['Role', 'AccessPolicy'].includes(s.identity.type) ? 'Open in Access: roles & policies' : 'Test access: trace whether a user or role can read, write, add, or delete this object',
+          onClick: () => {
+            if (['Role', 'AccessPolicy'].includes(s.identity.type)) sendFireForget({ type: 'OPEN_ACCESS_WORKSPACE', environment: s.environment,
+              destination: accessDestinationForObject({ ...s.identity, rid: s.rid }) });
+            else openAccessTrace({ rid: s.rid, name: s.identity.name, type: s.identity.type, environment: s.environment });
+          },
         }, svg(ICON_SHIELD_PH), 'Access'),
       ),
     ),

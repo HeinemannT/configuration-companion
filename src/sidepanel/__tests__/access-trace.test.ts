@@ -113,4 +113,20 @@ describe('Access Trace overlay', () => {
     expect(claimed).toBe(true);
     expect(document.querySelector('.atrace-verdict')).toBeFalsy();
   });
+
+  it('opens the matching policy rule in the trace object’s environment', () => {
+    openAccessTrace({ rid: '113', name: 'A', type: 'Scorecard', environment: 'demo@https://example.test/' });
+    routeAccessMessage({ type: 'ACCESS_SUBJECTS_DATA', subjects: [{ rid: '5', name: 'Reader', kind: 'role' }], canTrace: true } as any);
+    (document.querySelector('.atrace-opt') as HTMLButtonElement).click();
+    routeAccessMessage({ type: 'ACCESS_TRACE_RESULT', rid: '113', node: {
+      element: 'TraceRequest', result: true, timedOut: false, details: {}, children: [{
+        element: 'Statement', result: true, timedOut: false,
+        details: { policyRid: '9000000000000000001', statementIndex: '1' }, children: [],
+      }],
+    } } as any);
+    const link = [...document.querySelectorAll<HTMLButtonElement>('.atrace-link')].find(b => b.textContent === 'Open rule');
+    link!.click();
+    expect(sent.at(-1)).toEqual({ type: 'OPEN_ACCESS_WORKSPACE', environment: 'demo@https://example.test/',
+      destination: { kind: 'policy', rid: '9000000000000000001', statement: 1 } });
+  });
 });

@@ -10,6 +10,7 @@ import { log } from './logger';
 const TC_NULL          = 0x70;
 const TC_REFERENCE     = 0x71;
 const TC_CLASSDESC     = 0x72;
+const TC_CLASS         = 0x76;
 const TC_OBJECT        = 0x73;
 const TC_STRING        = 0x74;
 const TC_ARRAY         = 0x75;
@@ -335,6 +336,12 @@ export class JavaWriter {
       case 'J': this.writeLong(value != null ? BigInt(value) : 0n); break;
       case 'Z': this.writeBoolean(value ?? false); break;
       case 'F': this.writeFloat(value ?? 0); break;
+      case 'D': {
+        const bytes = new Uint8Array(8);
+        new DataView(bytes.buffer).setFloat64(0, value ?? 0);
+        this.buf.push(...bytes);
+        break;
+      }
       case 'S': this.writeShort(value ?? 0); break;
       case 'B': this.writeByte(value ?? 0); break;
       case 'L': case '[':
@@ -598,6 +605,12 @@ export class JavaReader {
         case TC_ENUM: return this.readNewEnum();
         case TC_ARRAY: return this.readNewArray();
         case TC_CLASSDESC: return this.readNewClassDescObj();
+        case TC_CLASS: {
+          const desc = this.readClassDescElement();
+          const value = { $javaClass: desc.name };
+          this.addHandle(value);
+          return value;
+        }
         case TC_BLOCKDATA: return this.readBlockDataContent();
         case TC_BLOCKDATALONG: return this.readBlockDataLongContent();
         case TC_ENDBLOCKDATA: return { $endBlockData: true };
@@ -931,7 +944,7 @@ export function deserializeResponse(buffer: ArrayBuffer): any {
 }
 
 /** Deserialize a streaming response (ExtendedExecuteCommand) — reads all objects until EOF */
-export function deserializeStream(buffer: ArrayBuffer): any[] {
+export function deserializeStream(buffer: ArrayBuffer, strict = false): any[] {
   const r = new JavaReader(buffer);
   r.readStreamHeader();
   const results: any[] = [];
@@ -950,6 +963,7 @@ export function deserializeStream(buffer: ArrayBuffer): any[] {
       }
       results.push(obj);
     } catch (e) {
+      if (strict) throw e;
       log.swallow('javaSerial:deserializeStream', e);
       break;
     }

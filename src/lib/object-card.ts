@@ -9,7 +9,7 @@
  * editor.css both style these classes (light card, theme-independent).
  */
 import { h, svg } from './dom'
-import { ICON_ARROWS_OUT_SIMPLE, ICON_CHECK, ICON_CODE, ICON_PENCIL, ICON_X } from './icons'
+import { ICON_ARROWS_OUT_SIMPLE, ICON_CHECK, ICON_CODE, ICON_PENCIL, ICON_X, ICON_SHIELD_PH } from './icons'
 import {
   normalizeAndValidateIdentity,
   resolveDisplayIdentity,
@@ -44,6 +44,7 @@ export interface ObjectCardActions {
   onOpenFull?: () => void
   /** Code icon in the header — opens the EC editor / studio. Omit to hide. */
   onOpenEc?: () => void
+  onOpenAccess?: () => void
   /** Pencil icon in the header. Omit on read-only card instances. */
   onSaveIdentity?: (identity: IdentityEditInput) => Promise<IdentitySaveResult>
 }
@@ -74,6 +75,12 @@ export function buildObjectCard(data: ObjectCardData, actions: ObjectCardActions
   let templateBusinessId = data.templateBusinessId ?? ''
 
   const headActions: HTMLElement[] = []
+  if (actions.onOpenAccess) {
+    const label = data.type === 'Role' ? 'Open role in Access' : 'Open policy in Access'
+    headActions.push(h('button', { class: 'crev-tt-open', type: 'button', title: label, 'aria-label': label,
+      onClick: (event: Event) => { event.stopPropagation(); actions.onOpenAccess!() },
+    }, svg(ICON_SHIELD_PH)))
+  }
   if (actions.onSaveIdentity) {
     headActions.push(h('button', {
       class: 'crev-tt-open crev-tt-edit-open',

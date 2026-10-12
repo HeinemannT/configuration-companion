@@ -10,6 +10,8 @@ import {
   makeExtendedExecuteCommand,
   makeTreeItemCommand,
   makeAccessTraceCommand,
+  makeGetTypeFieldsCommand,
+  type AccessTraceUpdates,
   parseEcResults,
   parseCommandResponse,
   parseObjectData,
@@ -473,9 +475,28 @@ export class BmpClient {
     subjectRid: string,
     action: AccessTraceAction = 'READ',
     signal?: AbortSignal,
+    updates?: AccessTraceUpdates,
   ): Promise<AccessTraceNode | null> {
-    const buffer = await this.transport.sendCommands([makeAccessTraceCommand(rid, subjectRid, action)], 'read', signal);
+    const buffer = await this.transport.sendCommands([makeAccessTraceCommand(rid, subjectRid, action, 10, updates)], 'read', signal);
     return extractAccessTrace(this.transport.deserializeStream(buffer));
+  }
+
+  async fetchTypeFields(type: string, signal?: AbortSignal): Promise<Array<{ id: string; businessId: string; reference: boolean; multiselect: boolean; targets: string[] }>> {
+    validateEcIdentifier(type);
+    const buffer = await this.transport.sendCommands([makeGetTypeFieldsCommand(type)], 'read', signal);
+    const objects = this.transport.deserializeStream(buffer, 'read', true);
+    for (const obj of objects) {
+      if (obj?.$class?.includes('ServerExceptionResponse')) throw new Error(obj.message ?? 'Cannot read type fields');
+      const response = obj?.$elements?.[0]?.response;
+      const entries = response?.$entries ?? Object.entries(response?.$map ?? {});
+      const values = entries.flatMap(([, v]: [unknown, any]) => v?.$elements ?? []);
+      if (values.length) return values.map((v: any) => {
+        const allowed = v.referenceConstraints?.allowedTypes?.$elements ?? [];
+        const targets = allowed.length ? allowed : [v.multiselect ? v.collectionType : v.type];
+        return { id: String(v.id), businessId: String(v.businessId ?? ''), reference: v.reference === true, multiselect: v.multiselect === true, targets: targets.map((t: any) => String(t?.typeId ?? '')).filter(Boolean) };
+      });
+    }
+    throw new Error(`BMP returned no fields for ${type}.`);
   }
 
   /** List users + roles (the possible trace subjects) via EC, sorted by name. */

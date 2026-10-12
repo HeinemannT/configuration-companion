@@ -5358,3 +5358,5 @@ button.flow-property-ref:hover {
 .ai-empty-icon svg { width: 30px; height: 30px; }
 .ai-empty-title { font-weight: var(--weight-semi); color: var(--text-2); font-size: var(--text-base); }
 .ai-empty-sub { max-width: 320px; }
+
+.hdr-modes.no-page { color:var(--text-3); }

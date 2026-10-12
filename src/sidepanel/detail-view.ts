@@ -23,7 +23,8 @@ import type {
   PropertyApplication,
 } from '../lib/types';
 import { h, render, svg, statusFlash } from '../lib/dom';
-import { ICON_FILE_JS, ICON_CODE, ICON_LAYOUT, ICON_COPY, ICON_CROSSHAIR, ICON_CHEVRON } from '../lib/icons';
+import { ICON_FILE_JS, ICON_CODE, ICON_LAYOUT, ICON_COPY, ICON_CROSSHAIR, ICON_CHEVRON, ICON_SHIELD_PH } from '../lib/icons';
+import { accessDestinationForObject } from '../lib/access-workspace/entry';
 import { resolveLayoutShortcut } from '../lib/layout-target';
 import { confirmCommandModal, confirmModal } from '../lib/modal';
 import { displayValue } from './property-editors';
@@ -777,6 +778,12 @@ export class DetailView {
       s.parent ? h('span', { class: 'dv-path-sep' }, '/') : null,
       h('span', { class: 'dv-path-cur', title: curLabel }, curLabel),
       h('span', { class: 'dv-sp' }),
+      s.loaded && !s.isPropertyDefinition ? h('button', { class: 'dv-act',
+        title: s.identity.type === 'Role' ? 'Open role in Access' : s.identity.type === 'AccessPolicy' ? 'Open policy in Access' : 'Test access to this object',
+        'aria-label': s.identity.type === 'Role' ? 'Open role in Access' : s.identity.type === 'AccessPolicy' ? 'Open policy in Access' : 'Test access',
+        onClick: () => this.sendMessage({ type: 'OPEN_ACCESS_WORKSPACE', environment: s.environment,
+          destination: accessDestinationForObject({ ...s.identity, rid: s.rid }) }),
+      }, svg(ICON_SHIELD_PH)) : null,
       // Context picker ⌖ — right end of the path bar, per the mock. Arms the
       // layout pane's picker (it owns the pick flow).
       h('button', {
@@ -795,8 +802,7 @@ export class DetailView {
           ? this.renderTargetToggle(hasTemplate, panel)
           : null,
       ),
-      layoutBtn || editBtn
-        ? h('div', { class: 'dv-subrow' }, h('span', { class: 'dv-sp' }), layoutBtn, editBtn)
+      layoutBtn || editBtn ? h('div', { class: 'dv-subrow' }, h('span', { class: 'dv-sp' }), layoutBtn, editBtn)
         : null,
     );
 
@@ -926,6 +932,7 @@ export class DetailView {
       source: 'server', discoveredAt: Date.now(), updatedAt: Date.now(),
     }, panel).catch(() => {});
     return objectChip(card, {
+      environment: this.state?.environment,
       size: 'xs',
       className: 'pane-card-crumb',
       showId: true,

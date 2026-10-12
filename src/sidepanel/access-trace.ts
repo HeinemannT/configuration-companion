@@ -13,6 +13,7 @@ import { h, render, svg } from '../lib/dom';
 import { ICON_X_CIRCLE, ICON_CHECK_CIRCLE, ICON_MINUS_CIRCLE, ICON_CHECK, ICON_CHEVRON, ICON_X } from '../lib/icons';
 import { typeBadge, wireBadgeCopy } from '../lib/type-badge';
 import type { AccessSubject, AccessTraceAction, AccessTraceNode, InspectorMessage } from '../lib/types';
+import { policyDestination } from '../lib/access-workspace/entry';
 
 /** How this overlay reaches the SW. Object View bridges requests through
  *  sendRequest and routes each response back into this module. */
@@ -21,7 +22,7 @@ export function initAccessTrace(send: (m: InspectorMessage) => void): void {
   sendMessage = send;
 }
 
-interface TraceObject { rid: string; name: string; type: string }
+interface TraceObject { rid: string; name: string; type: string; environment?: string }
 
 const ACTIONS: { key: AccessTraceAction; label: string }[] = [
   { key: 'READ', label: 'Read' },
@@ -450,6 +451,13 @@ function renderNode(node: AccessTraceNode, path: string): HTMLElement {
     h('span', { class: 'atrace-node-label' }, label),
     node.timedOut ? h('span', { class: 'atrace-node-timeout' }, 'timed out') : null,
     detail ? h('span', { class: 'atrace-node-detail' }, detail) : null,
+    isStatement && policyDestination(node.details) ? h('button', {
+      class: 'atrace-link', title: 'Open this rule in Access',
+      onClick: (event: Event) => {
+        event.stopPropagation();
+        sendMessage({ type: 'OPEN_ACCESS_WORKSPACE', environment: state.obj?.environment, destination: policyDestination(node.details) });
+      },
+    }, 'Open rule') : null,
   );
   if (!hasKids || !isOpen) return row;
   return h('div', { class: 'atrace-node-group' }, row,

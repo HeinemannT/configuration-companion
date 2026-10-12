@@ -1,0 +1,26 @@
+body { display:flex; flex-direction:column; height:100vh; overflow:hidden; }
+.workspace { flex:1; min-height:0; height:auto; }
+#connection-banner { flex:none; padding:8px 16px; border-bottom:1px solid #bca4d4; background:#eee5f7; color:#503767; font-size:12px; line-height:1.5; }
+#connection-banner[hidden], #access-busy[hidden] { display:none; }
+#connection-banner details { display:inline; margin-left:10px; }
+#connection-banner summary { display:inline; cursor:pointer; text-decoration:underline; }
+#connection-banner pre { max-height:180px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; margin:8px 0 0; }
+#access-busy { position:fixed; z-index:10000; inset:0; display:flex; align-items:center; justify-content:center; background:rgb(248 245 251 / 92%); color:#5e4378; font-size:14px; font-weight:600; }
+.trace-node { padding:5px 0 5px 10px; border-left:1px solid #d9cce6; font-size:12px; }
+.trace-tree { max-height:min(40vh,360px); overflow:auto; padding:6px 8px; border:1px solid #d9cce6; border-radius:3px; background:#fff; scrollbar-width:thin; }
+.trace-tree > .trace-node { padding-left:0; border-left:0; }
+.trace-metadata > summary { color:#796a84; font-size:11px; }
+.trace-node summary { cursor:pointer; overflow-wrap:anywhere; padding:3px 5px 3px 0; }
+.trace-title { font-weight:500; }
+.trace-decision { display:inline-block; margin-left:10px; color:#765099; font-size:11px; }
+.trace-node dl { display:grid; grid-template-columns:minmax(70px,auto) 1fr; gap:4px 10px; margin:8px 10px; }
+.trace-node dd { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; }
+.trace-node dt { color:#796a84; }
+.connection-address { overflow-wrap:anywhere; font-family:Consolas,monospace; }
+.workspace svg { flex-shrink:0; vertical-align:middle; }
+.editor > .welcome { display:block; height:auto; padding:8px 0; font-size:12px; }
+.workarea.object-testing > .editor { display:none; }
+.workarea.object-testing > #dock { flex:1; height:auto !important; min-height:0; max-height:none; border-top:0; }
+.workarea.object-testing .test-resize { display:none; }
+.workarea.object-testing .trace-tree { max-height:none; }
+.trace-open { margin-left:10px; padding:1px 5px; font-size:11px; background:none; border:0; box-shadow:none; color:#765099; text-decoration:underline; }

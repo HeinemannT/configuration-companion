@@ -19,6 +19,7 @@ import { showToast } from '../lib/toast';
 import { contextFromData } from './context-state';
 import { workStatusForMessage, type WorkStatus } from './work-status';
 import { S } from './state';
+import { resetObjectPreview } from '../lib/object-chip';
 import type { Tab } from './tabs/tab-types';
 
 export type PanelTabId = 'connect' | 'workshop' | 'objects' | 'ai' | 'log';
@@ -239,6 +240,7 @@ export function createPanelOrchestrator(
             name: instance.name,
             type: instance.type,
             businessId: instance.businessId,
+            environment: msg.environment,
           };
           host.updateContextPill();
         }
@@ -253,6 +255,7 @@ export function createPanelOrchestrator(
         }
         break;
       case 'PROFILE_SWITCHED':
+        resetObjectPreview();
         headerChanged = true;
         S.settings = { ...S.settings, activeProfileId: msg.profileId };
         S.context = null;

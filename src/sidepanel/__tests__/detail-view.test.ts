@@ -406,12 +406,15 @@ describe('DetailView — fetch flow', () => {
     expect(sent.find(m => m.type === 'FETCH_OBJECT_PANE' && (m as { rid?: string }).rid === '777')).toBeTruthy();
   });
 
-  it('omits the redundant web, access, and favorite actions', () => {
-    const { dv, panel } = makeDetailView();
+  it('opens an object access test directly, without redundant web or favorite actions', () => {
+    const { dv, panel, sent } = makeDetailView();
     dv.show(makeObj('100'), panel);
     dv.handleMessage(paneData('100'), panel);
     expect(panel.querySelector('[aria-label="Open in web"]')).toBeNull();
-    expect(panel.querySelector('[aria-label="Test access"]')).toBeNull();
+    (panel.querySelector('[aria-label="Test access"]') as HTMLButtonElement).click();
+    expect(sent).toContainEqual(expect.objectContaining({ type: 'OPEN_ACCESS_WORKSPACE',
+      destination: expect.objectContaining({ kind: 'test', object: expect.objectContaining({ rid: '100' }) }),
+    }));
     expect(panel.querySelector('[aria-label="Pin to favorites"]')).toBeNull();
     expect(panel.querySelector('[aria-label="Unpin from favorites"]')).toBeNull();
   });

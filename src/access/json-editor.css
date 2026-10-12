@@ -1,0 +1,28 @@
+/* JSON-only layout and controls. No outline chrome; the toolbar owns its toggle. */
+.editor.json-workspace .json-editor-body{display:flex;flex:1 0 220px;min-height:220px;min-width:0;border:1px solid #d4cadf;border-top:0;background:#fff}
+.editor.json-workspace .json-editor-body #policy-json-editor{flex:1 1 0;min-width:0;min-height:0;height:auto;border:0}
+.json-code-actions{display:flex;align-items:center;gap:2px;padding-right:5px;border-right:1px solid #d4cadf}
+.json-toolbar .json-code-actions button{font:11px/18px 'Segoe UI',sans-serif;min-height:26px;padding:3px 6px;background:transparent;border-color:transparent;box-shadow:none;color:#715e80;white-space:nowrap}
+.json-toolbar .json-code-actions button:hover{border-color:#c8b5d7;background:#eee6f5}
+.json-toolbar .json-outline-toggle{font-size:11px;min-height:28px;padding:3px 7px;gap:5px;white-space:nowrap}
+.json-outline-toggle svg{width:14px;height:14px}.json-outline-toggle[aria-pressed=true]{background:#e8def2;border-color:#b497cf;color:#633b85}
+.cm-editor .cm-foldGutter .cm-gutterElement{padding:0 1px;display:flex;align-items:flex-start;justify-content:center}
+.cm-editor .pbac-fold-chevron{display:inline-flex;align-items:center;justify-content:center;width:18px;height:20px;color:#887b93;cursor:pointer}
+.cm-editor .pbac-fold-chevron svg{width:10px;height:10px}.pbac-fold-chevron[data-expanded=false] svg{transform:rotate(-90deg)}
+.cm-editor .pbac-fold-chevron:hover{background:#e9e1f0;border-radius:2px}
+#policy-json-outline{display:flex;flex-direction:column;flex:0 0 260px;max-width:38%;min-width:180px;min-height:0;border-left:1px solid #ddd3e6;background:#fff;overflow:hidden}
+#policy-json-outline[hidden]{display:none}
+.json-outline-tree{flex:1;min-height:0;overflow:auto;padding:6px 6px 12px;position:relative;scrollbar-width:thin;scrollbar-color:#d5c7de transparent;overflow-anchor:none}
+.json-outline-row{display:flex;align-items:center;gap:0;min-height:22px;padding-left:calc(var(--depth)*9px);border:1px solid transparent;border-radius:2px}
+.json-outline-row.rule{margin-top:8px;min-height:26px;border-top-color:#eee8f3;padding-top:4px}.json-outline-row.rule:first-child{margin-top:0;border-top-color:transparent;padding-top:0}
+.json-outline-row:hover{background:#f7f3fa}.json-outline-row.current{background:#f0e8f7;box-shadow:inset 2px 0 #b08ec8}
+.json-outline-row .json-outline-disclosure{display:flex;align-items:center;justify-content:center;border:0;background:transparent;box-shadow:none;width:18px;min-width:18px;height:21px;min-height:21px;padding:0;color:#887b93}
+.json-outline-disclosure svg{width:10px;height:10px}.json-outline-disclosure[aria-expanded=false] svg{transform:rotate(-90deg)}
+.json-outline-row .json-outline-disclosure:hover{background:#e9e1f0}.json-outline-indent{width:18px;flex:none}
+.json-outline-row>span:has(svg){display:flex;align-items:center;padding-right:5px;flex:none}.json-outline-row>span>svg{width:13px;height:13px;color:#927ba2}
+.json-outline-row .json-outline-location{flex:1;min-width:0;display:block;min-height:21px;text-align:left;border:0;background:transparent;box-shadow:none;padding:1px 4px 1px 0;font:11px/18px 'Segoe UI',sans-serif;color:#82728d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.json-outline-row.rule .json-outline-location{font-weight:600;color:#614b71}.json-outline-row.current .json-outline-location{color:#654481}
+.json-outline-note{padding:8px;font-size:11px;color:#887b93;line-height:17px}
+.cm-editor .cm-tooltip-autocomplete>ul>li{display:flex;align-items:center;gap:7px}.pbac-completion-icon{display:inline-flex;color:#88709b}.pbac-completion-icon svg{width:13px;height:13px}
+.cm-editor .cm-completionDetail{margin-left:auto;padding-left:12px}.cm-editor .cm-completionMatchedText{text-decoration:none;font-weight:600}
+@container editor (max-width:720px){.editor.json-workspace #json-state{display:none}.editor.json-workspace .json-toolbar{flex-wrap:wrap}.json-toolbar .json-code-actions button{padding-inline:4px}#policy-json-outline{flex-basis:215px}}

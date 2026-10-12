@@ -172,6 +172,45 @@ const JAVA_LANG_LONG: JavaClassDesc = {
   parent: JAVA_LANG_NUMBER,
 };
 
+const JAVA_LANG_BOOLEAN: JavaClassDesc = {
+  name: 'java.lang.Boolean', uid: -3665804199014368530n, flags: SC_SERIALIZABLE,
+  fields: [{ name: 'value', type: 'Z' }], parent: null,
+};
+const JAVA_LANG_DOUBLE: JavaClassDesc = {
+  name: 'java.lang.Double', uid: -9172774392245257468n, flags: SC_SERIALIZABLE,
+  fields: [{ name: 'value', type: 'D' }], parent: JAVA_LANG_NUMBER,
+};
+const GET_TYPE_FIELDS_COMMAND: JavaClassDesc = {
+  name: 'com.corporater.bmp.dto.command.type.GetTypeFieldsCommand', uid: 0n, flags: SC_SERIALIZABLE,
+  fields: [{ name: 'keys', type: 'L', className: 'Ljava/util/Collection;' }], parent: null,
+};
+
+export function makeGetTypeFieldsCommand(type: string): any {
+  return { $type: GET_TYPE_FIELDS_COMMAND.name, keys: { $type: 'java.util.ArrayList', $elements: [{ $type: TYPE_KEY.name, typeId: type }] } };
+}
+
+/** Field keys have already been resolved against BMP's native type schema. */
+export interface AccessTraceUpdates {
+  type: string;
+  properties?: Record<string, string | number | boolean | null>;
+  references?: Record<string, string | string[] | null>;
+  parent_rid?: string | null;
+}
+function makeTraceUpdates(updates?: AccessTraceUpdates): any {
+  const entries: [string, any][] = [];
+  if (updates) {
+    entries.push(['type', { $type: TYPE_KEY.name, typeId: updates.type }]);
+    for (const [key, value] of Object.entries(updates.properties ?? {})) {
+      entries.push([key, typeof value === 'boolean' ? { $type: JAVA_LANG_BOOLEAN.name, value } : typeof value === 'number' ? { $type: JAVA_LANG_DOUBLE.name, value } : value]);
+    }
+    for (const [key, value] of Object.entries(updates.references ?? {})) {
+      entries.push([key, Array.isArray(value) ? { $type: 'java.util.ArrayList', $elements: value.map(makeRid) } : value === null ? null : makeRid(value)]);
+    }
+    if (updates.parent_rid !== undefined) entries.push(['parent', updates.parent_rid === null ? null : makeRid(updates.parent_rid)]);
+  }
+  return { $type: 'java.util.HashMap', $entries: entries, $size: entries.length };
+}
+
 const TREE_ITEM_COMMAND: JavaClassDesc = {
   name: 'com.corporater.bmp.dto.command.tree.TreeItemCommand',
   uid: -4494633739301165944n,
@@ -358,6 +397,14 @@ const JAVA_UTIL_HASHSET: JavaClassDesc = {
   parent: null,
 };
 
+// JDK ImmutableCollections serialization proxy (javap java.util.CollSer).
+// GetTypeFieldsCommand returns Stream.toList(), represented by tag 4.
+const JAVA_UTIL_COLLSER: JavaClassDesc = {
+  name: 'java.util.CollSer', uid: 6309168927139932177n,
+  flags: SC_SERIALIZABLE | SC_WRITE_METHOD,
+  fields: [{ name: 'tag', type: 'I' }], parent: null,
+};
+
 // ── Access Trace (admin permission test) ────────────────────────
 // AccessTraceCommand(AccessTraceRequestDTO, SimpleCalculationContext). All
 // records use serialVersionUID = 0L for 5.6.7.2 compatibility. Fields follow
@@ -457,6 +504,7 @@ export function makeAccessTraceCommand(
   subjectRid: string,
   action: AccessTraceAction = 'READ',
   depth = 10,
+  updates?: AccessTraceUpdates,
 ): any {
   return {
     $type: 'com.corporater.bmp.dto.command.access.AccessTraceCommand',
@@ -468,7 +516,7 @@ export function makeAccessTraceCommand(
       allowedStatementPaths: { $type: 'java.util.ArrayList', $elements: [] },
       entityRid: makeRid(subjectRid),
       resourceRids: { $type: 'java.util.ArrayList', $elements: [makeRid(resourceRid)] },
-      updates: { $type: 'java.util.HashMap', $entries: [] },
+      updates: makeTraceUpdates(updates),
     },
     context: makeContext({ objectRid: BigInt(resourceRid) }),
   };
@@ -725,6 +773,26 @@ export function parseCommandResponse(raw: any): any[] {
 // ── Registration ────────────────────────────────────────────────
 
 export function registerBmpTypes() {
+  registerType({
+    desc: JAVA_UTIL_COLLSER,
+    annotationWriter: (obj, writer) => {
+      const elements = obj.$elements ?? [];
+      writer.writeInt(elements.length);
+      for (const element of elements) writer.writeObject(element);
+    },
+    extReader: (reader, result) => {
+      const count = reader.blockReadInt();
+      if (count < 0 || count > 100_000) throw new Error('Invalid immutable collection size');
+      const elements = Array.from({ length: count }, () => reader.blockReadObject());
+      if (result) {
+        result.$elements = elements;
+        if ((result.tag & 0xff) === 3) {
+          result.$map = Object.fromEntries(Array.from({ length: Math.floor(count / 2) }, (_, i) => [String(elements[i * 2]?.typeId ?? elements[i * 2]), elements[i * 2 + 1]]));
+        }
+      }
+      return result;
+    },
+  });
   // Simple value types
   registerType({ desc: RID });
   registerType({ desc: CORPO_TIME });
@@ -756,6 +824,9 @@ export function registerBmpTypes() {
   // java.lang.Long/Number — for TreeItemCommand's boxed Long field
   registerType({ desc: JAVA_LANG_NUMBER });
   registerType({ desc: JAVA_LANG_LONG });
+  registerType({ desc: JAVA_LANG_BOOLEAN });
+  registerType({ desc: JAVA_LANG_DOUBLE });
+  registerType({ desc: GET_TYPE_FIELDS_COMMAND });
 
   // Commands — no fieldExtractors needed; obj properties match field names directly
   registerType({ desc: INTEGRATION_GET_OBJECT_COMMAND });

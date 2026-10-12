@@ -11,6 +11,7 @@ dist/
 /interceptor.js
 /service-worker.js
 /assets/
+/access/
 /chunks/
 /codesearch/
 /diff/

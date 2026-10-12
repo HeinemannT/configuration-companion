@@ -250,7 +250,11 @@ register('BROWSE_SEARCH', async (msg, respond, meta) => {
 });
 
 register('HOVER_LOOKUP', async (msg, respond) => {
-  const ctx = getCtx();
+  const ctx = getCtx(), client = ctx.client, environment = environmentToken(ctx);
+  const empty = () => respond({ type: 'HOVER_LOOKUP_RESULT', rid: msg.rid });
+  // Legacy previews can follow the current profile. Bound previews must not
+  // resolve an old RID from the new profile's cache or client.
+  if (msg.environment && msg.environment !== environment) { empty(); return; }
   // Fast path: check cache (includes code preview if properties were fetched)
   const cached = ctx.cache.get(msg.rid);
   if (cached?.name || cached?.type) {
@@ -267,16 +271,17 @@ register('HOVER_LOOKUP', async (msg, respond) => {
     return;
   }
   // Slow path: EC lookup (identity only — no code fetch for RID lookups)
-  if (!ctx.client) { respond({ type: 'HOVER_LOOKUP_RESULT', rid: msg.rid }); return; }
+  if (!client) { empty(); return; }
   try {
-    const identity = await ctx.client.lookupIdentity(msg.rid);
+    const identity = await client.lookupIdentity(msg.rid);
+    if (environmentToken(getCtx()) !== environment || getCtx().client !== client) { empty(); return; }
     respond({
       type: 'HOVER_LOOKUP_RESULT', rid: msg.rid,
       name: identity?.name, objectType: identity?.type, businessId: identity?.businessId,
       templateBusinessId: identity?.templateBusinessId,
     });
   } catch {
-    respond({ type: 'HOVER_LOOKUP_RESULT', rid: msg.rid });
+    empty();
   }
 });
 

@@ -320,9 +320,9 @@ export class BmpTransport {
 
   /** Deserialize a streaming response outside sendStreamingCommand (used by
    *  binary read commands that share the stream envelope). */
-  deserializeStream(buffer: ArrayBuffer, intent: CommandIntent = 'read'): any[] {
+  deserializeStream(buffer: ArrayBuffer, intent: CommandIntent = 'read', strict = false): any[] {
     try {
-      return deserializeStream(buffer);
+      return deserializeStream(buffer, strict);
     } catch (cause) {
       const error = new BmpTransportError('BMP protocol error while decoding command response', 'protocol', 1, undefined, { cause });
       this.emitDecodeFailure(intent, error, 'DeserializeStream');

@@ -9,7 +9,7 @@ import { h, render, svg } from '../lib/dom';
 import { delegate } from './delegate';
 import { log } from '../lib/logger';
 import { ICON_REFRESH, ICON_SEARCH, ICON_CROSSHAIR, ICON_BLUEPRINT } from './utils';
-import { ICON_TERMINAL_WINDOW, ICON_PULSE } from '../lib/icons';
+import { ICON_TERMINAL_WINDOW, ICON_PULSE, ICON_SHIELD_PH } from '../lib/icons';
 import { DetailView } from './detail-view';
 import { initReferenceView } from './reference-view';
 import { S, sendMessage, getActivePanel, getTabPanel, tabPanelId, onPortMessage, onReconnect, onWorkStatus, connectPanel } from './state';
@@ -293,6 +293,10 @@ function buildApp(): void {
       'aria-label': 'Open Extended Code',
       title: 'Open the Extended Code editor',
     }, svg(ICON_TERMINAL_WINDOW)),
+    h('button', {
+      class: 'header-icon-btn', id: 'open-access-workspace',
+      'aria-label': 'Access: roles & policies', title: accessTitle(),
+    }, svg(ICON_SHIELD_PH)),
     h('span', { class: 'hdr-vsep', 'aria-hidden': 'true' }),
     // Page modes — Inspect and Blueprint are mutually exclusive live-page
     // overlays, so they read as one segmented control.
@@ -370,6 +374,7 @@ function buildApp(): void {
   });
 
   render(app, header, tabBar, renderSiteAccessStrip(), statusStrip, tabContent, statusBar);
+  updateHeaderStatus();
   app.removeAttribute('aria-busy');
   void refreshSiteAccessStrip();
 
@@ -391,6 +396,7 @@ function buildApp(): void {
   app.querySelector('#toggle-blueprint')?.addEventListener('click', () => sendMessage({ type: 'BLUEPRINT_TOGGLE' }));
   app.querySelector('#open-extended')?.addEventListener('click', () => sendMessage({ type: 'OPEN_EXTENDED' }));
   app.querySelector('#open-codesearch')?.addEventListener('click', () => sendMessage({ type: 'OPEN_CODE_SEARCH' }));
+  app.querySelector('#open-access-workspace')?.addEventListener('click', () => sendMessage({ type: 'OPEN_ACCESS_WORKSPACE' }));
   app.querySelector('#header-status')?.addEventListener('click', () => showProfileSwitcher());
   app.querySelector('#header-brand')?.addEventListener('click', (e) => showBrandMenu(e.currentTarget as HTMLElement));
 
@@ -453,7 +459,6 @@ function onNonBmpPage(): boolean {
 }
 
 function statusText(): string {
-  if (onNonBmpPage()) return 'Not a BMP page';
   switch (S.connState.display) {
     case 'not-configured': return 'No server';
     case 'checking': return 'Checking\u2026';
@@ -550,7 +555,20 @@ function updateHeaderStatus() {
     const label = container.querySelector('.header-label');
     if (dot) dot.className = `status-dot ${statusDotClass()}`;
     if (label) label.textContent = statusText();
+    container.title = statusStripText() + '\nChoose connection';
   }
+  const access = document.getElementById('open-access-workspace');
+  if (access) access.title = accessTitle();
+  const modes = document.querySelector<HTMLElement>('.hdr-modes');
+  if (modes) {
+    modes.classList.toggle('no-page', S.bmpDetected === false);
+    modes.title = S.bmpDetected === false ? 'Open a BMP page to inspect its layout' : 'Page tools';
+  }
+}
+
+function accessTitle(): string {
+  const profile = S.settings.profiles.find(p => p.id === S.settings.activeProfileId);
+  return 'Access — roles & policies' + (profile ? '\n' + profile.label : '\nChoose a connection first') + '\nOpens in a browser tab';
 }
 
 function updateStatusBar() {
@@ -598,6 +616,7 @@ function renderContextPill(): HTMLElement | null {
   // and widgets in the chip slot.
   const prefix = c.type === 'Tab' ? 'Tab: ' : '';
   const chip = objectChip(c, {
+    environment: c.environment,
     size: 'xs',
     label: prefix + label,
     className: `status-bar-context${c.type === 'Tab' ? ' status-bar-context--tab' : ''}`,

@@ -20,7 +20,7 @@ import { resolveDisplayIdentity } from '../lib/object-identity'
 import { COPY_TOOLTIP, getModifier, resolveCopyText } from '../lib/namespace'
 import type { EcOutputEntry } from '../lib/bmp-types'
 import { typeBadge, wireBadgeCopy } from '../lib/type-badge'
-import { objectChip } from '../lib/object-chip'
+import { objectChip, resetObjectPreview } from '../lib/object-chip'
 import { h, svg, render as renderDom } from '../lib/dom'
 import { captureTypingFocus } from '../lib/focus-keep'
 import { ICON_PLAY, ICON_X, ICON_WRAP, ICON_VARIABLE, ICON_CLOCK, ICON_CHECK, ICON_LIGHTNING, ICON_TABLE, ICON_COPY, ICON_REFRESH, ICON_BOOK, ICON_ARROWS_OUT_SIMPLE, ICON_ARROWS_IN_SIMPLE, ICON_CODE, ICON_CHEVRON, ICON_WARNING, ICON_SPARKLE, ICON_BRACKETS } from '../lib/icons'
@@ -587,6 +587,7 @@ function renderShell() {
       h('span', { class: 'editor-id-bid' }, bid),
       exec
         ? objectChip(exec, {
+            environment: ctx.environment,
             size: 'xs',
             className: 'editor-id-context',
             annotation: 'context',
@@ -954,7 +955,7 @@ function formatActiveExtendedCode(): void {
 async function setupAiAssist(): Promise<void> {
   chrome.runtime.onMessage.addListener((msg: InspectorMessage) => {
     if (msg.type === 'AI_CONFIG_CHANGED') void applyAiConfig(msg.configured)
-    if (msg.type === 'PROFILE_SWITCHED') jsonShapeStore.clear()
+    if (msg.type === 'PROFILE_SWITCHED') { jsonShapeStore.clear(); resetObjectPreview() }
     // Chat-tab Apply: when the proposal targets the object + slot this editor
     // has open, raise the standard merge-diff Accept/Reject on the live doc.
     if ((msg.type === 'AI_APPLY_PROPOSAL' || msg.type === 'AI_INSERT_AT_CURSOR') && aiAssist && ctx) {

@@ -12,8 +12,12 @@ import { buildObjectCard } from './object-card';
 import { resolveDisplayIdentity } from './object-identity';
 import { typeBadge } from './type-badge';
 import { getTypeColor, type ObjectReference } from './types';
+import { accessDestinationForObject } from './access-workspace/entry';
 
 export interface ObjectChipOptions {
+  /** Connection that supplied this identity, captured when the chip is built.
+   * Required for contextual Access navigation; never infer it on activation. */
+  environment?: string;
   /** Override the visible name while retaining the real identity in preview. */
   label?: string;
   /** Show the business ID (or RID fallback) after the label. */
@@ -154,6 +158,9 @@ function renderPreview(
     codePreview: resolved?.codePreview,
   }, {
     onOpenFull: openFull,
+    ...(options.environment && ['Role', 'AccessPolicy'].includes(data.type ?? '') ? {
+      onOpenAccess: () => { hidePreview(); sendFireForget({ type: 'OPEN_ACCESS_WORKSPACE', environment: options.environment, destination: accessDestinationForObject(data) }); },
+    } : {}),
   }));
   host.classList.add('object-preview-host--visible');
   warmUntil = Date.now() + WARM_WINDOW;
@@ -165,7 +172,8 @@ async function enrichPreview(
   identity: ObjectReference,
   options: ObjectChipOptions,
 ): Promise<void> {
-  const cached = previewCache.get(identity.rid);
+  const cacheKey = JSON.stringify([options.environment ?? '', identity.rid]);
+  const cached = previewCache.get(cacheKey);
   if (cached) {
     renderPreview(anchor, identity, options, cached);
     return;
@@ -175,7 +183,8 @@ async function enrichPreview(
   // code preview and fills sparse identities, then remains cached per window.
   renderPreview(anchor, identity, options);
   const sequence = ++requestSequence;
-  const response = await sendRequest({ type: 'HOVER_LOOKUP', rid: identity.rid });
+  const response = await sendRequest({ type: 'HOVER_LOOKUP', rid: identity.rid,
+    ...(options.environment ? { environment: options.environment } : {}) });
   if (sequence !== requestSequence || activeAnchor !== anchor) return;
   if (response?.type !== 'HOVER_LOOKUP_RESULT') return;
   const resolved: ResolvedPreview = {
@@ -185,7 +194,7 @@ async function enrichPreview(
     templateBusinessId: response.templateBusinessId,
     codePreview: response.codePreview,
   };
-  previewCache.set(identity.rid, resolved);
+  if (Object.values(resolved).some(value => value !== undefined)) previewCache.set(cacheKey, resolved);
   renderPreview(anchor, identity, options, resolved);
 }
 
@@ -249,7 +258,9 @@ export function objectChip(identity: ObjectReference, options: ObjectChipOptions
       : null,
   );
 
-  if (options.preview !== false) wirePreview(chip, identity, options);
+  // A caller may reuse its options object while changing selection/connection.
+  // The chip and its delayed preview retain the identity they were built for.
+  if (options.preview !== false) wirePreview(chip, { ...identity }, { ...options });
   return chip;
 }
 

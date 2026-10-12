@@ -23,6 +23,7 @@ import './handlers/ec';
 import './handlers/json-shape';
 import './handlers/studio';
 import './handlers/access';
+import './handlers/access-workspace';
 import './handlers/enrichment';
 import './handlers/detection';
 import './handlers/history';

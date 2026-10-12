@@ -393,11 +393,13 @@ export function buildAccessSubjectsEc(): string {
   ], '|||');
   return [
     '_out := ""',
-    'root.user.children().forEach(_u:',
-    `     _out := _out + ${userRow} + "\\n"`,
+    'root.user.descendants.filter(className = "User").forEach(_u:',
+    `     _row := ${userRow} + "\\n"`,
+    '     _out := _out + _row',
     ')',
-    'root.role.children().forEach(_r:',
-    `     _out := _out + ${roleRow} + "\\n"`,
+    'root.role.descendants.filter(className = "Role").forEach(_r:',
+    `     _row := ${roleRow} + "\\n"`,
+    '     _out := _out + _row',
     ')',
     '_out',
   ].join('\n');
@@ -618,6 +620,7 @@ export class EcQueryService {
   /** List users + roles (the possible trace subjects) via EC, sorted by name. */
   async listAccessSubjects(): Promise<AccessSubject[]> {
     const result = await this.executeEc(buildAccessSubjectsEc());
+    if (!result.ok || result.hasError || result.hasWarning) throw new Error(result.error || result.log || 'Cannot load users and roles for access testing.');
     return parseAccessSubjectsLog(result.log ?? '');
   }
 

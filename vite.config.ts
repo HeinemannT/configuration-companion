@@ -134,6 +134,7 @@ function extensionPlugin(): Plugin {
       // so entries are {dir,file}.
       const HTML_ENTRIES: Array<{ dir: string; file: string }> = [
         { dir: 'sidepanel', file: 'sidepanel' },
+        { dir: 'access', file: 'access' },
         { dir: 'editor', file: 'editor' },
         { dir: 'objectview', file: 'objectview' },
         { dir: 'diff', file: 'diff' },
@@ -214,6 +215,7 @@ export default defineConfig({
         interceptor: resolve(__dirname, 'src/interceptor.ts'),
         content: resolve(__dirname, 'src/content.ts'),
         'sidepanel/sidepanel': resolve(__dirname, 'src/sidepanel/sidepanel.html'),
+        'access/access': resolve(__dirname, 'src/access/access.html'),
         'editor/editor': resolve(__dirname, 'src/editor/editor.html'),
         'objectview/objectview': resolve(__dirname, 'src/objectview/objectview.html'),
         'diff/diff': resolve(__dirname, 'src/diff/diff.html'),
