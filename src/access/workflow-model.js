@@ -48,7 +48,12 @@ export function testsAfterApply(tests, open, model, mapping = {}) {
   const retained = new Map(), retainedOpen = new Set();
   for (const [key, test] of tests) {
     let nextKey = key;
-    if (!key.startsWith('object:')) {
+    if (key.startsWith('matrix:')) {
+      const [, role, type] = key.split(':');
+      const rid = mapping[role] ?? role;
+      if (!model.roles.some(r => r.rid === rid)) continue;
+      nextKey = `matrix:${rid}:${type}`;
+    } else if (!key.startsWith('object:')) {
       const match = /^(role|policy):(.+):(\d+)$/.exec(key);
       if (!match) continue;
       const [, kind, previousRid, statement] = match,

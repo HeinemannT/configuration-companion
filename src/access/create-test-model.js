@@ -24,6 +24,8 @@ export function readCreateValues(text) {
   try { value = JSON.parse(text || '{}'); } catch { throw Error('Fix the request JSON before using fields or running the test.'); }
   if (!plain(value) || ['properties', 'references'].some(key => value[key] !== undefined && !plain(value[key])))
     throw Error('Use a JSON object with properties and references objects.');
+  if (value.type !== undefined && typeof value.type !== 'string')
+    throw Error('Object type must be text, for example "CeRiskAssessment".');
   return value;
 }
 
@@ -114,6 +116,7 @@ export function testContextRids(check) {
   const ids = new Set();
   for (const scenario of [check, ...Object.values(check.scenarios ?? {})]) {
     if (scenario.resource) ids.add(scenario.resource);
+    if (scenario.createDefault?.source.rid) ids.add(scenario.createDefault.source.rid);
     try {
       const values = readCreateValues(scenario.proposed);
       if (values.parent_rid) ids.add(values.parent_rid);

@@ -1,5 +1,11 @@
 import { expect, it } from 'vitest';
 import { createInputs, initializeCreate, setCreateValue, setCreateNumber, omitCreateValue, createResource, readCreateValues, testContextRids } from './create-test-model.js';
+
+it('rejects non-text types before starting a schema or destination lookup',()=>{
+  for(const type of [42,true,null,{},[]])expect(()=>readCreateValues(JSON.stringify({type}))).toThrow('Object type must be text');
+  expect(readCreateValues('{}')).toEqual({});
+  expect(readCreateValues('{"type":"CeRiskAssessment"}').type).toBe('CeRiskAssessment');
+});
 import { proposedForTest, switchTestAction } from './test-request-model.js';
 
 const rid = '9223372036854775806';

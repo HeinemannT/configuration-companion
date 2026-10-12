@@ -1,5 +1,6 @@
 import { fieldKind } from './schema-model.js';
 import { rankCompletions } from './completion-ranking.js';
+import { genericFields, genericField } from './pbac-fields.js';
 
 const row = (value, detail = '', info = '') => ({ value, detail, info });
 
@@ -23,13 +24,14 @@ export function createPBACCatalogue({ getSnapshot, getRoles, getClasses, loadSch
     if (signal.aborted || snapshot !== getSnapshot()) return [];
     const props = type ? getClasses()[type] ?? [] : [];
     if (request.kind === 'properties' && ['resource', 'new'].includes(request.scope)) {
-      const builtins = request.reference ? ['parent'] : ['type', 'id', 'name', 'parent', ...(request.scope === 'resource' ? ['model'] : [])];
-      const rows = [...builtins.map(id => row(request.scope + '.' + id)), ...props.filter(p => !request.reference || p.reference)
+      const builtins = genericFields(request.scope, request.reference);
+      const known = new Set(builtins.map(p => p.accessor));
+      const rows = [...builtins.map(p => row(p.expression, p.label, p.description)), ...props.filter(p => !known.has(p.accessor) && (!request.reference || p.reference))
         .map(p => row(request.scope + '.' + p.accessor, p.label || p.accessor, fieldKind(p)))];
       return bounded([...new Map(rows.map(r => [r.value, r])).values()]);
     }
     if (request.kind === 'values') {
-      const prop = props.find(p => p.accessor === request.field);
+      const prop = genericField(request.scope + (request.field ? '.' + request.field : '')) ?? props.find(p => p.accessor === request.field);
       if (prop?.listSet) {
         let items = prop.listSet.items;
         if (prop.listSet.partial) {

@@ -73,7 +73,8 @@ it('keeps reference browsing atomic, list identities visible, and effect/test st
   await click('[data-open="9000000000000000004"]');
   await vi.waitFor(() => expect($('.list-value-preview')?.textContent).toContain('scope_regional'));
   expect($('.list-value-preview').textContent).toContain('scope_global');
-  expect($('.list-value-preview').textContent).toContain('+1 more');
+  expect($('.list-value-preview').textContent).toContain('ListPropertySetItem:removed');
+  expect($('.list-value-more')).toBeNull();
   expect($('#editor').textContent).toContain('1 selected value not found');
   await click('[data-command="schema-value"][data-path=\'["All",1]\']');
   expect($('#picker-selection').textContent).toContain('scope_global');
@@ -102,7 +103,8 @@ it('keeps reference browsing atomic, list identities visible, and effect/test st
   await vi.waitFor(() => expect($('#picker-results button')).not.toBeNull());
   await selectLabel(object.name);
   await click('[data-command="prepare-check"]');
-  await vi.waitFor(() => expect($('.result-line')?.textContent).toContain('Overall accessAllowed'));
+  await vi.waitFor(() => expect($('.result-line')?.textContent).toContain('Granted'));
+  expect($('.result-line').dataset.outcome).toBe('allowed');
   expect($('.test-saved-scope').textContent).toBe('All saved policies');
   await click('[data-command="rule-effect"][data-effect="Deny"]'); await workspace.flush();
   expect(saved.model.policies[0].content.Statement[0].Effect).toBe('Deny');

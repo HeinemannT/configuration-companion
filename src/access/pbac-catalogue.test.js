@@ -19,7 +19,7 @@ it('loads only an inferred type and searches property labels while inserting nat
   expect(rows).toEqual([expect.objectContaining({value:'resource.owners',detail:'Risk owners'})]);
   f.loadSchema.mockClear();
   const ambiguous=await f.catalogue({kind:'properties',types:['CeRiskAssessment','CeTask'],scope:'new',query:'new.'},signal());
-  expect(ambiguous.map(r=>r.value)).toEqual(['new.type','new.id','new.name','new.parent']);
+  expect(ambiguous.map(r=>r.value)).toEqual(['new.type','new.id','new.parent','new.linkedTo','new.createdBy','new.model']);
   expect(f.loadSchema).not.toHaveBeenCalled();expect(f.api).not.toHaveBeenCalled();
 });
 

@@ -7,6 +7,7 @@ import { createAccessApi } from './api';
 import { createWorkspacePersistence } from './persistence';
 import { parseAccessDestination, type AccessDestination } from '../lib/access-workspace/entry';
 import type { InspectorMessage } from '../lib/messages';
+import { renderNotice, type NoticeContext } from './notice';
 
 const environment = new URL(location.href).searchParams.get('environment') ?? '';
 const banner = document.getElementById('connection-banner')!;
@@ -36,21 +37,11 @@ void chrome.tabs.getCurrent().then(tab => {
   });
 });
 window.addEventListener('hashchange', readEntry);
-const notice = (text: string) => {
-  banner.replaceChildren(); banner.hidden = !text;
-  if (!text) return;
-  const firstLine = text.split('\n')[0];
-  banner.append(firstLine.slice(0, 300));
-  if (text !== firstLine || text.length > 300) {
-    const details = document.createElement('details'), summary = document.createElement('summary'), body = document.createElement('pre');
-    summary.textContent = 'Details'; body.textContent = text;
-    details.append(summary, body); banner.append(details);
-  }
-};
+const notice = (text: string, context?: NoticeContext) => renderNotice(banner, text, context);
 const busy = (text: string) => { progress.textContent = text; progress.hidden = !text; surface.inert = !!text; };
 const api = createAccessApi(environment, text => { progress.textContent = text; });
 const persistence = createWorkspacePersistence(() => openDraftStore(environment),
-  error => notice('Draft could not be saved on this browser: ' + String(error)));
+  error => notice('Draft could not be saved on this browser: ' + String(error), { tone: 'error', title: 'Draft could not be saved' }));
 
 async function start(): Promise<void> {
   if (!environment) throw new Error('Open Access from the Companion toolbar to use the selected connection.');

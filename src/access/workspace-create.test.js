@@ -31,6 +31,7 @@ it('authors and tests a Create request with typed pickers, negative cases and re
   let deferTrace = false, resolveTrace;
   const api = vi.fn(async request => {
     if (request.operation === 'schema') return classes[request.type] || [];
+    if (request.operation === 'creation') return {};
     if (request.operation === 'search') return request.containers ? [destination] : [object];
     if (request.operation === 'trace') return deferTrace ? new Promise(resolve => {resolveTrace=resolve;}) : trace;
     if (request.operation === 'principals') return { choices:[{rid:request.kind === 'User' ? '7000000000000000001' : '7000000000000000002',id:request.kind.toLowerCase() + '_review',name:'Review ' + request.kind.toLowerCase(),type:request.kind}],hasMore:false };
@@ -47,7 +48,7 @@ it('authors and tests a Create request with typed pickers, negative cases and re
   await workspace.enter({kind:'policy',rid:policy.rid});await tick();
 
   // Source-only edits retain comparisons and values, including a false boolean.
-  await click('[data-command="schema-source"][data-path=\'["All",4]\']');await choose('Current saved object');
+  await click('[data-command="schema-source"][data-path=\'["All",4]\']');await choose('resource');
   expect(saved.model.policies[0].content.Statement[0].Resource.All[4].Condition).toEqual({Left:'resource.active',Comparison:'=',Right:true});
   await click('[data-command="undo"]');
   await click('[data-command="check"]');await tick();
@@ -72,12 +73,13 @@ it('authors and tests a Create request with typed pickers, negative cases and re
   expect($('[data-command="prepare-check"]').disabled).toBe(false); // missing policy inputs are testable
   await click('[data-command="prepare-check"]');
   expect(api.mock.calls.find(([r])=>r.operation==='trace')[0].request).toMatchObject({action:'CREATE',resource_rid:destination.rid,proposed:{type:'CeComment',parent_rid:destination.rid,references:{commentOn:object.rid,scope:[selected]},properties:{active:false}}});
-  expect($('#check-result').textContent).toContain('Allowed');
+  expect($('.result-line strong').textContent).toBe('Granted');
   expect($('#check-result').textContent).toContain('Did not match');
   await click('[data-command="focus-test-failure"]');
   expect(document.activeElement).toBe($('[data-create-value="name"]'));
   await input('[data-create-value="name"]','Revised');
-  expect($('#check-result').textContent).toContain('changed');
+  expect($('#check-result').textContent).toContain('Changed since test');
+  expect($('.result-line').dataset.outcome).toBe('unknown');
   $('[data-create-value="name"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',ctrlKey:true,bubbles:true}));await tick();
   expect(api.mock.calls.filter(([r])=>r.operation==='trace')).toHaveLength(2);
 

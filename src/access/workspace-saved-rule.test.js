@@ -51,7 +51,7 @@ it('keeps overall tests available after a JSON reorder without attributing the s
   await editJSON(reordered);
   await click('[data-command="apply-json"]');
   await click('[data-command="prepare-check"]');
-  expect($('#check-result').textContent).toContain('Allowed');
+  expect($('.result-line strong').textContent).toBe('Granted');
   expect($('.selected-rule-result')).toBeNull();
   expect($('.trace-open').disabled).toBe(true);
   expect(stored.state.tests.$map.find(([k]) => k === key)[1].result.selectedRule).toBeNull();

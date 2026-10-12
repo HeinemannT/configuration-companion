@@ -19,6 +19,8 @@ export interface AccessSnapshot {
   environment: string; name: string; loadedAt: string;
   roots: { roles: string; policies: string }; model: AccessModel;
   classes: Record<string, AccessProperty[]>; users: AccessChoice[]; groups: AccessChoice[];
+  /** Live concrete subtype catalogue used for static policy coverage. */
+  typeChildren?: Record<string, string[]>;
 }
 export interface ProposedValues {
   type: string; properties?: Record<string, string | number | boolean | null>;
@@ -29,6 +31,7 @@ export type AccessTask =
   | { operation: 'load' }
   | { operation: 'reconcile' }
   | { operation: 'schema'; type: string }
+  | { operation: 'creation'; type: string; source?: string; fields?: string[] }
   | { operation: 'listItems'; set: string; query: string; selected?: string[] }
   | { operation: 'search'; query: string; type?: string; prototypes?: boolean; containers?: boolean; containerFor?: string }
   | { operation: 'principals'; query: string; kind: 'User' | 'Group' }

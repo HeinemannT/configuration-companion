@@ -17,12 +17,18 @@ export function decodeWorkspaceState(state) {
  * the tab. Replace test objects so pending traces cannot repopulate old results. */
 export function stateAfterApply(state, model, mapping = {}) {
   const map = rid => mapping[rid] ?? rid;
+  const selection = value => value && model.roles.some(role => role.rid === map(value.role))
+    ? { ...value, role: map(value.role) } : null;
+  const matrixTest = selection(state.matrixTest);
   return {
     rid: map(state.rid),
     tabs: (state.tabs ?? []).map(tab => ({ ...tab, rid: map(tab.rid) })),
     ...testsAfterApply(state.tests ?? new Map(), state.testOpen ?? new Set(), model, mapping),
     raw: new Map(),
     idDraft: new Map(),
+    ...(state.matrix ? { matrix: { ...state.matrix, selected: selection(state.matrix.selected), highlight: map(state.matrix.highlight) } } : {}),
+    ...(state.matrixTest ? { matrixTest } : {}),
+    ...(state.matrixTesting && !matrixTest ? { matrixTesting: false, testing: false, matrixShowing: true, matrixOpen: true, empty: true } : {}),
   };
 }
 

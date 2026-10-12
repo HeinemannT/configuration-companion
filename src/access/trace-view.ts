@@ -1,5 +1,6 @@
 import type { AccessTraceNode } from '../lib/types';
 import { policyDestination } from '../lib/access-workspace/entry';
+import { icon } from './icons';
 
 const escape = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const words = (value: string) => value.replace(/([a-z])([A-Z])/g, '$1 $2').replaceAll('_', ' ').replace(/^./, c => c.toUpperCase());
@@ -21,7 +22,7 @@ export function traceDecision(node: AccessTraceNode): string {
   if (node.timedOut) return 'Timed out';
   if (node.result == null) return 'No result';
   // Nested booleans are predicate results, not separate allow/deny decisions.
-  return node.element === 'TraceRequest' ? node.result ? 'Allowed' : 'Denied' : node.result ? 'True' : 'False';
+  return node.element === 'TraceRequest' ? node.result ? 'Granted' : 'Denied' : node.result ? 'True' : 'False';
 }
 
 /** Never confuse nested permission checks, or a Deny rule's false return, with a
@@ -69,16 +70,17 @@ type CanOpenRule = (policyRid: string, statementIndex: number) => boolean;
 const allowRule: CanOpenRule = () => true;
 function contents(node: AccessTraceNode, path: string, canOpenRule: CanOpenRule): string {
   const details = Object.entries(node.details);
-  const metadata = details.length ? '<dl>' + details.map(([key, value]) => `<dt>${escape(detailLabels[key] ?? words(key))}</dt><dd>${escape(value)}</dd>`).join('') + '</dl>' : '';
-  return (node.element === 'TraceRequest' ? `<details class="trace-metadata"><summary>Test details · ${node.children.length} evaluated rules</summary>${metadata}</details>` : metadata) +
-    node.children.map((child, i) => branch(child, path ? path + '.' + i : String(i), canOpenRule)).join('');
+  const metadata = details.length ? '<dl class="trace-fields">' + details.map(([key, value]) => `<dt>${escape(detailLabels[key] ?? words(key))}</dt><dd>${escape(value)}</dd>`).join('') + '</dl>' : '';
+  return (node.element === 'TraceRequest' ? `<details class="trace-metadata"><summary>${icon('down')}Test details · ${node.children.length} evaluated rules</summary>${metadata}</details>` : metadata) +
+    (node.children.length?'<div class="trace-children">'+node.children.map((child, i) => branch(child, path ? path + '.' + i : String(i), canOpenRule)).join('')+'</div>':'');
 }
 function branch(node: AccessTraceNode, path: string, canOpenRule: CanOpenRule, root = false): string {
   const result = traceDecision(node);
   const target = node.element === 'Statement' ? policyDestination(node.details) : undefined;
   const disabled = target?.kind === 'policy' && !canOpenRule(target.rid, target.statement ?? 0);
-  const link = target?.kind === 'policy' ? `<button type="button" class="trace-open" data-command="open-trace-policy" data-rid="${target.rid}" data-statement="${target.statement ?? 0}" ${disabled ? 'disabled title="This saved rule differs from the local draft"' : 'title="Open this rule in Access"'}>Open rule</button>` : '';
-  return `<details class="trace-node" data-trace-path="${path}" ${root ? 'open data-trace-loaded="true"' : ''}><summary><span class="trace-title">${escape(traceLabel(node))}</span><span class="trace-decision" title="${root ? 'Access decision' : 'Evaluation result'}">${result}</span>${link}</summary>${root ? contents(node, path, canOpenRule) : ''}</details>`;
+  const link = target?.kind === 'policy' ? `<button type="button" class="trace-open" data-command="open-trace-policy" data-rid="${target.rid}" data-statement="${target.statement ?? 0}" aria-label="Open rule" ${disabled ? 'disabled title="This saved rule differs from the local draft"' : 'title="Open this rule in Access"'}>${icon('open')}</button>` : '';
+  const known = !node.timedOut && node.result != null;
+  return `<details class="trace-node" data-trace-path="${path}" ${root ? 'open data-trace-loaded="true"' : ''}><summary>${icon('down')}<span class="trace-title">${escape(traceLabel(node))}</span><span class="trace-decision" data-result="${known ? node.result : 'unknown'}" title="${root ? 'Access decision' : 'Evaluation result'}">${icon(known ? node.result ? 'valid' : 'close' : 'warning')}${result}</span>${link}</summary>${root ? contents(node, path, canOpenRule) : ''}</details>`;
 }
 export const renderTrace = (trace: AccessTraceNode, canOpenRule = allowRule): string => '<div class="trace-tree">' + branch(trace, '', canOpenRule, true) + '</div>';
 

@@ -30,7 +30,9 @@ it('filters types locally, retains object context, recovers search failures and 
   const settle = () => vi.waitFor(() => expect($('#picker-footer').textContent).not.toContain('Searching…'));
   await workspace.enter({kind:'role',rid:snapshot.model.roles[0].rid});
   await click('[data-command="check"]'); await click('[data-command="choose-object"]'); await settle();
-  expect($('#picker-types').querySelectorAll('button')).toHaveLength(1);
+  expect($('#picker-types').querySelectorAll('[data-command="picker-browse-types"]')).toHaveLength(1);
+  expect($('#picker-types').querySelector('[data-command="picker-type"][data-value="CeRiskAssessment"]')).not.toBeNull();
+  for (const chip of $('#picker-types').querySelectorAll('.object-type-suggestions button')) expect(snapshot.classes).toHaveProperty(chip.dataset.value);
   await input('Quarterly');
   $('[data-command="picker-browse-types"]').focus(); await settle();
   expect(document.activeElement).toBe($('[data-command="picker-browse-types"]'));
@@ -41,7 +43,7 @@ it('filters types locally, retains object context, recovers search failures and 
   expect($('#picker-results').querySelectorAll('[role="option"]').length).toBeGreaterThan(40);
   await input('risk'); await new Promise(resolve => setTimeout(resolve,260));
   expect(searches()).toHaveLength(count); // type lookup is entirely local
-  expect($('#picker-results').textContent).toContain('Risk assessments');
+  expect($('#picker-results').textContent).toContain('CeRiskAssessment');
   await key('Escape');
   expect($('#picker-query').value).toBe('Quarterly');
   expect($('#picker-results').scrollTop).toBe(28);

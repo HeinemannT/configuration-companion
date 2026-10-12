@@ -20,9 +20,9 @@ export function pbacCompletionSource(analysisFor, catalogue=async()=>[]) {
     if(target.kind==='grouping') rows=[row('All','Every referenced object'),row('Any','At least one referenced object')];
     if(target.kind==='comparisons') rows=comparisonRows().map(r=>row(r.rid,r.label,r.secondary));
     if(target.kind==='properties') {
-      rows=[{...row('resource.','Current saved object'),continue:true},{...row('new.','Submitted values'),continue:true}];
+      rows=[{...row('resource.','Saved object fields'),continue:true},{...row('new.','Request fields'),continue:true}];
       if(target.reference) rows.push({...row('reversed.','Incoming reference'),continue:true});
-      if(!target.reference && target.scope==='resource') rows.push(row('resource','Current object'));
+      if(!target.reference && target.scope==='resource') rows.push(row('resource','Object itself'));
     }
     if(['subjects','properties','types','values'].includes(target.kind)) {
       const controller=new globalThis.AbortController();

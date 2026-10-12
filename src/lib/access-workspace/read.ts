@@ -60,7 +60,8 @@ export async function readAccess(client: BmpClient, environment: string, name: s
       ['principals', 'root.user.descendants.filter(className = "User" AND roles.size() > 0).union(root.group.descendants.filter(className = "Group" AND roles.size() > 0))']].flatMap(([kind, source]) => [
       `_nodes := ${source}`, row(kind + 'Ids', ['_nodes.as(rid).join(",")']),
     ]),
-    'root.classConfig.children().forEach(_n:', row('class', ['_n.id', '_n.name']), ')', '_out'].join('\n');
+    'root.classConfig.children().forEach(_n:', row('class', ['_n.id', '_n.name']),
+    row('subtypes', ['_n.id', '_n.configuredType.subTypes.as(simpleName).join(",")']), ')', '_out'].join('\n');
   const rows = f.parse(await readEc(client, code, context.signal));
   const pages: Array<{ kind: string; ids: string[] }> = [];
   for (const kind of ['roles', 'policies', 'principals']) {
@@ -84,6 +85,7 @@ export async function readAccess(client: BmpClient, environment: string, name: s
     if (kind.endsWith('Ids')) continue;
     if (kind === 'roots') { snapshot.roots = { roles: rid, policies: id }; continue; }
     if (kind === 'class') { snapshot.classes[rid.split('.').at(-1)!] = []; continue; }
+    if (kind === 'subtypes') { (snapshot.typeChildren ??= {})[rid.split('.').at(-1)!] = id ? id.split(',') : []; continue; }
     if (!/^\d+$/.test(rid)) throw new Error('Invalid object identifier in BMP response.');
     if (kind === 'user' || kind === 'group') snapshot[kind === 'user' ? 'users' : 'groups'].push({ rid, id, name, type });
     else if (kind === 'global') snapshot.model.globals.push({ rid: `global:${rid}:${parent}`, id: '', name: '', parent, mode: type, subject: rid, subjectId: id, subjectName: name });
@@ -183,7 +185,7 @@ export async function readSchema(client: BmpClient, type: string, signal?: Abort
     return { ...p, reference: field?.reference === true, multiselect: field?.multiselect === true, targets: '[' + targets.join(', ') + ']', principal: field?.reference === true && targets.length > 0 && targets.every(t => allowed.includes(t.split('.').at(-1)!)) };
   });
 }
-const ROOTS = ['organisation', 'templateCategory', 'ceRiskAssessment', 'ceControlMeasure', 'ceIssue', 'ceIncident', 'ceTask', 'ceAsset', 'ceVendor', 'ceIndicator', 'cePolicy', 'ceProject', 'ceContract', 'ceQuestionnaire', 'ceRegulation', 'ceWorkflow', 'cePrivacy', 'ceProcedure', 'ceService', 'ceProduct', 'ceComplianceRequirement', 'ceInquiry', 'ceDPIA', 'ceComment', 'ceAttachment', 'ceDistribution', 'ceAssuranceActivity', 'ceTIA', 'cePreScreening'];
+export const ROOTS = ['organisation', 'templateCategory', 'ceRiskAssessment', 'ceControlMeasure', 'ceIssue', 'ceIncident', 'ceTask', 'ceAsset', 'ceVendor', 'ceIndicator', 'cePolicy', 'ceProject', 'ceContract', 'ceQuestionnaire', 'ceRegulation', 'ceWorkflow', 'cePrivacy', 'ceProcedure', 'ceService', 'ceProduct', 'ceComplianceRequirement', 'ceInquiry', 'ceDPIA', 'ceComment', 'ceAttachment', 'ceDistribution', 'ceAssuranceActivity', 'ceTIA', 'cePreScreening'];
 export async function searchAccessObjects(client: BmpClient, query: string, type?: string, prototypes = false, signal?: AbortSignal, containers = false, containerFor?: string): Promise<AccessChoice[]> {
   if (query.length > 200) throw new Error('Search is limited to 200 characters.');
   query = query.trim();

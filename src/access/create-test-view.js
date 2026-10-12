@@ -1,7 +1,13 @@
 import { createFieldValue, readCreateValues } from './create-test-model.js';
 import { fieldKind } from './schema-model.js';
+import { defaultFieldState } from './create-default-model.js';
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+export function renderDefaultOrigin(check, name, icon) {
+  const origin=defaultFieldState(check,name);
+  return origin ? `<span class="create-origin">${origin.inherited?'From default object':'Override'}${!origin.inherited?`<button type="button" data-command="create-reset-default" data-field="${esc(name)}" title="Restore default value">${icon('reset')}Reset</button>`:''}</span>` : '';
+}
 
 export function renderCreateTest(check, { properties, suggested, objectLabel, loaded, icon }) {
   let values, error = '';
@@ -26,6 +32,7 @@ export function renderCreateTest(check, { properties, suggested, objectLabel, lo
     }
     control = control.replace(/^<button/, `<button id="create-input-${esc(name)}"`);
     const supplied = entry.supplied || numberDraft !== undefined;
+    control+=renderDefaultOrigin(check,name,icon);
     return `<div class="create-value-row" data-create-row="${esc(name)}"><label for="create-input-${esc(name)}">${esc(label)}${label !== name ? `<code title="new.${esc(name)}">${esc(name)}</code>` : ''}</label><div class="create-value-control">${control}</div><button type="button" class="icon-button" data-command="create-omit" ${attr} ${!supplied && !check.omittedValues?.[name] ? 'disabled' : ''} title="${supplied ? 'Omit ' : 'Restore '}${esc(label)}" aria-label="${supplied ? 'Omit ' : 'Restore '}${esc(label)}">${icon(supplied ? 'close' : 'undo')}</button><button type="button" class="icon-button" data-command="create-field-menu" ${attr} title="${esc(label)} options" aria-label="${esc(label)} options">${icon('more')}</button></div>`;
   };
   const fields = values ? [...new Set([...suggested, ...(check.createFields ?? []), ...Object.keys(check.createNumberDrafts ?? {}), ...Object.keys(values.properties ?? {}), ...Object.keys(values.references ?? {})])] : [];

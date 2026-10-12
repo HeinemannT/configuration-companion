@@ -1,10 +1,16 @@
 import { PBAC_ACTIONS, pbacAction, pbacEffect, pbacGrouping, pbacActions, togglePBACAction } from './pbac-syntax.js';
 import { ruleDescription } from './pbac-annotations.js';
 import { createPBACCatalogue } from './pbac-catalogue.js';
+import { genericField, propertyChoices } from './pbac-fields.js';
 import { icon } from './icons';
 import { renderTrace, expandTrace, selectedRuleTrace } from './trace-view';
+import { traceRules, traceOutcome, traceRequestLabel } from './trace-summary';
+import { createMatrixIndex } from './matrix-model.js';
+import { matrixState, mountMatrix } from './matrix-view.js';
+import { renderEngineTrace, mountEngineTrace } from './trace-review';
 import { createInputs, initializeCreate, readCreateValues, createFieldValue, setCreateValue, setCreateNumber, omitCreateValue, createResource, testContextRids } from './create-test-model.js';
-import { renderCreateTest } from './create-test-view.js';
+import { renderCreateTest, renderDefaultOrigin } from './create-test-view.js';
+import { useCreateDefault, resetCreateDefault, changeCreateType } from './create-default-model.js';
 import { parseAccessDestination } from '../lib/access-workspace/entry';
 import { referenceIdentity, selectedReferenceAccessor, chooseReference, editableReferenceValue, editReferenceText } from './reference-model.js';
 import {
@@ -143,6 +149,7 @@ export function mountWorkspace({
   const state = {
     kind: 'role', rid: '', empty: true, tabs: [],
     testing: false, objectTest: null,
+    matrixShowing: false, matrixOpen: false, matrix: matrixState(), matrixTesting: false, matrixTest: null,
     search: '',
     closed: new Set(model.roles.map(r => r.rid)),
     statement: 0,
@@ -161,9 +168,10 @@ export function mountWorkspace({
     picker: null,
     drag: null
   };
-  const testKey = () => state.testing ? 'object:' + state.objectTest.rid : `${state.kind}:${state.rid}:${state.kind==='policy'?state.statement:0}`;
+  const testKey = () => state.matrixTesting ? `matrix:${state.matrixTest.role}:${state.matrixTest.type}` : state.testing ? 'object:' + state.objectTest.rid : `${state.kind}:${state.rid}:${state.kind==='policy'?state.statement:0}`;
 
   function defaultTest() {
+    if (state.matrixTesting) return { mode:'role', subject:state.matrixTest.role, action:'Read', resource:'', proposed:'{}', result:null, typeHint:state.matrixTest.type };
     if (state.testing) return { mode: 'user', subject: '', userId: '', action: 'Read', resource: state.objectTest.rid, proposed: '{}', result: null };
     const r = current();
     if (state.kind === 'role') return {
@@ -291,6 +299,7 @@ export function mountWorkspace({
     state.documents ??= new Map();
     captureView();
     state.testing = false;
+    state.matrixShowing = false; state.matrixTesting = false;
     state.scopeSelection = scopeSelection;
     const saved = state.documents.get(kind + ':' + rid);
     state.historyShowing = false;
@@ -342,7 +351,7 @@ export function mountWorkspace({
     renderTree(true);
     renderTabs();
     renderEditor();
-    $('#selection-kind').textContent = state.historyShowing ? 'History' : state.reviewing ? 'Environment' : state.empty ? '' : state
+    $('#selection-kind').textContent = state.historyShowing ? 'History' : state.reviewing ? 'Environment' : state.matrixShowing ? 'Access matrix' : state.testing ? 'Access test' : state.empty ? '' : state
       .kind === 'role' ? 'Role' : 'Policy';
     $('.doc-tab.active')?.scrollIntoView({
       block: 'nearest',
@@ -353,6 +362,7 @@ export function mountWorkspace({
   function renderToolbarBase() {
     renderSearchTools();
     $('#environment-name').textContent = environment.name;
+    $('.matrix-launch')?.setAttribute('aria-pressed',String(state.matrixShowing&&!state.historyShowing&&!state.reviewing));
     for (const cmd of ['undo', 'redo', 'explorer', 'help']) {
       $(`.icon-button[data-command="${cmd}"]`).innerHTML = icon(cmd);
     }
@@ -408,15 +418,17 @@ export function mountWorkspace({
     const key = state.kind + ':' + state.rid + ':' + title;
     return `<div class="section-heading"><h2><button class="section-label" data-command="toggle-section" data-section="${esc(key)}" aria-expanded="${!collapsedSections.has(key)}"><span class="disclosure">${icon('down')}</span>${icon(i)}<span>${title}</span>${count!==''?'<span class="section-count">'+count+'</span>':''}</button></h2><span class="spacer"></span>${tools}</div>`;
   }
-  let jsonEditor = null, displayedView = null, jsonOutlineVisible = false;
+  let jsonEditor = null, displayedView = null, jsonOutlineVisible = false, testReturn = null, matrixView = null, matrixIndex = null, matrixBaseline = null;
   const editorLoader = createLazyEditor(() => import('./json-editor.js'));
   let pendingJSONFind = '';
   let pendingJSONStatement = null;
   const jsonBookmarks = new Map();
-  const viewRoute = () => ({ surface: state.historyShowing ? 'history' : state.reviewing ? 'review' : state.testing ? 'test' : state.empty ? 'empty' : 'record',
-    kind: state.kind, rid: state.testing && !state.historyShowing ? state.objectTest.rid : state.rid, statement: state.statement, scopeSelection: state.scopeSelection ?? null,
+  const viewRoute = () => ({ surface: state.historyShowing ? 'history' : state.reviewing ? 'review' : state.matrixShowing ? 'matrix' : state.matrixTesting ? 'matrix-test' : state.testing ? 'test' : state.empty ? 'empty' : 'record',
+    kind: state.kind, rid: state.matrixTesting ? testKey() : state.testing && !state.historyShowing ? state.objectTest.rid : state.rid, statement: state.statement, scopeSelection: state.scopeSelection ?? null,
+    ...(state.matrixTesting ? { matrixTest: state.matrixTest } : {}),
     ...(state.historyShowing ? { returnTo: state.historyReturn } : {}) });
   function captureView(withEditor = true) {
+    matrixView?.capture();
     if (displayedView?.surface !== 'record') return;
     state.documents ??= new Map();
     state.documents.set(displayedView.kind + ':' + displayedView.rid, { statement: displayedView.statement,
@@ -428,14 +440,19 @@ export function mountWorkspace({
       if (jsonBookmarks.size > 20) jsonBookmarks.delete(jsonBookmarks.keys().next().value);
     }
   }
-  const navigation = createViewNavigation(window.history, snapshot.environment, route => {
+  function restoreRoute(route) {
     captureView();
     displayedView = null;
     closePicker(false);
     state.kind = route.kind; state.rid = route.rid;
     state.view = policyEditorView();
-    state.testing = route.surface === 'test';
-    if (state.testing) {
+    state.matrixShowing = route.surface === 'matrix';
+    state.matrixOpen ||= state.matrixShowing;
+    state.matrixTesting = route.surface === 'matrix-test' && !!route.matrixTest && model.roles.some(r => r.rid === route.matrixTest.role);
+    if (state.matrixTesting) state.matrixTest = route.matrixTest;
+    state.testing = route.surface === 'test' || state.matrixTesting;
+    if (state.matrixTesting) { state.testOpen.add(testKey()); state.rid=''; }
+    else if (state.testing) {
       state.objectTest = context.objects.find(o => o.rid === route.rid) ?? { rid: route.rid };
       state.testOpen.add(testKey());
       state.rid = '';
@@ -449,7 +466,7 @@ export function mountWorkspace({
     state.reviewing = route.surface === 'review';
     state.reviewOpen ||= state.reviewing;
     state.empty = route.surface === 'empty' || !current();
-    if (state.empty && !state.testing && !state.historyShowing && !state.reviewing) route.surface = 'empty';
+    if (state.empty && !state.testing && !state.matrixShowing && !state.historyShowing && !state.reviewing) route.surface = 'empty';
     if (!state.empty && state.kind === 'role') {
       for (const role of ancestry(model.roles, state.rid)) state.closed.delete(role.rid);
       revealDefinitionPath(state.scopeSelection);
@@ -457,7 +474,8 @@ export function mountWorkspace({
     render();
     $('#editor').scrollTop = state.documents?.get(state.kind + ':' + state.rid)?.scroll ?? 0;
     if (state.scopeSelection) revealDefinitionEditor(false);
-  }, window.sessionStorage);
+  }
+  const navigation = createViewNavigation(window.history, snapshot.environment, restoreRoute, window.sessionStorage);
   window.addEventListener('popstate', event => navigation.pop(event.state));
   $('#editor').addEventListener('scroll', () => captureView(false), { passive: true });
   function syncView() {
@@ -474,12 +492,13 @@ export function mountWorkspace({
     $('#dock').hidden = true;
     $('.workarea').classList.remove('test-docked');
     captureView();
+    matrixView?.destroy(); matrixView = null;
     editorLoader.cancel();
     pendingJSONFind = '';
     pendingJSONStatement = null;
     jsonEditor?.destroy();
     jsonEditor = null;
-    $('#editor').classList.remove('json-workspace', 'history-workspace');
+    $('#editor').classList.remove('json-workspace', 'history-workspace', 'matrix-workspace');
     $('.workarea').classList.toggle('object-testing', state.testing && !state.historyShowing && !state.reviewing);
     syncView();
     if (state.historyShowing) {
@@ -488,6 +507,15 @@ export function mountWorkspace({
     }
     if (state.reviewing) {
       renderReview();
+      return;
+    }
+    if (state.matrixShowing) {
+      $('#editor').classList.add('matrix-workspace');
+      if (matrixBaseline !== baseline) { matrixIndex = createMatrixIndex(baseline, snapshot.classes, snapshot.typeChildren); matrixBaseline = baseline; }
+      matrixView = mountMatrix($('#editor'), { index:matrixIndex, state:state.matrix, canOpen:canOpenSavedRule,
+        changed:() => { void saveWorkspace().catch(showError); },
+        openRule:(rid, statement) => { captureView(); enter({kind:'policy',rid,statement}); },
+        test:openMatrixTest });
       return;
     }
     if (state.testing) {
@@ -532,6 +560,33 @@ export function mountWorkspace({
     $('#editor').innerHTML = html;
   }
 
+  function showMatrix() {
+    captureView();
+    state.matrixShowing=true; state.matrixOpen=true; state.matrixTesting=false; state.testing=false;
+    state.historyShowing=false; state.reviewing=false; state.empty=true; state.rid='';state.kind='role';state.scopeSelection=null;
+    render();
+  }
+
+  function openMatrixTest(selection, action) {
+    if (!selection || !model.roles.some(r => r.rid === selection.role)) return;
+    captureView();
+    state.matrixTest={...selection}; state.matrixTesting=true; state.testing=true; state.matrixShowing=false;
+    state.historyShowing=false;state.reviewing=false;state.empty=true;state.rid='';state.kind='role';state.scopeSelection=null;
+    if (action && state.check.action!==action) state.check=switchTestAction(state.check,action);
+    seedMatrixCreateType();
+    state.check.viewScroll=0; // Preparing a test always reveals the inputs.
+    state.testOpen.add(testKey());
+    render();
+    $('#dock [data-command="'+(state.check.action==='Create'?'create-destination':state.check.resource?'prepare-check':'choose-object')+'"]')?.focus({preventScroll:true});
+  }
+
+  function seedMatrixCreateType() {
+    if (!state.matrixTesting || state.check.action !== 'Create') return;
+    try {
+      if (!readCreateValues(state.check.proposed).type) setCreateValue(state.check,'type','properties',state.matrixTest.type);
+    } catch { /* Keep unfinished JSON editable when returning to its test. */ }
+  }
+
   function scopeReference(row) {
     const value = editableReferenceValue(row), identity = referenceIdentity(row);
     const issue = identity.status === 'conflict' ? 'Stored class and reference disagree. Choose the intended reference.' :
@@ -564,7 +619,7 @@ export function mountWorkspace({
       pending = differences().length || state.raw.size || unfinishedIdEdits(model, state.idDraft).length,
       height = Math.max(140, Math.min(Math.floor(innerHeight * .6), state.testDockHeight ?? (['Create','Update'].includes(q.action) ? 230 : 164)));
     el.style.height = height + 'px';
-    el.innerHTML = `<div class="test-resize" role="separator" tabindex="0" aria-label="Resize access test" aria-orientation="horizontal" aria-valuemin="140" aria-valuemax="${Math.floor(innerHeight*.6)}" aria-valuenow="${height}" title="Drag to resize · Up / Down"></div><div class="test-heading"><strong>Access test</strong><span class="test-saved-scope" title="Tests saved PBAC policies across the environment, including policies other than the one open here.">All saved policies</span>${state.kind==='policy'?'<span class="test-seed">'+testSeedLabel()+'</span>':''}<span class="spacer"></span>${pending?'<span class="test-draft-note">Draft edits excluded</span>':''}${ib('close','close-test','Close access test')}</div><div class="test-body"><div class="test-inputs"><div class="test-subject-field"><div class="test-field-label"><span>${q.mode==='role'?'Role':'User'}</span><button class="quiet-button" data-command="test-mode">${q.mode==='role'?'Use user':state.kind==='role'||defaultTest().mode==='role'?'Use role':'Choose role…'}</button></div>${q.mode==='role'?'<button class="test-role-value" data-command="choose-test-role" title="'+esc(role?.id??'Choose role')+'">'+icon('role')+'<strong>'+esc(role?.name??'Choose role')+'</strong>'+icon('down')+'</button>':userPickerButton(selectedTestUser(q))}</div><div class="test-action-field"><span class="test-field-label">Action</span><div class="action-segment">${A.map(a=>`<button data-command="test-action" data-action-value="${a}" class="${a===q.action?'active':''}" aria-pressed="${a===q.action}">${a}</button>`).join('')}</div></div>${q.action==='Create'?createTypeControl(q):`<label class="object-label">Object<button class="object-picker picker-trigger ${chosen?'has-object':''}" data-command="choose-object" aria-label="Choose test object" title="${esc(chosen?[chosen.type,chosen.id,chosen.path].filter(Boolean).join(' · '):'Search by name or ID; filter by type')}">${icon('object')}<span><strong>${esc(chosen?.name??(q.resource||'Find an object…'))}</strong></span>${icon('search')}</button></label>`}<button class="primary test-run" data-command="prepare-check" title="Run access test · Ctrl+Enter" ${!q.result?.running&&(q.action==='Create'?createReady(q):q.resource)&&(q.mode==='role'?role:selectedTestUser(q))?'':'disabled'}>${icon('check')}${q.result?.running?'Testing…':'Run test'}</button>${testChangeFields(q,chosen)}</div>${q.mode==='user'?'<p class="test-scope">Includes all roles assigned to this user.</p>':''}${q.rerunRequired&&!q.result?'<p class="test-rerun" role="status">Applied. Run this test again on the saved configuration.</p>':''}<div class="check-result" id="check-result">${q.result?renderResult():''}</div></div>`;
+    el.innerHTML = `<div class="test-resize" role="separator" tabindex="0" aria-label="Resize access test" aria-orientation="horizontal" aria-valuemin="140" aria-valuemax="${Math.floor(innerHeight*.6)}" aria-valuenow="${height}" title="Drag to resize · Up / Down"></div><div class="test-heading"><strong>Access test</strong><span class="test-saved-scope" title="Tests saved PBAC policies across the environment, including policies other than the one open here.">All saved policies</span>${state.kind==='policy'?'<span class="test-seed">'+testSeedLabel()+'</span>':''}<span class="spacer"></span>${pending?'<span class="test-draft-note">Draft edits excluded</span>':''}${ib('close','close-test','Close access test')}</div><div class="test-body"><div class="test-inputs ${q.action==='Create'?'is-create':''}"><div class="test-subject-field"><div class="test-field-label"><span>${q.mode==='role'?'Role':'User'}</span><button class="quiet-button" data-command="test-mode">${q.mode==='role'?'Use user':state.kind==='role'||defaultTest().mode==='role'?'Use role':'Choose role…'}</button></div>${q.mode==='role'?'<button class="test-role-value" data-command="choose-test-role" title="'+esc(role?.id??'Choose role')+'">'+icon('role')+'<strong>'+esc(role?.name??'Choose role')+'</strong>'+icon('down')+'</button>':userPickerButton(selectedTestUser(q))}</div><div class="test-action-field"><span class="test-field-label">Action</span><div class="action-segment">${A.map(a=>`<button data-command="test-action" data-action-value="${a}" class="${a===q.action?'active':''}" aria-pressed="${a===q.action}">${a}</button>`).join('')}</div></div>${q.action==='Create'?'':`<label class="object-label">Object<button class="object-picker picker-trigger ${chosen?'has-object':''}" data-command="choose-object" aria-label="Choose test object" title="${esc(chosen?[chosen.type,chosen.id,chosen.path].filter(Boolean).join(' · '):'Search by name or ID; filter by type')}">${icon('object')}<span><strong>${esc(chosen?.name??(q.resource||'Find an object…'))}</strong></span>${icon('search')}</button></label>`}<button class="primary test-run" data-command="prepare-check" title="Run access test · Ctrl+Enter" ${!q.result?.running&&(q.action==='Create'?createReady(q):q.resource)&&(q.mode==='role'?role:selectedTestUser(q))?'':'disabled'}>${icon('check')}${q.result?.running?'Testing…':'Run test'}</button>${testChangeFields(q,chosen)}</div>${q.mode==='user'?'<p class="test-scope">Includes all roles assigned to this user.</p>':''}${q.rerunRequired&&!q.result?'<p class="test-rerun" role="status">Applied. Run this test again on the saved configuration.</p>':''}<div class="check-result" id="check-result">${q.result?renderResult():''}</div></div>`;
     const resize = el.querySelector('.test-resize');
     const size = value => {
       state.testDockHeight = Math.max(140, Math.min(Math.floor(innerHeight * .6), value));
@@ -588,14 +643,20 @@ export function mountWorkspace({
       size(event.key==='Home'?140:event.key==='End'?innerHeight*.6:el.getBoundingClientRect().height+(event.key==='ArrowUp'?24:-24));
       void saveWorkspace().catch(showError);
     });
+    mountResult();
     fitTestDock();
     if (focus) {
       const target = pickerFocusCandidates(focus)[focus.index];
       target?.focus({ preventScroll: true });
       if (selection && target?.setSelectionRange) target.setSelectionRange(...selection);
     }
-    el.querySelector('.test-body').scrollTop = scroll;
-    if (q.action === 'Create') { void loadCreateSchema(q); void loadCreateLabels(q); }
+    const testBody=el.querySelector('.test-body');
+    testBody.scrollTop = q.viewScroll ?? scroll;
+    testBody.addEventListener('scroll',()=>{
+      if (!testBody.isConnected || el.hidden || state.check !== q) return;
+      q.viewScroll=testBody.scrollTop;void saveWorkspace().catch(showError);
+    },{passive:true});
+    if (q.action === 'Create') { void loadCreateSchema(q); void loadCreateLabels(q); void loadCreationRoot(q); }
   }
 
   function fitTestDock() {
@@ -603,24 +664,30 @@ export function mountWorkspace({
     if (dock.hidden || state.testing || state.testDockHeight != null) return;
     const controls = dock.querySelector('.test-inputs'), body = dock.querySelector('.test-body');
     if (!controls || !body) return;
-    // Fit the input form on narrow panes. Results scroll; manual resizing always wins.
+    // Show the decision and first explanation after a run. Manual sizing wins.
     const header = dock.offsetHeight - body.offsetHeight,
-      height = Math.min(Math.floor(innerHeight * .6), Math.max(164, header + controls.offsetHeight + 28));
+      resultSpace = state.check.result && !state.check.result.running ? Math.min(260, $('#check-result').offsetHeight + 16) : 28,
+      height = Math.min(Math.floor(innerHeight * .6), Math.max(164, header + controls.offsetHeight + resultSpace));
     dock.style.height = height + 'px';
     dock.querySelector('.test-resize').setAttribute('aria-valuenow', String(height));
+  }
+
+  function mountResult() {
+    const r=state.check.result;
+    if (r?.trace) mountEngineTrace($('#check-result'),r.trace,canOpenSavedRule,r.engineState??={},()=>{void saveWorkspace().catch(showError);});
   }
 
   function renderResult() {
     const r = state.check.result;
     if (!r) return '';
     if (r.running) return '<span>Testing saved policies…</span>';
-    if (r.error) return `<span class="bad">${esc(r.error)}</span>`;
+    if (r.error) return `<div class="test-error bad" role="alert">${icon('warning')}<div><strong>Access test failed</strong><p>${esc(r.error)}</p><small>${r.stale?'Inputs changed while this test ran. Run it again.':'For the inputs above. No access decision was returned.'}</small></div></div>`;
     const t = r.trace;
-    const result = t?.timedOut ? 'Timed out' : t?.result === true ? 'Allowed' : t?.result === false ? 'Denied' : 'No access decision';
+    const outcome = t ? traceOutcome(t) : { tone: 'unknown', label: 'No access decision', glyph: 'warning' };
     const selected = t && r.selectedRule && canOpenSavedRule(r.selectedRule.rid, r.selectedRule.index)
       ? selectedRuleTrace(t, r.selectedRule.rid, r.selectedRule.index) : null;
     const summary = selected ? `<div class="selected-rule-result"><span>Selected saved rule</span><button type="button" class="quiet-button" data-command="reveal-test-trace" data-trace-target="${selected.path ?? ''}">${esc(selected.label)}</button>${selected.failures.slice(0,4).map(f => `<button type="button" class="test-failure-link" data-command="focus-test-failure" data-field="${esc(f.field ?? '')}" data-trace-target="${esc(f.path)}">${esc(f.label)}${f.field && r.request?.action === 'CREATE' ? ' · edit input' : ' · show trace'}</button>`).join('')}</div>` : '';
-    return `<div class="result-line"><span>Overall access</span><strong>${esc(result)}</strong>${r.stale?'<span class="result-stale">Inputs or configuration changed · run again</span>':''}</div>${summary}${t?'<details class="test-full-trace"><summary>Full trace</summary>'+renderTrace(t, canOpenSavedRule)+'</details>':''}<details><summary>Request</summary><pre>${esc(JSON.stringify(r.request,null,2))}</pre></details>`;
+    return `<div class="result-line" role="status" data-outcome="${r.stale?'unknown':outcome.tone}">${icon(r.stale?'history':outcome.glyph)}<strong>${r.stale?'Previous result: ':''}${esc(outcome.label)}</strong><span>${esc(t?traceRequestLabel(t):'')}</span>${r.stale?'<span class="result-stale">Changed since test \u00b7 run again</span>':''}</div>${summary}${t?renderEngineTrace(t,canOpenSavedRule,r.engineState??={}):''}<div class="test-diagnostics">${t?'<details class="test-full-trace"><summary>'+icon('down')+icon('list')+'Raw trace tree</summary><div class="test-diagnostic-body">'+renderTrace(t, canOpenSavedRule)+'</div></details>':''}<details><summary>${icon('down')}${icon('json')}Request JSON</summary><div class="test-diagnostic-body"><pre>${esc(JSON.stringify(r.request,null,2))}</pre></div></details></div>`;
   }
 
   function describeChange(d) {
@@ -785,10 +852,16 @@ export function mountWorkspace({
   function deleteScope(rid) {
     const r = model.scope.find(x => x.rid === rid),
       children = descendants(rid);
-    const remove = () => commit(() => {
-      const ids = new Set([rid, ...children.map(x => x.rid)]);
-      model.scope = model.scope.filter(x => !ids.has(x.rid));
-    }, 'Removed local ' + (r.kind === 'RoleAssignment' ? 'assignment' : 'branch'));
+    if (!r) return;
+    const fromTree = !!document.activeElement?.closest('#tree,#menu');
+    const remove = () => {
+      commit(() => {
+        const ids = new Set([rid, ...children.map(x => x.rid)]);
+        model.scope = model.scope.filter(x => !ids.has(x.rid));
+        if (ids.has(state.scopeSelection)) state.scopeSelection = model.scope.some(x => x.rid === r.parent) ? r.parent : null;
+      }, 'Removed local ' + (r.kind === 'RoleAssignment' ? 'assignment' : 'branch'));
+      if (fromTree) queueMicrotask(() => $(`#tree [data-scope-node="${r.parent}"],#tree [data-open="${r.parent}"]`)?.focus({ preventScroll: true }));
+    };
     if (children.length) dialog('Remove ' + (r.kind === 'RoleAssignment' ? 'assignment' : 'branch'),
       `<p>${esc(r.name||r.field)} and ${children.length} child rule${children.length===1?'':'s'} will be removed from the draft.</p>`,
       'Remove', remove);
@@ -834,10 +907,14 @@ export function mountWorkspace({
     const menu = $('#menu');
     menu.innerHTML = items;
     menu.hidden = false;
-    const rect = anchor.getBoundingClientRect();
-    menu.style.left = Math.max(8, Math.min(rect.left, innerWidth - menu.offsetWidth - 8)) + 'px';
-    menu.style.top = Math.min(rect.bottom + 3, innerHeight - menu.offsetHeight - 8) + 'px';
+    positionMenu(anchor.getBoundingClientRect());
     menu.querySelector('button')?.focus();
+  }
+
+  function positionMenu(rect) {
+    const menu = $('#menu');
+    menu.style.left = Math.max(8, Math.min(rect.left, innerWidth - menu.offsetWidth - 8)) + 'px';
+    menu.style.top = Math.max(8, Math.min(rect.bottom + 3, innerHeight - menu.offsetHeight - 8)) + 'px';
   }
 
   function conditionMenu(anchor, path) {
@@ -1026,13 +1103,26 @@ export function mountWorkspace({
   }
 
   async function command(cmd, el) {
+    if (cmd === 'matrix') { showMatrix(); return; }
+    if (cmd === 'close-matrix') { state.matrixOpen=false; if(state.matrixShowing){state.matrixShowing=false;state.empty=true;} render(); return; }
+    if (cmd === 'matrix-test') { openMatrixTest(state.matrixTest); return; }
+    if (cmd === 'close-matrix-test') { if(state.matrixTesting){state.testOpen.delete(testKey());showMatrix();} state.matrixTest=null;renderTabs();return; }
+    if (cmd === 'return-to-test' && testReturn) {
+      const target = testReturn; testReturn = null;
+      state.testOpen.add(target.key); restoreRoute(target.route);
+      return;
+    }
     if (cmd === 'navigate-back' || cmd === 'navigate-forward') { window.history.go(cmd === 'navigate-back' ? -1 : 1); return; }
     if (cmd === 'tree-more') { state.treeLimits[el.dataset.kind] += 300; renderTree(); return; }
     if (cmd === 'members-more') { state.membershipLimit = (state.membershipLimit ?? 100) + 100; renderEditor(); return; }
     if (applying) return;
     if (cmd === 'close-object-test') { if (state.testing) closeAccessTest(); else { state.objectTest = null; renderTabs(); } return; }
     if (cmd === 'open-test') { enter({ kind: 'test', object: state.objectTest }); return; }
-    if (cmd === 'open-trace-policy') { enter({ kind: 'policy', rid: el.dataset.rid, statement: Number(el.dataset.statement) }); return; }
+    if (cmd === 'open-trace-policy') {
+      state.check.viewScroll = $('#dock .test-body')?.scrollTop ?? 0;
+      testReturn = { route: viewRoute(), key: testKey() };
+      enter({ kind: 'policy', rid: el.dataset.rid, statement: Number(el.dataset.statement) }); return;
+    }
     if (cmd === 'apply-workspace') return applyWorkspace();
     if (cmd === 'reload-workspace') return reloadWorkspace();
     if (await dropdownCommand(cmd, el)) return;
@@ -1249,7 +1339,8 @@ export function mountWorkspace({
     }
     if (el.dataset.command) {
       if (!el.closest('#menu') || !['more', 'check-examples', 'add-condition'].includes(el.dataset.command)) $('#menu').hidden = true;
-      Promise.resolve(command(el.dataset.command, el)).catch(error => status(error.message));
+      const failureContext = errorContext();
+      Promise.resolve(command(el.dataset.command, el)).catch(error => showError(error, failureContext));
     }
   });
   document.addEventListener('change', e => {
@@ -1386,7 +1477,7 @@ export function mountWorkspace({
       state.check[el.dataset.check] = el.value;
       if (state.check.result) {
         state.check.result.stale = true;
-        if ($('#check-result')) $('#check-result').innerHTML = renderResult();
+        if ($('#check-result')) { $('#check-result').innerHTML = renderResult(); mountResult(); }
       }
       if (state.check.action === 'Create' && el.dataset.check === 'proposed') {
         const run = $('#dock [data-command="prepare-check"]');
@@ -1414,6 +1505,9 @@ export function mountWorkspace({
       omit.title = (supplied ? 'Omit ' : 'Restore ') + el.getAttribute('aria-label');
       omit.setAttribute('aria-label', omit.title);
       omit.innerHTML = icon(supplied ? 'close' : 'undo');
+      const control = el.closest('.create-value-control');
+      control.querySelector('.create-origin')?.remove();
+      control.insertAdjacentHTML('beforeend', renderDefaultOrigin(q,field,icon));
     }
   });
   $('#dialog-form').addEventListener('submit', e => {
@@ -1428,6 +1522,7 @@ export function mountWorkspace({
   function closeAccessTest() {
     if (!state.testOpen.has(testKey())) return;
     state.testOpen.delete(testKey());
+    if (state.matrixTesting) { showMatrix(); return; }
     if (state.testing) {
       state.testing = false; state.objectTest = null;
       const last = state.tabs.at(-1);
@@ -1485,7 +1580,8 @@ export function mountWorkspace({
       render();
     } else if (key === 'enter') {
       e.preventDefault();
-      if (state.testOpen.has(testKey()) && !$('#dock').hidden) void prepareCheck();
+      if (state.matrixShowing) { if (state.matrix.selected) openMatrixTest(state.matrix.selected); }
+      else if (state.testOpen.has(testKey()) && !$('#dock').hidden) void prepareCheck();
       else { state.testOpen.add(testKey()); renderEditor(); }
     } else if (key === 'z' && !typing && !e.target.closest('.cm-editor')) {
       e.preventDefault();
@@ -1575,7 +1671,7 @@ export function mountWorkspace({
     const host = $('#dialog').open ? $('#dialog') : document.body;
     const div = document.createElement('div');
     div.id = 'picker';
-    div.className = 'picker-popover' + (options.mode === 'operator' ? ' operator-picker' : options.reference || options.referenceClass ? ' reference-picker' : '');
+    div.className = 'picker-popover' + (options.mode === 'property' ? ' property-picker' : options.mode === 'operator' ? ' operator-picker' : options.reference || options.referenceClass ? ' reference-picker' : '');
     div.setAttribute('role', 'dialog');
     div.setAttribute('aria-label', options.title);
     host.append(div);
@@ -1651,12 +1747,7 @@ export function mountWorkspace({
     }] : []), ...results];
   }
 
-  const typeLabel = type => ({
-    Organisation: 'Organisations',
-    CeRiskAssessment: 'Risk assessments',
-    CeControlMeasure: 'Controls',
-    CeProject: 'CeProject'
-  })[type] ?? type;
+  const typeLabel = type => type;
 
   function renderPicker() {
     const p = state.picker;
@@ -1690,7 +1781,7 @@ export function mountWorkspace({
       // Results may arrive while the filter has keyboard focus. Keep the control
       // itself mounted unless its selected type changed.
       if (filter.querySelector('[data-command="picker-browse-types"]')?.dataset.value !== p.type) filter.innerHTML =
-        `<div class="object-type-filter"><span>Type</span><button type="button" data-command="picker-browse-types" data-value="${esc(p.type)}" aria-label="Filter by object type: ${esc(p.type ? typeLabel(p.type) : 'All types')}" title="Filter by type · Alt+↓">${icon('type')}<span>${esc(p.type ? typeLabel(p.type) : 'All types')}</span>${icon('down')}</button>${p.type ? '<button type="button" class="icon-button" data-command="picker-type" data-value="" aria-label="Clear type filter" title="Clear type filter">'+icon('close')+'</button>' : ''}</div>`;
+        `<div class="object-type-filter"><span>Type</span><button type="button" data-command="picker-browse-types" data-value="${esc(p.type)}" aria-label="Filter by object type: ${esc(p.type ? typeLabel(p.type) : 'All types')}" title="Filter by type · Alt+↓">${icon('type')}<span>${esc(p.type ? typeLabel(p.type) : 'All types')}</span>${icon('down')}</button>${p.type ? '<button type="button" class="icon-button" data-command="picker-type" data-value="" aria-label="Clear type filter" title="Clear type filter">'+icon('close')+'</button>' : ''}</div>${!p.type ? '<div class="object-type-suggestions" aria-label="Common object types">'+['Organisation','CeRiskAssessment','CeControlMeasure'].filter(type=>Object.hasOwn(schemaData.classes,type)).map(type=>'<button type="button" data-command="picker-type" data-value="'+type+'">'+esc(typeLabel(type))+'</button>').join('')+'</div>':''}`;
     }
     $('#picker-results').innerHTML = shown.map((r, i) =>
       `<button type="button" class="picker-option ${i===p.index?'focused':''} ${selectedObject(r.rid)?'chosen':''}" id="pick-${i}" role="option" tabindex="-1" aria-selected="${selectedObject(r.rid)}" aria-disabled="${!!r.reason}" style="--depth:${p.query?0:r.depth}" data-command="picker-select" data-index="${i}" title="${esc(r.reason||r.id||r.rid)}">${p.kind==='role'&&r.rid?roleMark(ancestry(model.roles,r.rid).length):icon(p.kind==='object'?'object':p.kind==='folder'?'folder':'role')}<span><strong>${esc(r.label)}</strong>${r.reason||r.secondary?'<small>'+esc(r.reason||r.secondary)+'</small>':''}</span>${selectedObject(r.rid)?icon('valid'):''}</button>`
@@ -1733,14 +1824,15 @@ export function mountWorkspace({
   function renderObjectTypes(p) {
     const types = [...new Set([...(p.containers ? ['Category'] : []), ...Object.keys(schemaData.classes).filter(t => ['Organisation','Scorecard'].includes(t) || /^Ce/i.test(t)), ...(p.type ? [p.type] : [])])];
     const label = type => type === 'Category' ? 'Folders' : typeLabel(type);
-    p.entries = [{rid:'',label:'All types'}, ...types.sort((a,b) => label(a).localeCompare(label(b))).map(type => ({rid:type,label:label(type)}))]
+    const common = ['Organisation', 'CeRiskAssessment', 'CeControlMeasure', 'Scorecard'].filter(type => types.includes(type));
+    p.entries = [{rid:'',label:'All types'}, ...types.sort((a,b) => (common.includes(a)?0:1)-(common.includes(b)?0:1) || label(a).localeCompare(label(b))).map(type => ({rid:type,label:label(type), common:common.includes(type)}))]
       .filter(row => queryMatches(p.query, row.rid, row.label));
     p.index = Math.min(p.index < 0 ? Math.max(0,p.entries.findIndex(row => row.rid === p.type)) : p.index, p.entries.length - 1);
     const search = $('#picker-query');
     search.placeholder = 'Find an object type…'; search.setAttribute('aria-label', 'Search object types');
     search.setAttribute('aria-activedescendant', p.index >= 0 ? 'pick-' + p.index : '');
     $('#picker .picker-clear').hidden = !p.query;
-    $('#picker-types').innerHTML = `<div class="object-type-filter"><button type="button" class="type-back" data-command="picker-types-back">${icon('back')}Back to objects</button><span>Choose a type</span></div>`;
+    $('#picker-types').innerHTML = `<div class="object-type-filter"><button type="button" class="type-back" data-command="picker-types-back">${icon('back')}Back to objects</button><span>Common types first</span></div>`;
     const list = $('#picker-results');
     list.setAttribute('aria-label', 'Object types'); list.setAttribute('aria-multiselectable', 'false');
     list.innerHTML = p.entries.map((row,i) => `<button type="button" class="picker-option ${i === p.index ? 'focused' : ''} ${row.rid === p.type ? 'chosen' : ''}" id="pick-${i}" role="option" tabindex="-1" aria-selected="${row.rid === p.type}" data-command="picker-select" data-index="${i}">${icon('type')}<span><strong>${esc(row.label)}</strong>${row.rid && row.label !== row.rid ? '<small>'+esc(row.rid)+'</small>' : ''}</span>${row.rid === p.type ? icon('valid') : ''}</button>`).join('') || '<div class="picker-empty">No matching types.</div>';
@@ -1957,6 +2049,20 @@ export function mountWorkspace({
         'context-find', 'Find policies using role', attr) : '') + button('history', 'context-history', 'History for this ' + kind, attr) +
       '<hr>' + button('copy', 'context-duplicate', 'Duplicate ' + kind, attr) + button('trash', 'context-delete', 'Delete ' + kind, attr));
   }
+
+  function treeContextMenu(row, point) {
+    if (row.dataset.scopeNode) {
+      const definition = model.scope.find(r => r.rid === row.dataset.scopeNode);
+      if (!definition) return;
+      const kind = definition.kind === 'RoleAssignment' ? 'assignment' : 'delegation';
+      const attr = `data-rid="${definition.rid}"`;
+      popup(row, button('edit', 'open-definition', 'Edit ' + kind, attr) +
+        button('plus', 'context-add-delegation', 'Add delegation underneath…', attr) + '<hr>' +
+        button('trash', 'delete-scope', 'Delete ' + kind, attr));
+    } else if (row.dataset.folder) folderMenu(row, row.dataset.folder);
+    else recordMenu(row, row.dataset.kind, row.dataset.open);
+    if (point) positionMenu({ left: point.x, bottom: point.y });
+  }
   let feedbackTimer;
 
   function announce(message) {
@@ -2026,6 +2132,7 @@ export function mountWorkspace({
       showPicker(el, {
         kind: 'object',
         title: 'Choose a business object',
+        type: state.check.typeHint ?? '',
         selected: state.check.resource,
         select: (rid, obj) => {
           if (state.check.resource !== rid) delete state.check.rename;
@@ -2054,6 +2161,7 @@ export function mountWorkspace({
     }
     if (cmd === 'test-action') {
       state.check = switchTestAction(state.check, el.dataset.actionValue);
+      seedMatrixCreateType();
       renderDock();
       return true;
     }
@@ -2225,17 +2333,10 @@ export function mountWorkspace({
         $('#menu').hidden = true;
         return;
       }
-      const row = e.target.closest('#tree [data-open],#tree [data-folder]');
+      const row = e.target.closest('#tree [data-open],#tree [data-folder],#tree [data-scope-node]');
       if (!row) return;
       e.preventDefault();
-      const anchor = {
-        getBoundingClientRect: () => ({
-          left: e.clientX,
-          bottom: e.clientY
-        })
-      };
-      if (row.dataset.folder) folderMenu(anchor, row.dataset.folder);
-      else recordMenu(anchor, row.dataset.kind, row.dataset.open);
+      treeContextMenu(row, { x: e.clientX, y: e.clientY });
     });
     document.addEventListener('keydown', e => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's' && e.target.closest('.cm-editor')) {
@@ -2286,22 +2387,22 @@ export function mountWorkspace({
     InwardsReferenceRoleDelegationRule: {
       label: 'Objects pointing here',
       verb: 'Their reference points to the previous object.',
-      icon: 'scope'
+      icon: 'delegation-in'
     },
     OutwardsReferenceRoleDelegationRule: {
       label: 'Objects linked from here',
       verb: 'Follow the reference on the previous object.',
-      icon: 'arrow'
+      icon: 'delegation-out'
     },
     HierarchicalDownwardsRoleDelegationRule: {
       label: 'Descendant objects',
       verb: 'Carry the role down the object hierarchy.',
-      icon: 'down'
+      icon: 'delegation-down'
     },
     HierarchicalUpwardsRoleDelegationRule: {
       label: 'Ancestor objects',
       verb: 'Carry the role up the object hierarchy.',
-      icon: 'scope'
+      icon: 'delegation-up'
     }
   };
 
@@ -2419,12 +2520,11 @@ export function mountWorkspace({
       ).join(''));
   }
 
-  function directionChoices(anchor, commandName, attr) {
+  function directionChoices(anchor, commandName, rid) {
     const key = commandName === 'reach-insert' ? 'parent' : 'rid',
-      rid = anchor.dataset[key],
       current = model.scope.find(r => r.rid === rid);
     choicePicker(anchor, {
-      title: commandName === 'reach-insert' ? 'Extend this assignment' : 'Delegation direction',
+      title: commandName === 'reach-insert' ? 'Add delegation' : 'Delegation direction',
       width: 365,
       selected: commandName === 'reach-insert' ? '' : current?.kind,
       rows: Object.entries(reachDirections).map(([kind, d]) => ({
@@ -2448,25 +2548,24 @@ export function mountWorkspace({
       return true;
     }
     if (cmd === 'reach-add') {
-      directionChoices(el, 'reach-insert', 'data-parent="' + el.dataset.parent + '"');
+      directionChoices(el, 'reach-insert', el.dataset.parent);
       return true;
     }
     if (cmd === 'reach-direction') {
-      directionChoices(el, 'reach-set-direction', 'data-rid="' + el.dataset.rid + '"');
+      directionChoices(el, 'reach-set-direction', el.dataset.rid);
       return true;
     }
     if (cmd === 'reach-insert') {
+      if (!model.scope.some(r => r.rid === el.dataset.parent)) return true;
       const rid = draftRid();
-      commit(() => model.scope.push({
-        rid,
-        id: 'draft_delegation_' + stamp(),
-        name: 'New delegation',
-        kind: el.dataset.value,
-        parent: el.dataset.parent,
-        field: '',
-        source: ''
-      }), 'Extended role scope · choose its reference');
-      $(`[data-scope="field"][data-rid="${rid}"]`)?.focus();
+      commit(() => {
+        model.scope.push({ rid, id: 'draft_delegation_' + stamp(), name: 'New delegation', kind: el.dataset.value,
+          parent: el.dataset.parent, field: '', source: '' });
+        state.scopeSelection = rid;
+        revealDefinitionPath(rid);
+      }, 'Added local delegation');
+      mountFastChoices();
+      revealDefinitionEditor(true);
       return true;
     }
     if (cmd === 'reach-set-direction') {
@@ -2561,8 +2660,8 @@ export function mountWorkspace({
 
   function schemaInfo(c, path) {
     const [scope, accessor, ...rest] = c.Left.split('.'), types = typeContext(statement().Resource, path, scope), hint = schemaHints.get(
-        schemaKey(scope)) ?? '', type = types.length === 1 ? types[0] : !types.length || types.includes(hint) ? hint : '', prop = !rest
-      .length ? schemaData.classes[type]?.find(p => p.accessor === accessor) : null;
+        schemaKey(scope)) ?? '', type = types.length === 1 ? types[0] : !types.length || types.includes(hint) ? hint : '', prop = genericField(c.Left) ?? (!rest
+      .length ? schemaData.classes[type]?.find(p => p.accessor === accessor) : null);
     return {
       scope,
       accessor,
@@ -2598,32 +2697,13 @@ export function mountWorkspace({
   }
 
   function schemaFieldRows(p) {
-    const scope = p.scope,
-      props = schemaData.classes[p.browseType] ?? [],
-      known = new Set(['type']);
-    return [{
-      rid: scope + '.type',
-      label: 'Object type',
-      secondary: scope + '.type',
-      icon: 'type',
-      depth: 0
-    }, ...props.filter(x => !known.has(x.accessor)).sort((a, b) => Number(a.system) - Number(b.system) || a.label.localeCompare(b
-      .label)).map(prop => ({
-      rid: scope + '.' + prop.accessor,
-      id: prop.accessor,
-      label: prop.label || prop.accessor,
-      secondary: scope + '.' + prop.accessor,
-      detail: fieldKind(prop),
-      icon: prop.listSet ? 'list' : fieldKind(prop) === 'Reference' ? 'link' : 'sliders',
-      depth: 0
-    }))];
+    return propertyChoices(p.scope, schemaData.classes[p.browseType], p.browseType);
   }
 
   function listValuePreview(prop, items) {
     if (!items.length) return '<span><strong>Choose item…</strong><small>'+esc(prop.listSet.name)+'</small></span>';
-    const preview = items.slice(0, 2);
-    return '<span class="list-value-preview">'+preview.map((item,index)=>
-      `<span class="list-value-pair"><strong>${esc(item.label)}</strong><code>${esc(item.id)}</code>${index===preview.length-1&&items.length>2?'<small class="list-value-more">· +'+(items.length-2)+' more</small>':''}</span>`).join('')+'</span>';
+    return '<span class="list-value-preview">'+items.map(item=>
+      `<span class="list-value-pair"><strong>${esc(item.label)}</strong><code>${esc(item.id)}</code></span>`).join('')+'</span>';
   }
 
   function schemaCondition(node, path) {
@@ -2648,19 +2728,26 @@ export function mountWorkspace({
     const selectValue = isType || !!list,
       unfamiliar = ['resource', 'new'].includes(info.scope) && schemaLoaded.has(info.type) && !info.prop && !['type', 'model'].includes(info
         .accessor);
-    const showLabel = info.prop?.label && info.prop.label !== info.accessor;
+    const showLabel = !info.prop?.builtin && info.prop?.label && info.prop.label !== info.accessor;
     const prefix = c.Left.match(/^(resource|new|user)\./)?.[0] ?? '';
     const hint = comparisonHint(c);
-    const sourceHint = createOnly() && info.scope === 'resource' ? 'Create has no current object. Select resource. to change the source.' : '';
-    const literalControl = typeof c.Right==='string'?`<textarea class="condition-value" rows="1" aria-label="Condition value" title="${esc(c.Right)}" spellcheck="false" data-condition='${encode([...path,'Condition','Right'])}'>${esc(c.Right)}</textarea>`:`<button class="schema-slot schema-value" data-command="edit-condition-value" ${pathAttrs(path)} aria-label="Edit condition value as JSON" title="Edit value without changing its JSON type"><code>${esc(JSON.stringify(c.Right??null))}</code>${icon('edit')}</button>`;
+    const sourceHint = createOnly() && info.scope === 'resource' ? 'Create has no resource. Choose a new field instead.' : '';
+    const literalControl = typeof c.Right==='string'?`<textarea class="condition-value" rows="1" aria-label="Condition value" title="${esc(c.Right)}" spellcheck="false" data-condition='${encode([...path,'Condition','Right'])}'>${esc(c.Right)}</textarea>`:`<button class="schema-slot schema-value" data-command="edit-condition-value" ${pathAttrs(path)} aria-label="Edit condition value as JSON" title="Edit value without changing its JSON type"><code>${esc(JSON.stringify(c.Right??null, null, 2))}</code>${icon('edit')}</button>`;
     const typePreview = '<span class="type-value-preview">'+(values.filter(Boolean).map(value=>'<code>'+esc(value)+'</code>').join('')||'<strong>Choose type…</strong>')+'</span>';
-    return `<div class="schema-condition"><div class="logic-predicate"><div class="logic-comparison"><div class="schema-slot schema-source-control">${['new.','resource.'].includes(prefix)?`<button type="button" class="schema-source" data-command="schema-source" ${pathAttrs(path)} aria-label="Value source: ${esc(prefix.slice(0,-1))}" title="Change value source">${esc(prefix)}</button>`:''}<button type="button" class="schema-field-picker schema-property" data-command="schema-property" ${pathAttrs(path)} aria-label="Choose property: ${esc(c.Left)}" title="${esc(currentLabel+' · '+c.Left)}"><span>${showLabel?'<strong>'+esc(currentLabel)+'</strong>':''}<code>${esc(prefix?c.Left.slice(prefix.length):c.Left)}</code></span>${icon('down')}</button></div><button class="schema-operator" data-command="schema-operator" ${pathAttrs(path)} aria-label="Comparison: ${esc(c.Comparison??'=')}">${esc(comparisonLabels[c.Comparison]??c.Comparison??'is')}${icon('down')}</button>${!['Empty','NotEmpty'].includes(c.Comparison)?selectValue?`<button class="schema-slot schema-value ${values.every(v=>!v)?'placeholder':''}" data-command="schema-value" ${pathAttrs(path)} aria-label="Choose ${isType?'object type':'list item'}: ${esc(list?selectedItems.map(i=>i.label+' ('+i.id+')').join(', '):values.join(', '))}" title="${esc(list?selectedItems.map(i=>i.label+' — '+i.token).join('\n'):values.join(', '))}">${list?listValuePreview(info.prop,selectedItems):typePreview}${icon('edit')}</button>`:literalControl:''}</div>${logicTools(path)}</div>${hint?'<div class="schema-note">'+esc(hint)+'</div>':''}${sourceHint?'<div class="schema-note">'+esc(sourceHint)+'</div>':''}${missing?'<div class="schema-note">'+missing+' selected value'+(missing===1?'':'s')+' not found in this list. Open the value to review.</div>':''}${unfamiliar?'<div class="schema-note">'+esc(c.Left)+' is not in the loaded '+esc(info.type)+' properties. Value kept.</div>':''}${info.prop&&/List|Tag/.test(info.prop.configClass)&&!list?'<div class="schema-note">List metadata is unavailable. Existing value preserved.</div>':''}</div>`;
+    return `<div class="schema-condition"><div class="logic-predicate"><div class="logic-comparison"><div class="schema-slot schema-source-control" data-source="${esc(info.scope)}">${['new.','resource.'].includes(prefix)?`<button type="button" class="schema-source" data-command="schema-source" ${pathAttrs(path)} aria-label="Value source: ${esc(prefix.slice(0,-1))}" title="Change value source">${esc(prefix)}</button>`:''}<button type="button" class="schema-field-picker schema-property" data-command="schema-property" ${pathAttrs(path)} aria-label="Choose property: ${esc(c.Left)}" title="${esc(c.Left+' · '+(info.prop?.description||currentLabel))}"><span><code>${esc(prefix?c.Left.slice(prefix.length):c.Left)}</code>${showLabel?'<strong>'+esc(currentLabel)+'</strong>':''}</span>${icon('down')}</button></div><button class="schema-operator" data-command="schema-operator" ${pathAttrs(path)} aria-label="Comparison: ${esc(c.Comparison??'=')}">${esc(comparisonLabels[c.Comparison]??c.Comparison??'is')}${icon('down')}</button>${!['Empty','NotEmpty'].includes(c.Comparison)?selectValue?`<button class="schema-slot schema-value ${values.every(v=>!v)?'placeholder':''}" data-command="schema-value" ${pathAttrs(path)} aria-label="Choose ${isType?'object type':'list item'}: ${esc(list?selectedItems.map(i=>i.label+' ('+i.id+')').join(', '):values.join(', '))}" title="${esc(list?selectedItems.map(i=>i.label+' — '+i.token).join('\n'):values.join(', '))}">${list?listValuePreview(info.prop,selectedItems):typePreview}${icon('down')}</button>`:literalControl:''}</div>${logicTools(path)}</div>${hint?'<div class="schema-note">'+esc(hint)+'</div>':''}${sourceHint?'<div class="schema-note">'+esc(sourceHint)+'</div>':''}${missing?'<div class="schema-note">'+missing+' selected value'+(missing===1?'':'s')+' not found in this list. Open the value to review.</div>':''}${unfamiliar?'<div class="schema-note">'+esc(c.Left)+' is not in the loaded '+esc(info.type)+' properties. Value kept.</div>':''}${info.prop&&/List|Tag/.test(info.prop.configClass)&&!list?'<div class="schema-note">List metadata is unavailable. Existing value preserved.</div>':''}</div>`;
   }
 
   function schemaEntries(p) {
     const rows = p.stage === 'types' ? schemaTypeRows().filter(r => !p.contextTypes.length || p.contextTypes.includes(r.rid)) : p.mode ===
       'property' ? schemaFieldRows(p) : p.rows;
     return searchChoices(rows, p.query);
+  }
+
+  function propertyContext(p) {
+    const hint = p.scope === 'new' ? 'new: request fields; Create may also use defaults.'
+      : createOnly() ? 'Create has no resource. Use new.' : '';
+    const typeHint = p.contextTypes.length === 1 ? 'Type from this rule' : 'Browse a type to see its properties; this does not add a condition.';
+    return `<div class="schema-context schema-property-context"><div class="schema-context-tools"><div class="schema-scope" role="group" aria-label="Value source">${['resource','new'].map(scope=>`<button type="button" data-command="schema-scope" data-scope="${scope}" class="${p.scope===scope?'active':''}" aria-pressed="${p.scope===scope}" title="${scope==='resource'?'Saved object':'Request fields; Create may also use defaults'}">${scope}</button>`).join('')}</div><button type="button" class="schema-browse" data-command="schema-browse" title="${typeHint}" ${p.contextTypes.length===1?'disabled':''}>${icon('type')}<span>${p.stage==='types'?'Back to properties':esc(p.browseType||'Type properties…')}</span>${icon('down')}</button></div>${hint?'<small>'+hint+'</small>':''}</div>`;
   }
 
   function renderSchemaPicker(p) {
@@ -2673,7 +2760,7 @@ export function mountWorkspace({
     if (p.index < 0 || rows[p.index]?.reason) p.index = nextChoice(rows, p.index, 'ArrowDown');
     $('#picker-types').innerHTML = p.principalKinds ? `<div class="picker-type-list">${p.principalKinds.map(kind => `<button type="button" data-command="create-principal-kind" data-kind="${kind}" aria-pressed="${kind === p.principalKind}" class="${kind === p.principalKind ? 'active' : ''}">${kind === 'User' ? 'Users' : 'Groups'}</button>`).join('')}</div>` : p.referenceClass ?
       `<div class="reference-context"><span>Defined on</span><button type="button" data-command="reference-types" title="Choose another defining class">${icon('type')}<code>${esc(p.referenceClass)}</code>${icon('down')}</button></div>` : p.mode === 'property' ?
-      `<div class="schema-context"><div class="schema-scope" role="group" aria-label="Value source">${[['resource','Current object'],['new','Submitted values']].map(([scope,label])=>`<button type="button" data-command="schema-scope" data-scope="${scope}" class="${p.scope===scope?'active':''}" aria-pressed="${p.scope===scope}">${label}</button>`).join('')}</div><small>${p.scope==='new'?(createOnly()?'Create: submitted fields and type defaults.':'Update: submitted fields only. Create may also use type defaults.'):(createOnly()?'Create has no current object. Use submitted values.':'Reads the current saved object.')}</small><button type="button" class="schema-browse" data-command="schema-browse" ${p.contextTypes.length===1?'disabled title="Change the object-type condition to use another class"':''}>${icon('type')}<span>${p.stage==='types'?'Back to properties':esc(p.browseType||'Choose a type to browse properties')}</span>${icon('down')}</button><small>${p.contextTypes.length===1?'Type from this rule':p.contextTypes.length?'Several types in this branch · browse one':'No type constraint · browsing does not add one'}</small></div>` :
+      propertyContext(p) :
       p.description ?
       `<div class="schema-context schema-list-context"><span>${esc(p.description)}</span>${p.detail?'<code>'+esc(p.detail)+'</code>':''}</div>` :
       '';
@@ -2684,7 +2771,7 @@ export function mountWorkspace({
           '';
         group = r.group;
         return heading +
-          `<button type="button" tabindex="-1" role="option" aria-selected="${chosen}" aria-disabled="${!!r.reason}" class="picker-option ${i===p.index?'focused':''} ${chosen?'chosen':''}" id="pick-${i}" style="--depth:${p.roleHierarchy&&!p.query?Math.min(r.depth??0,3):0}" data-command="picker-select" data-index="${i}" title="${esc(r.reason||r.itemRid||r.rid)}">${p.multi?'<span class="schema-check '+(chosen?'checked':'')+'">'+(chosen?icon('valid'):'')+'</span>':''}${p.roleHierarchy&&r.level?roleMark(r.level):p.multi||p.mode==='operator'?'':icon(r.icon??'sliders')}<span><strong>${esc(r.label)}</strong><small>${esc(r.reason||r.secondary||'')}${p.roleHierarchy&&p.query&&r.detail?'<br>'+esc(r.detail):''}</small></span>${r.detail&&!p.roleHierarchy?'<em>'+esc(r.detail)+'</em>':''}${!p.multi&&chosen?icon('valid'):''}</button>`;
+          `<button type="button" tabindex="-1" role="option" aria-selected="${chosen}" aria-disabled="${!!r.reason}" class="picker-option ${i===p.index?'focused':''} ${chosen?'chosen':''}" id="pick-${i}" style="--depth:${p.roleHierarchy&&!p.query?Math.min(r.depth??0,3):0}" data-command="picker-select" data-index="${i}" title="${esc(r.reason||r.description||r.itemRid||r.rid)}">${p.multi?'<span class="schema-check '+(chosen?'checked':'')+'">'+(chosen?icon('valid'):'')+'</span>':''}${p.roleHierarchy&&r.level?roleMark(r.level):p.multi||p.mode==='operator'?'':icon(r.icon??'sliders')}<span><strong>${esc(r.label)}</strong><small>${esc(r.reason||r.secondary||'')}${p.roleHierarchy&&p.query&&r.detail?'<br>'+esc(r.detail):''}</small></span>${r.detail&&!p.roleHierarchy?'<em>'+esc(r.detail)+'</em>':''}${!p.multi&&chosen?icon('valid'):''}</button>`;
       }).join('') ||
       `<div class="picker-empty" ${p.loadError?'role="alert"':''}>${p.loading||p.loadError?esc(p.emptyMessage):p.query?'No matches. Try a name, ID, or a shorter phrase.':p.emptyMessage?esc(p.emptyMessage):p.mode==='property'?'Choose a type above to browse its properties.':'This list has no loaded items.'}</div>`;
     renderPickerSelection(p);
@@ -2719,9 +2806,10 @@ export function mountWorkspace({
       select: (left) => {
         commit(() => setPath(statement().Resource, [...path, 'Condition'], changeField(c, left)),
           'Property changed · choose its value');
-        const next = $$('.schema-value').find(b => b.dataset.path === JSON.stringify(path));
+        const next = $$('[data-command="schema-value"]').find(b => b.dataset.path === JSON.stringify(path));
         if (next) void schemaCommand('schema-value', next).catch(showError);
-        else $$('[data-condition]').find(b => b.dataset.condition === JSON.stringify([...path, 'Condition', 'Right']))?.focus();
+        else ($$('[data-command="edit-condition-value"]').find(b => b.dataset.path === JSON.stringify(path)) ??
+          $$('[data-condition]').find(b => b.dataset.condition === JSON.stringify([...path, 'Condition', 'Right'])))?.focus();
       }
     });
   }
@@ -2751,7 +2839,7 @@ export function mountWorkspace({
       multi,
       selectedValues: [...values],
       selected: values[0],
-      description: isType ? (info.scope === 'new' ? 'Type submitted with the request' : 'Type of the current object') : info.prop.listSet
+      description: isType ? info.scope + '.type' : info.prop.listSet
         .name,
       detail: isType ? 'Names from the loaded environment' : info.type + ' / ' + info.prop.listSet.id,
       select: (value) => {
@@ -2765,8 +2853,8 @@ export function mountWorkspace({
       const path = JSON.parse(el.dataset.path), c = getPath(statement().Resource, path).Condition,
         [scope, ...parts] = c.Left.split('.'), accessor = parts.join('.');
       choicePicker(el, { title: 'Value source', selected: scope, rows: [
-        { rid:'new', label:'Submitted values', secondary:'new.' + accessor },
-        { rid:'resource', label:'Current saved object', secondary:'resource.' + accessor }
+        { rid:'resource', label:'resource', secondary:'resource.' + accessor, description:'Saved object' },
+        { rid:'new', label:'new', secondary:'new.' + accessor, description:'Request fields; Create may also use defaults' }
       ], select: source => {
         if (scope === source) return;
         const fromTypes = typeContext(statement().Resource, path, scope), toTypes = typeContext(statement().Resource, path, source),
@@ -2778,10 +2866,8 @@ export function mountWorkspace({
       return true;
     }
     if (cmd === 'schema-property') {
-      const record = current(), index = state.statement;
-      const info = schemaInfo(getPath(statement().Resource, JSON.parse(el.dataset.path)).Condition, JSON.parse(el.dataset.path));
-      if (info.type) await loadSchema(info.type);
-      if (current() !== record || state.statement !== index || !el.isConnected) return true;
+      // General fields work immediately, even while class metadata is loading.
+      // renderPicker refreshes the class-specific rows when that read completes.
       propertyPicker(el, JSON.parse(el.dataset.path));
       return true;
     }
@@ -2952,6 +3038,13 @@ export function mountWorkspace({
   function roleTreeCommand(cmd, el) {
     if (cmd === 'open-definition') {
       openDefinition(el.dataset.scopeNode ?? el.dataset.rid);
+      return true;
+    }
+    if (cmd === 'context-add-delegation') {
+      if (!model.scope.some(r => r.rid === el.dataset.rid)) return true;
+      openDefinition(el.dataset.rid);
+      const anchor = $(`#tree [data-scope-node="${el.dataset.rid}"]`);
+      if (anchor) directionChoices(anchor, 'reach-insert', el.dataset.rid);
       return true;
     }
     if (cmd === 'context-new-child') {
@@ -3311,13 +3404,13 @@ export function mountWorkspace({
   function renderTabs() {
     const root = $('#tabs'), focused = root.contains(document.activeElement) ? document.activeElement.closest('.doc-tab')?.querySelector('[role="tab"]')?.dataset.tabKey : null;
     state.tabs = state.tabs.filter(t => model[t.kind === 'role' ? 'roles' : 'policies'].some(r => r.rid === t.rid));
-    const tabAttrs = (key, active) => `role="tab" data-tab-key="${esc(key)}" id="access-tab-${encodeURIComponent(key)}" aria-selected="${active}" aria-controls="${key==='test'?'dock':'editor'}" tabindex="${active?0:-1}"`;
+    const tabAttrs = (key, active) => `role="tab" data-tab-key="${esc(key)}" data-tab-kind="${esc(key.split(':')[0])}" id="access-tab-${encodeURIComponent(key)}" aria-selected="${active}" aria-controls="${['test','matrix-test'].includes(key)?'dock':'editor'}" tabindex="${active?0:-1}"`;
     root.setAttribute('role', 'tablist');
-    root.innerHTML = state.tabs.map(t => {
+    root.innerHTML = (state.matrixOpen ? `<div class="doc-tab ${state.matrixShowing&&!state.reviewing&&!state.historyShowing?'active':''}" role="presentation"><button ${tabAttrs('matrix',state.matrixShowing&&!state.reviewing&&!state.historyShowing)} data-command="matrix">${icon('matrix')}<span>Access matrix</span></button>${ib('close','close-matrix','Close access matrix','tabindex="-1"')}</div>` : '') + state.tabs.map(t => {
       const r = model[t.kind === 'role' ? 'roles' : 'policies'].find(x => x.rid === t.rid);
-      const active = !state.historyShowing && !state.reviewing && !state.empty && t.rid === state.rid;
+      const active = !state.matrixShowing && !state.testing && !state.historyShowing && !state.reviewing && !state.empty && t.rid === state.rid;
       return `<div class="doc-tab ${active?'active':''}" role="presentation"><button ${tabAttrs(t.kind+':'+t.rid,active)} data-open="${t.rid}" data-kind="${t.kind}" title="${esc(r.name)}">${icon(t.kind)}<span class="tab-label">${esc(r.name)}</span>${dirtyMark(r.rid)}</button>${ib('close','close-tab','Close '+r.name+' (Delete)','data-rid="'+r.rid+'" tabindex="-1"')}</div>`;
-    }).join('') + (state.objectTest ? `<div class="doc-tab ${state.testing&&!state.reviewing&&!state.historyShowing?'active':''}" role="presentation"><button ${tabAttrs('test',state.testing&&!state.reviewing&&!state.historyShowing)} data-command="open-test">${icon('check')}<span>Access test</span></button>${ib('close','close-object-test','Close access test (Delete)','tabindex="-1"')}</div>` : '') + (state.reviewOpen ?
+    }).join('') + (state.objectTest ? `<div class="doc-tab ${state.testing&&!state.matrixTesting&&!state.reviewing&&!state.historyShowing?'active':''}" role="presentation"><button ${tabAttrs('test',state.testing&&!state.matrixTesting&&!state.reviewing&&!state.historyShowing)} data-command="open-test">${icon('check')}<span>Access test</span></button>${ib('close','close-object-test','Close access test (Delete)','tabindex="-1"')}</div>` : '') + (state.matrixTest ? `<div class="doc-tab ${state.matrixTesting&&!state.reviewing&&!state.historyShowing?'active':''}" role="presentation"><button ${tabAttrs('matrix-test',state.matrixTesting&&!state.reviewing&&!state.historyShowing)} data-command="matrix-test">${icon('run')}<span>Test · ${esc(state.matrixTest.type)}</span></button>${ib('close','close-matrix-test','Close matrix test','tabindex="-1"')}</div>` : '') + (state.reviewOpen ?
       `<div class="doc-tab review-tab ${state.reviewing&&!state.historyShowing?'active':''}" role="presentation"><button ${tabAttrs('review',state.reviewing&&!state.historyShowing)} data-command="review">${icon('changes')}<span>Pending edits</span></button>${ib('close','close-review','Close pending edits (Delete)','tabindex="-1"')}</div>` :
       '');
     const tabs = [...root.querySelectorAll('[role="tab"]')], active = tabs.find(tab => tab.getAttribute('aria-selected') === 'true');
@@ -3352,7 +3445,7 @@ export function mountWorkspace({
       tabs[next]?.focus();
     } else if (e.key === 'Delete') {
       e.preventDefault();
-      const close = e.target.closest('.doc-tab').querySelector('[data-command="close-tab"],[data-command="close-review"],[data-command="history-close"],[data-command="close-object-test"]');
+      const close = e.target.closest('.doc-tab').querySelector('[data-command="close-tab"],[data-command="close-review"],[data-command="history-close"],[data-command="close-object-test"],[data-command="close-matrix"],[data-command="close-matrix-test"]');
       close?.click();
     }
   });
@@ -3511,7 +3604,7 @@ export function mountWorkspace({
     }
     if (cmd === 'history') {
       if (state.historyShowing) return workspaceCommand('history-close', el);
-      state.historyReturn = { reviewing: state.reviewing, testing: state.testing, empty: state.empty,
+      state.historyReturn = { matrixShowing:state.matrixShowing, matrixTesting:state.matrixTesting, matrixTest:state.matrixTest, reviewing: state.reviewing, testing: state.testing, empty: state.empty,
         rid: state.rid, kind: state.kind, statement: state.statement, scopeSelection: state.scopeSelection, objectTest: state.objectTest };
       if (!state.historyShowing) state.historyRecord = {
         rid: state.rid,
@@ -4134,12 +4227,14 @@ export function mountWorkspace({
     else state.raw.set(rid, text);
     // Refresh attribution once when entering/leaving a raw draft, without
     // remounting the request fields or rebuilding the trace on every keystroke.
-    if (hadRaw !== state.raw.has(rid) && $('#check-result')) $('#check-result').innerHTML = renderResult();
+    if (hadRaw !== state.raw.has(rid) && $('#check-result')) { $('#check-result').innerHTML = renderResult(); mountResult(); }
     refreshDraftChrome();
   }
 
   function renderToolbar() {
     renderToolbarBase();
+    $('#test-return')?.remove();
+    if (testReturn) $('.history-actions').insertAdjacentHTML('afterbegin', `<button id="test-return" data-command="return-to-test" title="Return to the test and its inputs">${icon('back')}Back to test</button>`);
     const ids = unfinishedIdEdits(model, state.idDraft), drafts = draftPolicies(),
       count = pendingRecordCount(differences(), drafts, ids),
       title = [count + ' records with pending edits', ids.length ? ids.length + ' unfinished ID edits' : '',
@@ -4337,6 +4432,12 @@ export function mountWorkspace({
       rid = row.dataset.scopeNode ?? row.dataset.folder ?? row.dataset.open,
       folder = !!row.dataset.folder,
       closed = folder ? state.folderClosed : state.search ? state.searchClosed : state.closed;
+    if (e.key === 'ContextMenu' || e.shiftKey && e.key === 'F10') {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      treeContextMenu(row);
+      return;
+    }
     if (!['ArrowRight', 'ArrowLeft', 'Enter'].includes(e.key)) return;
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -4426,7 +4527,7 @@ export function mountWorkspace({
 
   // Choice surfaces share navigation, search, selection, and return-focus behavior.
   function pickerAnchorKey(el) {
-    const attrs = ['id', 'data-command', 'data-path', 'data-rid', 'data-native-key', 'data-parent', 'data-field', 'data-create-value', 'data-check', 'data-action-value'];
+    const attrs = ['id', 'data-command', 'data-path', 'data-rid', 'data-native-key', 'data-parent', 'data-field', 'data-create-value', 'data-check', 'data-action-value', 'data-scope-node', 'data-open', 'data-folder'];
     const key = { attrs: attrs.filter(a => el.hasAttribute(a)).map(a => [a, el.getAttribute(a)]) };
     return { ...key, index: pickerFocusCandidates(key).indexOf(el) };
   }
@@ -5042,11 +5143,11 @@ export function mountWorkspace({
 
   function markTestChanged(q = state.check) {
     if (q.result) q.result.stale = true;
-    if ($('#check-result') && state.check === q) $('#check-result').innerHTML = renderResult();
+    if ($('#check-result') && state.check === q) { $('#check-result').innerHTML = renderResult(); mountResult(); }
   }
 
   function createReady(q) {
-    try { return !Object.keys(q.createNumberDrafts ?? {}).length && !!readCreateValues(q.proposed).type && /^\d+$/.test(createResource(q)); } catch { return false; }
+    try { return !q.defaultLoading && !Object.keys(q.createNumberDrafts ?? {}).length && !!readCreateValues(q.proposed).type && /^\d+$/.test(createResource(q)); } catch { return false; }
   }
 
   function focusUnfinishedCreateNumber() {
@@ -5059,7 +5160,7 @@ export function mountWorkspace({
   function createTypeControl(q) {
     let type = '';
     try { type = readCreateValues(q.proposed).type ?? ''; } catch { /* JSON reports the error. */ }
-    return `<label class="object-label">New object type<button class="object-picker" data-command="create-type" aria-label="Choose new object type">${icon('type')}<span><strong>${esc(type || 'Choose type…')}</strong></span>${icon('down')}</button></label>`;
+    return `<div class="create-context-row"><label for="create-type-picker">new.type</label><button id="create-type-picker" class="object-picker" data-command="create-type" aria-label="Choose new object type">${icon('type')}<span><strong>${esc(type || 'Choose type…')}</strong></span>${icon('down')}</button></div>`;
   }
 
   function testObjectLabel(rid) {
@@ -5068,6 +5169,64 @@ export function mountWorkspace({
   }
 
   const createSchemaErrors = new Map();
+  const creationRoots = new Map();
+  const creationRootLoads = new WeakMap();
+  const creationDefaultLoads = new WeakMap();
+  function currentCreateContext(q,type,revision) {
+    try { return (q.createRevision??0)===revision && readCreateValues(q.proposed).type===type; }
+    catch { return false; } // An unfinished JSON edit is not a failed lookup.
+  }
+  function suggestedCreateFields(q) {
+    if (state.matrixTesting && matrixIndex) return [...new Set(matrixIndex.cell(state.matrixTest.role,state.matrixTest.type).rules.filter(r=>r.actions.includes('Create')).flatMap(r=>createInputs(r.statement).fields))];
+    return createInputs(savedTestStatement()).fields;
+  }
+  async function loadCreationRoot(q) {
+    let type;try{type=readCreateValues(q.proposed).type;}catch{return;}
+    if(!type?.startsWith('Ce')||q.resource||q.omittedValues?.parent||q.createRootLoaded===type)return;
+    const revision=q.createRevision??0, pending=creationRootLoads.get(q);
+    if(pending?.type===type&&pending.revision===revision)return;
+    const request={type,revision};creationRootLoads.set(q,request);
+    try{
+      if(!creationRoots.has(type))creationRoots.set(type,api({operation:'creation',type}).catch(error=>{creationRoots.delete(type);throw error;}));
+      const result=await creationRoots.get(type);
+      if(!currentCreateContext(q,type,revision))return;
+      q.createRootLoaded=type;
+      if(result.root){
+        context.objects=[result.root,...context.objects.filter(o=>o.rid!==result.root.rid)];
+        if(!q.resource&&!q.omittedValues?.parent)setCreateValue(q,'parent','parent_rid',result.root.rid);
+      }
+    }catch(error){
+      if(!currentCreateContext(q,type,revision))return;
+      q.createRootLoaded=type;q.createContextError=error.message;delete q.createContextErrorSource;
+    }finally{if(creationRootLoads.get(q)===request)creationRootLoads.delete(q);}
+    if(state.check===q&&!$('#dock').hidden)renderDock();
+    void saveWorkspace().catch(showError);
+  }
+  async function loadCreateDefault(q,source) {
+    const type=readCreateValues(q.proposed).type,revision=q.createRevision??0,
+      fields=[...new Set(['name',...suggestedCreateFields(q),...(q.createFields??[])])];
+    // Adding fields can start a newer read before the previous one returns.
+    // Only its owner may apply values or clear the loading indicator.
+    const request={type,revision};creationDefaultLoads.set(q,request);
+    const current=()=>creationDefaultLoads.get(q)===request&&currentCreateContext(q,type,revision);
+    q.defaultLoading=true;delete q.createContextError;delete q.createContextErrorSource;renderDock();
+    try{
+      const result=await api({operation:'creation',type,source:source.rid,fields});
+      if(!current())return;
+      useCreateDefault(q,result.source,result.values);
+      q.createLabels={...q.createLabels,...result.labels};
+      q.defaultReadFields=fields;q.defaultUnsupported=result.unsupported??[];
+      q.createFields=[...new Set([...(q.createFields??[]),...fields.filter(f=>!['type','parent'].includes(f))])];
+      context.prototypes=[source,...context.prototypes.filter(o=>o.rid!==source.rid)];
+    }catch(error){if(current()){q.createContextError=error.message;q.createContextErrorSource=source;}}
+    finally{
+      if(creationDefaultLoads.get(q)===request){
+        creationDefaultLoads.delete(q);
+        if((q.createRevision??0)===revision)delete q.defaultLoading;
+      }
+      if(state.check===q&&!$('#dock').hidden)renderDock();void saveWorkspace().catch(showError);
+    }
+  }
   const createSchemaLoading = new Set();
   const createLabelRequests = new Map();
   async function loadCreateLabels(q) {
@@ -5112,8 +5271,8 @@ export function mountWorkspace({
     const parent = values ? createFieldValue(values, 'parent') : { supplied: false },
       destination = typeof parent.value === 'string' ? parent.value : q.resource,
       properties = schemaData.classes[values?.type] ?? [],
-      suggested = createInputs(savedTestStatement()).fields;
-    return `<div class="create-destination"><span>Create in</span><button type="button" class="object-picker" data-command="create-destination" data-field="parent" aria-label="Choose creation destination" ${!values ? 'disabled' : ''}>${icon('folder')}<span><strong>${esc(destination ? testObjectLabel(destination) : 'Choose destination…')}</strong></span>${icon('search')}</button><button type="button" class="icon-button" data-command="create-omit" data-field="parent" ${!parent.supplied && !q.omittedValues?.parent ? 'disabled' : ''} title="${parent.supplied ? 'Omit new.parent for this test' : 'Restore new.parent'}" aria-label="${parent.supplied ? 'Omit new.parent' : 'Restore new.parent'}">${icon(parent.supplied ? 'close' : 'undo')}</button>${destination && (!parent.supplied || parent.value === null) ? '<span class="test-change-hint">Trace context retained · new.parent ' + (parent.supplied ? 'is null' : 'not supplied') + '</span>' : ''}</div>${renderCreateTest(q, { properties, suggested, objectLabel: rid => q.createLabels?.[rid] || testObjectLabel(rid), loaded: schemaLoaded.has(values?.type), icon })}${createSchemaErrors.has(values?.type) ? `<p class="field-error">${esc(createSchemaErrors.get(values.type))} <button type="button" data-command="create-retry-schema">Retry field metadata</button></p>` : ''}`;
+      suggested = suggestedCreateFields(q);
+    return `<div class="create-context">${createTypeControl(q)}<div class="create-context-row create-default-source"><label for="create-default-picker">Default object<small>Optional</small></label><button id="create-default-picker" type="button" class="object-picker" data-command="create-default" title="Populate initial values from a default object" ${!values?.type||q.defaultLoading?'disabled':''}>${icon('object')}<span><strong>${esc(q.defaultLoading?'Reading default...':q.createDefault?.source.name??'Choose default...')}</strong></span>${icon('search')}</button></div>${q.createContextError?'<p class="field-error">'+esc(q.createContextError)+' <button data-command="create-retry-context">Retry ' + (q.createContextErrorSource ? 'default' : 'destination') + '</button></p>':''}${q.defaultUnsupported?.length?'<p class="field-error">Not copied: '+esc(q.defaultUnsupported.join(', '))+'. Supply these values explicitly.</p>':''}<div class="create-context-row create-destination"><label for="create-parent-picker">new.parent</label><button id="create-parent-picker" type="button" class="object-picker" data-command="create-destination" data-field="parent" aria-label="Choose creation destination" ${!values ? 'disabled' : ''}>${icon('folder')}<span><strong>${esc(destination ? testObjectLabel(destination) : 'Choose destination…')}</strong></span>${icon('search')}</button><button type="button" class="icon-button" data-command="create-omit" data-field="parent" ${!parent.supplied && !q.omittedValues?.parent ? 'disabled' : ''} title="${parent.supplied ? 'Omit new.parent for this test' : 'Restore new.parent'}" aria-label="${parent.supplied ? 'Omit new.parent' : 'Restore new.parent'}">${icon(parent.supplied ? 'close' : 'undo')}</button>${destination && (!parent.supplied || parent.value === null) ? '<span class="test-change-hint">Trace context retained · new.parent ' + (parent.supplied ? 'is null' : 'not supplied') + '</span>' : ''}</div></div>${renderCreateTest(q, { properties, suggested, objectLabel: rid => q.createLabels?.[rid] || testObjectLabel(rid), loaded: schemaLoaded.has(values?.type), icon })}${createSchemaErrors.has(values?.type) ? `<p class="field-error">${esc(createSchemaErrors.get(values.type))} <button type="button" data-command="create-retry-schema">Retry field metadata</button></p>` : ''}`;
   }
 
   function createProperty(q, field) {
@@ -5135,6 +5294,19 @@ export function mountWorkspace({
 
   function revealTestTrace(path) {
     const parts = path ? path.split('.') : [], trace = state.check.result?.trace;
+    if (trace && $('#check-result .engine-review')) {
+      const result=state.check.result;result.engineState??={};
+      result.engineState.query='';
+      const rules=traceRules(trace),rulePath=rules.find(r=>path===r.path||path.startsWith(r.path+'.'))?.path??parts[0];
+      let groupStart=rules.findIndex(r=>r.path===rulePath);
+      while(groupStart>0&&rules[groupStart].subject==='failed'&&rules[groupStart-1].subject==='failed'&&rules[groupStart-1].node.result!==true)groupStart--;
+      result.engineState.closedGroups=(result.engineState.closedGroups??[]).filter(key=>key!==rules[groupStart]?.path);
+      result.engineState.open=[...new Set([...(result.engineState.open??[]),rulePath])];
+      $('#check-result').innerHTML=renderResult();mountResult();
+      const row=$(`[data-engine-path="${path}"]`)??$(`[data-engine-row="${rulePath}"]`);
+      row?.scrollIntoView({block:'nearest'});row?.querySelector('button')?.focus({preventScroll:true});
+      return;
+    }
     if (!trace) return;
     const full = $('#check-result .test-full-trace');
     if (full) full.open = true;
@@ -5149,6 +5321,18 @@ export function mountWorkspace({
   }
 
   async function createTestCommand(cmd, el) {
+    if(cmd==='create-default'){
+      const q=state.check,type=readCreateValues(q.proposed).type;
+      showPicker(el,{kind:'object',title:'Choose default object · '+type,type,prototypes:true,selected:q.createDefault?.source.rid,
+        select:(_rid,source)=>{void loadCreateDefault(q,source);}});return true;
+    }
+    if(cmd==='create-reset-default'){resetCreateDefault(state.check,el.dataset.field);renderDock();return true;}
+    if(cmd==='create-retry-context'){
+      const q=state.check;
+      if(q.createContextErrorSource)void loadCreateDefault(q,q.createContextErrorSource);
+      else{delete q.createRootLoaded;delete q.createContextError;void loadCreationRoot(q);renderDock();}
+      return true;
+    }
     if (cmd === 'create-principal-kind') { state.picker.principalKind = el.dataset.kind; state.picker.index = 0; renderPicker(); $('#picker-query').focus(); return true; }
     if (cmd === 'reveal-test-trace') { revealTestTrace(el.dataset.traceTarget); return true; }
     if (cmd === 'focus-test-failure') {
@@ -5170,7 +5354,7 @@ export function mountWorkspace({
     if (cmd === 'create-type') {
       const suggestions = createInputs(savedTestStatement()).types;
       choicePicker(el, { title: 'New object type', selected: values.type, rows: schemaTypeRows().map(row => ({ ...row, group: suggestions.includes(row.rid) ? 'From the saved rule' : 'Other types' })).sort((a,b) => Number(!suggestions.includes(a.rid)) - Number(!suggestions.includes(b.rid))),
-        select: type => { setCreateValue(q, 'type', '', type); renderDock(); } });
+        select: type => { changeCreateType(q,type); renderDock(); } });
       return true;
     }
     if (cmd === 'create-destination') {
@@ -5190,7 +5374,11 @@ export function mountWorkspace({
       await loadSchema(values.type);
       if (state.check !== q || !el.isConnected) return true;
       choicePicker(el, { title: 'Add an initial value', rows: (schemaData.classes[values.type] ?? []).filter(p => !['type','parent'].includes(p.accessor)).map(p => ({ rid:p.accessor, label:p.label || p.accessor, secondary:p.accessor, detail:fieldKind(p), icon:p.reference?'link':'sliders' })),
-        select: name => { q.createFields = [...new Set([...(q.createFields ?? []), name])]; focusCreateField(name); } });
+        select: name => {
+          q.createFields = [...new Set([...(q.createFields ?? []), name])];
+          if (q.createDefault && !q.defaultReadFields?.includes(name)) void loadCreateDefault(q,q.createDefault.source);
+          else focusCreateField(name);
+        } });
       return true;
     }
     const prop = createProperty(q, field), entry = createFieldValue(values, field), kind = entry.kind ?? (prop?.reference ? 'references' : 'properties'),
@@ -5348,15 +5536,25 @@ export function mountWorkspace({
       }
     }
     if (!types.size) return;
+    const failureContext = errorContext('Could not load properties for ' + [...types].join(', '));
     Promise.all([...types].map(loadSchema)).then(() => {
       if (state.rid === rid && state.statement === index && state.view !== 'json' && !document.activeElement?.matches(
           'input,textarea,[contenteditable]')) renderEditor();
-    }).catch(showError);
+    }).catch(error => showError(error, failureContext));
   }
 
-  function showError(error) {
+  function errorContext(title = 'Could not complete the operation', records = current() ? [current()] : []) {
+    return { tone: 'error', title, targets: records.map(record => ({ label: record.name || record.id || record.subjectName,
+      open: () => {
+        const kind = model.policies.some(p => p.rid === record.rid) ? 'policy' : 'role';
+        const rid = kind === 'role' ? scopeOwner(model, record.rid) ?? record.rid : record.rid;
+        if ((kind === 'role' ? model.roles : model.policies).some(r => r.rid === rid)) openRecord(kind, rid, rid === record.rid ? null : record.rid);
+        else { state.historyShowing = false; state.reviewing = true; state.reviewOpen = true; render(); }
+      } })) };
+  }
+  function showError(error, context = errorContext()) {
     status(error.message ?? String(error));
-    notice(error.message ?? String(error));
+    notice(error.message ?? String(error), context);
   }
   async function loadSchema(type) {
     if (!type || schemaLoaded.has(type)) return;
@@ -5383,7 +5581,7 @@ export function mountWorkspace({
     const tests = preserveTestInputs ? [...state.tests.values()] : [],
       selected = selectedTestContext(tests, context, userDirectory.users, snapshot.users);
     environment.name = snapshot.name; environment.capturedOn = snapshot.loadedAt;
-    schemaLoaded.clear(); schemaPending.clear(); schemaHints.clear(); createSchemaErrors.clear(); createLabelRequests.clear();
+    schemaLoaded.clear(); schemaPending.clear(); schemaHints.clear(); createSchemaErrors.clear(); createLabelRequests.clear(); creationRoots.clear();
     schemaData.classes = clone(snapshot.classes);
     userDirectory.users = snapshot.users;
     context.users = []; context.groups = [];
@@ -5443,6 +5641,7 @@ export function mountWorkspace({
     if (state.raw.size) throw Error('Update or discard pending JSON edits before applying.');
     if (!differences().length) return;
     applying = true;
+    const failureContext = errorContext('Could not apply changes', differences().map(d => d.r));
     busy('Checking and applying ' + differences().length + ' changes to ' + environment.name + '…');
     try {
       await saveWorkspace(true);
@@ -5470,7 +5669,7 @@ export function mountWorkspace({
       if (result.operationId) await api({ operation: 'acknowledge', id: result.operationId });
       status('Applied and verified in ' + environment.name);
     } catch (error) {
-      showError(error);
+      showError(error, failureContext);
     } finally {
       applying = false;
       busy('');
@@ -5554,6 +5753,7 @@ export function mountWorkspace({
     for (const key of restored.collapsedSections ?? []) collapsedSections.add(key);
     if (!restored.collapsedSections) state.membershipSections = new Set();
     for (const test of state.tests.values()) {
+      delete test.defaultLoading;
       if (test.result?.running) test.result = { error: 'The previous test was interrupted. Run it again.' };
       else if (test.result) test.result.stale = true;
     }
@@ -5598,6 +5798,7 @@ export function mountWorkspace({
     if (applying) { notice('Apply is in progress. Open this link again when it finishes.'); return; }
     if (target.kind === 'test') {
       captureView();
+      state.matrixShowing=false; state.matrixTesting=false;
       state.testing = true; state.objectTest = target.object;
       state.historyShowing = false; state.reviewing = false; state.empty = true; state.scopeSelection = null;
       state.rid = ''; state.kind = 'role';
@@ -5608,6 +5809,7 @@ export function mountWorkspace({
           resource: target.object.rid, proposed: '{}', result: null };
         delete state.check.rename;
       }
+      if (innerWidth <= 620) document.body.classList.add('no-explorer');
       render();
       const q = state.check;
       const focus = q.mode === 'user' && !selectedTestUser(q) ? '[data-command="choose-test-user"]' : '[data-command="prepare-check"]';

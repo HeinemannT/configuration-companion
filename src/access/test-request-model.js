@@ -41,12 +41,13 @@ export function switchTestAction(check, action) {
   if (check.action === action) return check;
   const next = structuredClone(check),
     previous = next.action;
+  delete next.defaultLoading;
   next.proposedDrafts = {
     ...next.proposedDrafts
   };
   if (['Create', 'Update'].includes(previous)) next.proposedDrafts[previous] = next.proposed;
   // Actor is shared; each action owns its object, submitted values and last result.
-  const keys = ['resource', 'proposed', 'rename', 'updateMode', 'createFields', 'createLabels', 'createNumberDrafts', 'omittedValues', 'createView', 'createInitialized', 'result', 'rerunRequired'];
+  const keys = ['resource', 'proposed', 'rename', 'updateMode', 'createFields', 'createLabels', 'createNumberDrafts', 'omittedValues', 'createView', 'createInitialized', 'createDefault', 'createTypes', 'createRootLoaded', 'defaultReadFields', 'defaultUnsupported', 'createContextError','createContextErrorSource', 'result', 'rerunRequired'];
   next.scenarios = { ...next.scenarios, [previous]: Object.fromEntries(keys.filter(k => check[k] !== undefined).map(k => [k, structuredClone(check[k])])) };
   const restored = next.scenarios[action];
   for (const key of keys) delete next[key];
