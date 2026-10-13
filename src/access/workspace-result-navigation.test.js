@@ -11,6 +11,7 @@ it.each([false,true])('returns from a contributing policy to the same test, prep
   const {snapshot,classes,object}=clarityFixture(), role=snapshot.model.roles[0], policy=snapshot.model.policies[0];
   const key=`role:${role.rid}:0`, node=(element,result,children=[],details={})=>({element,result,children,details,timedOut:false});
   const trace=node('TraceRequest',allowed,[node('Statement',allowed,[node('Subject',true),node('Action',allowed),...(allowed?[node('Equal',true,[],{left:'resource.type',right:'CeTask'})]:[])],{policyRid:policy.rid,policyRid_name:policy.name,statementIndex:'0',effect:'ALLOW'})]);
+  trace.durationMs=7.5;
   let stored;
   const api=vi.fn(async request=>request.operation==='schema'?classes[request.type]??[]:structuredClone(trace));
   const workspace=mountWorkspace({snapshot,api,notice:vi.fn(),busy:vi.fn(),persist:async read=>{stored=read();},
@@ -21,6 +22,9 @@ it.each([false,true])('returns from a contributing policy to the same test, prep
   await click('[data-engine-toggle="0"]');
   expect(document.querySelector('.engine-review').textContent).toContain(allowed?'resource.type':'conditions not evaluated');
   expect(document.querySelector('.result-line strong').textContent).toBe(allowed?'Granted':'Denied');
+  expect(document.querySelector('.test-timing').textContent).toContain('7.5 ms');
+  const measured=stored.state.tests.$map.find(([k])=>k===key)[1].result.requestMs;
+  expect(measured).toBeGreaterThanOrEqual(0);
   document.querySelector('.test-body').scrollTop = 420;
   await click('.engine-review [data-command="open-trace-policy"]');
   expect(stored.state.rid).toBe(policy.rid);
@@ -32,5 +36,6 @@ it.each([false,true])('returns from a contributing policy to the same test, prep
   expect(document.querySelector('[data-engine-toggle="0"]').getAttribute('aria-expanded')).toBe('true');
   expect(document.querySelector('.test-body').scrollTop).toBe(420);
   expect(stored.state.tests.$map.find(([k])=>k===key)[1].resource).toBe(object.rid);
+  expect(stored.state.tests.$map.find(([k])=>k===key)[1].result.requestMs).toBe(measured);
   expect(api.mock.calls.filter(([r])=>r.operation==='trace')).toHaveLength(1);
 });

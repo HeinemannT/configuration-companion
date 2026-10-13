@@ -1,6 +1,29 @@
 // @vitest-environment happy-dom
 import { expect,it,vi } from 'vitest';
 import { mountMatrix,matrixState,conditionPreview } from './matrix-view.js';
+import { createMatrixIndex } from './matrix-model.js';
+
+it('shows saved context, recovery controls and mixed evidence once with accessible uncertainty',()=>{
+  document.body.innerHTML='<div id="matrix"></div>';
+  const c=(Left,Comparison,Right)=>({Condition:{Left,Comparison,Right}});
+  const Resource={Any:[{All:[c('resource.type','Equal','Scorecard'),c('resource.parent','NotEmpty')]},{HasAccessTo:{Reference:'resource.owner'}}]};
+  const model={roles:[{rid:'1',id:'reader',name:'Reader',parent:''}],policies:[{rid:'2',name:'Access',enabled:true,content:{Statement:[{Subject:'*',Effect:'Allow',Action:['Read'],Resource}]}}]};
+  const index=createMatrixIndex(model,{Scorecard:[]});
+  const state={...matrixState(),selected:{role:'1',type:'Scorecard'},unresolved:true};
+  const retry=vi.fn(),more=vi.fn(),host=document.querySelector('#matrix');
+  const view=mountMatrix(host,{index,state,changed:vi.fn(),canOpen:()=>true,retryEvidence:retry,moreEvidence:more,hasDraftChanges:true,metadataStatus:'1 reference unavailable'});
+  expect(host.querySelector('.am-foot').textContent).toContain('Saved policies · Draft changes not included');
+  expect(host.querySelectorAll('.am-rule')).toHaveLength(1);
+  expect(host.querySelector('.am-rule').textContent).toContain('Unresolved Read: Related-object access requires an engine test');
+  expect(host.querySelector('.am-cell').getAttribute('aria-label')).toContain('unresolved candidates available');
+  host.querySelector('[data-matrix-retry]').click();expect(retry).toHaveBeenCalledTimes(1);
+  host.querySelector('[data-matrix-more]').click();expect(more).toHaveBeenCalledTimes(1);
+  const checkbox=host.querySelector('[data-matrix-unresolved]');checkbox.checked=false;checkbox.dispatchEvent(new Event('change',{bubbles:true}));
+  expect(host.querySelectorAll('.am-rule')).toHaveLength(1);
+  expect(host.querySelector('.am-rule').textContent).not.toContain('Unresolved Read:');
+  expect(host.querySelector('.am-cell').textContent).toBe('R*');
+  view.destroy();
+});
 
 it('filters from group bands, combines sections, and keeps hidden selections recoverable',()=>{
   document.body.innerHTML='<div id="matrix"></div>';

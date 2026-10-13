@@ -5,8 +5,12 @@ import { genericField, propertyChoices } from './pbac-fields.js';
 import { icon } from './icons';
 import { renderTrace, expandTrace, selectedRuleTrace } from './trace-view';
 import { traceRules, traceOutcome, traceRequestLabel } from './trace-summary';
-import { createMatrixIndex } from './matrix-model.js';
+import { renderTestTiming } from './trace-timing';
+import { createMatrixIndex, collectMatrixReferences } from './matrix-model.js';
 import { matrixState, mountMatrix } from './matrix-view.js';
+import { createMatrixEvidenceLoader } from './matrix-evidence-loader.js';
+import { createPerformanceController } from './performance-controller.js';
+import { mountPerformance, performanceViewState } from './performance-view.js';
 import { renderEngineTrace, mountEngineTrace } from './trace-review';
 import { createInputs, initializeCreate, readCreateValues, createFieldValue, setCreateValue, setCreateNumber, omitCreateValue, createResource, testContextRids } from './create-test-model.js';
 import { renderCreateTest, renderDefaultOrigin } from './create-test-view.js';
@@ -150,6 +154,7 @@ export function mountWorkspace({
     kind: 'role', rid: '', empty: true, tabs: [],
     testing: false, objectTest: null,
     matrixShowing: false, matrixOpen: false, matrix: matrixState(), matrixTesting: false, matrixTest: null,
+    performanceShowing: false, performanceOpen: false, performance: performanceViewState(),
     search: '',
     closed: new Set(model.roles.map(r => r.rid)),
     statement: 0,
@@ -169,6 +174,8 @@ export function mountWorkspace({
     drag: null
   };
   const testKey = () => state.matrixTesting ? `matrix:${state.matrixTest.role}:${state.matrixTest.type}` : state.testing ? 'object:' + state.objectTest.rid : `${state.kind}:${state.rid}:${state.kind==='policy'?state.statement:0}`;
+
+  const activeTest = q => state.tests.get(testKey()) === q;
 
   function defaultTest() {
     if (state.matrixTesting) return { mode:'role', subject:state.matrixTest.role, action:'Read', resource:'', proposed:'{}', result:null, typeHint:state.matrixTest.type };
@@ -295,6 +302,7 @@ export function mountWorkspace({
   }
 
   function openRecord(kind, rid, scopeSelection = null) {
+    state.performanceShowing = false;
     if (state.rid !== rid) { state.membershipQuery = ''; state.membershipLimit = 100; }
     state.documents ??= new Map();
     captureView();
@@ -351,7 +359,7 @@ export function mountWorkspace({
     renderTree(true);
     renderTabs();
     renderEditor();
-    $('#selection-kind').textContent = state.historyShowing ? 'History' : state.reviewing ? 'Environment' : state.matrixShowing ? 'Access matrix' : state.testing ? 'Access test' : state.empty ? '' : state
+    $('#selection-kind').textContent = state.historyShowing ? 'History' : state.reviewing ? 'Environment' : state.performanceShowing ? 'Performance' : state.matrixShowing ? 'Access matrix' : state.testing ? 'Access test' : state.empty ? '' : state
       .kind === 'role' ? 'Role' : 'Policy';
     $('.doc-tab.active')?.scrollIntoView({
       block: 'nearest',
@@ -363,6 +371,7 @@ export function mountWorkspace({
     renderSearchTools();
     $('#environment-name').textContent = environment.name;
     $('.matrix-launch')?.setAttribute('aria-pressed',String(state.matrixShowing&&!state.historyShowing&&!state.reviewing));
+    $('.performance-launch')?.setAttribute('aria-pressed',String(state.performanceShowing&&!state.historyShowing&&!state.reviewing));
     for (const cmd of ['undo', 'redo', 'explorer', 'help']) {
       $(`.icon-button[data-command="${cmd}"]`).innerHTML = icon(cmd);
     }
@@ -418,17 +427,28 @@ export function mountWorkspace({
     const key = state.kind + ':' + state.rid + ':' + title;
     return `<div class="section-heading"><h2><button class="section-label" data-command="toggle-section" data-section="${esc(key)}" aria-expanded="${!collapsedSections.has(key)}"><span class="disclosure">${icon('down')}</span>${icon(i)}<span>${title}</span>${count!==''?'<span class="section-count">'+count+'</span>':''}</button></h2><span class="spacer"></span>${tools}</div>`;
   }
-  let jsonEditor = null, displayedView = null, jsonOutlineVisible = false, testReturn = null, matrixView = null, matrixIndex = null, matrixBaseline = null;
+  let jsonEditor = null, displayedView = null, jsonOutlineVisible = false, testReturn = null, matrixView = null, matrixIndex = null, matrixBaseline = null, performanceView = null;
+  const performance = createPerformanceController({api,getSnapshot:()=>({...snapshot,model:baseline}),getSeeds:performanceSeeds});
+  window.addEventListener('pagehide',()=>performance.stop());
+  const matrixEvidence = createMatrixEvidenceLoader({
+    load:(references,signal) => api({operation:'matrixMetadata',references},{signal}),
+    validate:value => {
+      const next = createMatrixIndex(baseline, snapshot.classes, snapshot.typeChildren, value);
+      matrixIndex = next; matrixBaseline = baseline;
+    },
+    changed:() => { if (state.matrixShowing) { captureView(); render(); } },
+  });
   const editorLoader = createLazyEditor(() => import('./json-editor.js'));
   let pendingJSONFind = '';
   let pendingJSONStatement = null;
   const jsonBookmarks = new Map();
-  const viewRoute = () => ({ surface: state.historyShowing ? 'history' : state.reviewing ? 'review' : state.matrixShowing ? 'matrix' : state.matrixTesting ? 'matrix-test' : state.testing ? 'test' : state.empty ? 'empty' : 'record',
+  const viewRoute = () => ({ surface: state.historyShowing ? 'history' : state.reviewing ? 'review' : state.performanceShowing ? 'performance' : state.matrixShowing ? 'matrix' : state.matrixTesting ? 'matrix-test' : state.testing ? 'test' : state.empty ? 'empty' : 'record',
     kind: state.kind, rid: state.matrixTesting ? testKey() : state.testing && !state.historyShowing ? state.objectTest.rid : state.rid, statement: state.statement, scopeSelection: state.scopeSelection ?? null,
     ...(state.matrixTesting ? { matrixTest: state.matrixTest } : {}),
     ...(state.historyShowing ? { returnTo: state.historyReturn } : {}) });
   function captureView(withEditor = true) {
     matrixView?.capture();
+    performanceView?.capture();
     if (displayedView?.surface !== 'record') return;
     state.documents ??= new Map();
     state.documents.set(displayedView.kind + ':' + displayedView.rid, { statement: displayedView.statement,
@@ -447,6 +467,8 @@ export function mountWorkspace({
     state.kind = route.kind; state.rid = route.rid;
     state.view = policyEditorView();
     state.matrixShowing = route.surface === 'matrix';
+    state.performanceShowing = route.surface === 'performance';
+    state.performanceOpen ||= state.performanceShowing;
     state.matrixOpen ||= state.matrixShowing;
     state.matrixTesting = route.surface === 'matrix-test' && !!route.matrixTest && model.roles.some(r => r.rid === route.matrixTest.role);
     if (state.matrixTesting) state.matrixTest = route.matrixTest;
@@ -466,7 +488,7 @@ export function mountWorkspace({
     state.reviewing = route.surface === 'review';
     state.reviewOpen ||= state.reviewing;
     state.empty = route.surface === 'empty' || !current();
-    if (state.empty && !state.testing && !state.matrixShowing && !state.historyShowing && !state.reviewing) route.surface = 'empty';
+    if (state.empty && !state.testing && !state.matrixShowing && !state.performanceShowing && !state.historyShowing && !state.reviewing) route.surface = 'empty';
     if (!state.empty && state.kind === 'role') {
       for (const role of ancestry(model.roles, state.rid)) state.closed.delete(role.rid);
       revealDefinitionPath(state.scopeSelection);
@@ -493,12 +515,13 @@ export function mountWorkspace({
     $('.workarea').classList.remove('test-docked');
     captureView();
     matrixView?.destroy(); matrixView = null;
+    performanceView?.destroy(); performanceView = null;
     editorLoader.cancel();
     pendingJSONFind = '';
     pendingJSONStatement = null;
     jsonEditor?.destroy();
     jsonEditor = null;
-    $('#editor').classList.remove('json-workspace', 'history-workspace', 'matrix-workspace');
+    $('#editor').classList.remove('json-workspace', 'history-workspace', 'matrix-workspace', 'performance-workspace');
     $('.workarea').classList.toggle('object-testing', state.testing && !state.historyShowing && !state.reviewing);
     syncView();
     if (state.historyShowing) {
@@ -509,10 +532,24 @@ export function mountWorkspace({
       renderReview();
       return;
     }
+    if (state.performanceShowing) {
+      $('#editor').classList.add('performance-workspace');
+      performanceView = mountPerformance($('#editor'),{controller:performance,state:state.performance,getSnapshot:()=>({...snapshot,model:baseline}),
+        hasDraftChanges:()=>!!differences().length||!!state.raw.size,
+        canOpen:canOpenPerformanceRule,
+        openRule:(rid,statement,measured)=>{if(canOpenPerformanceRule(rid,statement,measured))enter({kind:'policy',rid,statement});},
+        openRole:rid=>enter({kind:'role',rid}),test:openPerformanceTest});
+      return;
+    }
     if (state.matrixShowing) {
       $('#editor').classList.add('matrix-workspace');
-      if (matrixBaseline !== baseline) { matrixIndex = createMatrixIndex(baseline, snapshot.classes, snapshot.typeChildren); matrixBaseline = baseline; }
-      matrixView = mountMatrix($('#editor'), { index:matrixIndex, state:state.matrix, canOpen:canOpenSavedRule,
+      void matrixEvidence.ensure(baseline,() => collectMatrixReferences(baseline));
+      const evidence = matrixEvidence.read();
+      if (matrixBaseline !== baseline) { matrixIndex = createMatrixIndex(baseline, snapshot.classes, snapshot.typeChildren, evidence.value); matrixBaseline = baseline; }
+      matrixView = mountMatrix($('#editor'), { index:matrixIndex, state:state.matrix, metadataStatus:evidence.status, canOpen:canOpenSavedRule,
+        retryEvidence:evidence.canRetry ? () => { void matrixEvidence.retry(); } : null,
+        moreEvidence:!evidence.loading && evidence.remaining ? () => { void matrixEvidence.more(); } : null,
+        hasDraftChanges:!!differences().length || !!draftPolicies().length || !!unfinishedIdEdits(model, state.idDraft).length,
         changed:() => { void saveWorkspace().catch(showError); },
         openRule:(rid, statement) => { captureView(); enter({kind:'policy',rid,statement}); },
         test:openMatrixTest });
@@ -560,8 +597,44 @@ export function mountWorkspace({
     $('#editor').innerHTML = html;
   }
 
+  function showPerformance() {
+    captureView();state.performanceOpen=true;state.performanceShowing=true;state.matrixShowing=false;state.matrixTesting=false;
+    state.historyShowing=false;state.reviewing=false;state.testing=false;state.empty=true;state.rid='';state.kind='role';state.scopeSelection=null;
+    render();
+  }
+  function canOpenPerformanceRule(rid,index,measured) {
+    if(index===undefined)return model.policies.some(p=>p.rid===rid);
+    const a=measured?.model.policies.find(p=>p.rid===rid)?.content?.Statement?.[index];
+    const b=baseline.policies.find(p=>p.rid===rid)?.content?.Statement?.[index];
+    return (!measured||JSON.stringify(a)===JSON.stringify(b))&&canOpenSavedRule(rid,index);
+  }
+  function performanceSeed(q) {
+    const user=q.mode==='user'?selectedTestUser(q):null,role=q.mode==='role'?roleByRid(q.subject):null;
+    if(!user&&!role)throw Error('Choose a user or role before profiling this check.');
+    const chosen=context.objects.find(o=>o.rid===q.resource),proposed=proposedForTest(q,chosen);
+    const resource=q.action==='Create'?createResource(q):q.resource;
+    if(!resource)throw Error('Choose the object or Create destination before profiling.');
+    if(q.action!=='Create'&&!chosen)throw Error('Choose an object from the picker before profiling this check.');
+    const actor={...(user||role),kind:user?'user':'role'},object=q.action==='Create'?{rid:resource,id:'new '+proposed.type,name:'Proposed '+proposed.type,type:proposed.type}:chosen;
+    const request={resource_rid:resource,subject_rid:actor.rid,action:q.action.toUpperCase(),...(proposed?{proposed}:{})};
+    return {id:JSON.stringify(request),actor,object,action:request.action,request,
+      ...(q.action==='Create'?{contextObject:context.objects.find(o=>o.rid===resource)||{rid:resource,id:resource}}:{})};
+  }
+  function performanceSeeds() {
+    return [...state.tests.values()].flatMap(q=>{try{return [performanceSeed(q)];}catch{return [];}}).slice(0,8);
+  }
+  function openPerformanceTest(c) {
+    // A Create's proposed type is not the class of its real parent. Keep the
+    // destination identity intact in the shared object catalogue.
+    enter({kind:'test',object:c.action==='CREATE'?(c.contextObject||context.objects.find(o=>o.rid===c.request.resource_rid)||{rid:c.request.resource_rid,id:c.request.resource_rid}):c.object});
+    if(c.actor.kind==='user')rememberPrincipal({...c.actor,type:'User'});
+    state.check={...switchTestAction(state.check,c.action[0]+c.action.slice(1).toLowerCase()),mode:c.actor.kind,subject:c.actor.rid,userId:c.actor.kind==='user'?c.actor.id:'',
+      resource:c.request.resource_rid,proposed:JSON.stringify(c.request.proposed||{},null,2),updateMode:'custom',result:null,createInitialized:true,createFields:Object.keys({...c.request.proposed?.properties,...c.request.proposed?.references}),createDefault:null,createNumberDrafts:{},viewScroll:0};
+    render();
+  }
   function showMatrix() {
     captureView();
+    state.performanceShowing=false;
     state.matrixShowing=true; state.matrixOpen=true; state.matrixTesting=false; state.testing=false;
     state.historyShowing=false; state.reviewing=false; state.empty=true; state.rid='';state.kind='role';state.scopeSelection=null;
     render();
@@ -570,6 +643,7 @@ export function mountWorkspace({
   function openMatrixTest(selection, action) {
     if (!selection || !model.roles.some(r => r.rid === selection.role)) return;
     captureView();
+    state.performanceShowing=false;
     state.matrixTest={...selection}; state.matrixTesting=true; state.testing=true; state.matrixShowing=false;
     state.historyShowing=false;state.reviewing=false;state.empty=true;state.rid='';state.kind='role';state.scopeSelection=null;
     if (action && state.check.action!==action) state.check=switchTestAction(state.check,action);
@@ -619,7 +693,7 @@ export function mountWorkspace({
       pending = differences().length || state.raw.size || unfinishedIdEdits(model, state.idDraft).length,
       height = Math.max(140, Math.min(Math.floor(innerHeight * .6), state.testDockHeight ?? (['Create','Update'].includes(q.action) ? 230 : 164)));
     el.style.height = height + 'px';
-    el.innerHTML = `<div class="test-resize" role="separator" tabindex="0" aria-label="Resize access test" aria-orientation="horizontal" aria-valuemin="140" aria-valuemax="${Math.floor(innerHeight*.6)}" aria-valuenow="${height}" title="Drag to resize · Up / Down"></div><div class="test-heading"><strong>Access test</strong><span class="test-saved-scope" title="Tests saved PBAC policies across the environment, including policies other than the one open here.">All saved policies</span>${state.kind==='policy'?'<span class="test-seed">'+testSeedLabel()+'</span>':''}<span class="spacer"></span>${pending?'<span class="test-draft-note">Draft edits excluded</span>':''}${ib('close','close-test','Close access test')}</div><div class="test-body"><div class="test-inputs ${q.action==='Create'?'is-create':''}"><div class="test-subject-field"><div class="test-field-label"><span>${q.mode==='role'?'Role':'User'}</span><button class="quiet-button" data-command="test-mode">${q.mode==='role'?'Use user':state.kind==='role'||defaultTest().mode==='role'?'Use role':'Choose role…'}</button></div>${q.mode==='role'?'<button class="test-role-value" data-command="choose-test-role" title="'+esc(role?.id??'Choose role')+'">'+icon('role')+'<strong>'+esc(role?.name??'Choose role')+'</strong>'+icon('down')+'</button>':userPickerButton(selectedTestUser(q))}</div><div class="test-action-field"><span class="test-field-label">Action</span><div class="action-segment">${A.map(a=>`<button data-command="test-action" data-action-value="${a}" class="${a===q.action?'active':''}" aria-pressed="${a===q.action}">${a}</button>`).join('')}</div></div>${q.action==='Create'?'':`<label class="object-label">Object<button class="object-picker picker-trigger ${chosen?'has-object':''}" data-command="choose-object" aria-label="Choose test object" title="${esc(chosen?[chosen.type,chosen.id,chosen.path].filter(Boolean).join(' · '):'Search by name or ID; filter by type')}">${icon('object')}<span><strong>${esc(chosen?.name??(q.resource||'Find an object…'))}</strong></span>${icon('search')}</button></label>`}<button class="primary test-run" data-command="prepare-check" title="Run access test · Ctrl+Enter" ${!q.result?.running&&(q.action==='Create'?createReady(q):q.resource)&&(q.mode==='role'?role:selectedTestUser(q))?'':'disabled'}>${icon('check')}${q.result?.running?'Testing…':'Run test'}</button>${testChangeFields(q,chosen)}</div>${q.mode==='user'?'<p class="test-scope">Includes all roles assigned to this user.</p>':''}${q.rerunRequired&&!q.result?'<p class="test-rerun" role="status">Applied. Run this test again on the saved configuration.</p>':''}<div class="check-result" id="check-result">${q.result?renderResult():''}</div></div>`;
+    el.innerHTML = `<div class="test-resize" role="separator" tabindex="0" aria-label="Resize access test" aria-orientation="horizontal" aria-valuemin="140" aria-valuemax="${Math.floor(innerHeight*.6)}" aria-valuenow="${height}" title="Drag to resize · Up / Down"></div><div class="test-heading"><strong>Access test</strong><span class="test-saved-scope" title="Tests saved PBAC policies across the environment, including policies other than the one open here.">All saved policies</span>${state.kind==='policy'?'<span class="test-seed">'+testSeedLabel()+'</span>':''}<span class="spacer"></span>${pending?'<span class="test-draft-note">Draft edits excluded</span>':''}${ib('performance','profile-check','Profile this check')}${ib('close','close-test','Close access test')}</div><div class="test-body"><div class="test-inputs ${q.action==='Create'?'is-create':''}"><div class="test-subject-field"><div class="test-field-label"><span>${q.mode==='role'?'Role':'User'}</span><button class="quiet-button" data-command="test-mode">${q.mode==='role'?'Use user':state.kind==='role'||defaultTest().mode==='role'?'Use role':'Choose role…'}</button></div>${q.mode==='role'?'<button class="test-role-value" data-command="choose-test-role" title="'+esc(role?.id??'Choose role')+'">'+icon('role')+'<strong>'+esc(role?.name??'Choose role')+'</strong>'+icon('down')+'</button>':userPickerButton(selectedTestUser(q))}</div><div class="test-action-field"><span class="test-field-label">Action</span><div class="action-segment">${A.map(a=>`<button data-command="test-action" data-action-value="${a}" class="${a===q.action?'active':''}" aria-pressed="${a===q.action}">${a}</button>`).join('')}</div></div>${q.action==='Create'?'':`<label class="object-label">Object<button class="object-picker picker-trigger ${chosen?'has-object':''}" data-command="choose-object" aria-label="Choose test object" title="${esc(chosen?[chosen.type,chosen.id,chosen.path].filter(Boolean).join(' · '):'Search by name or ID; filter by type')}">${icon('object')}<span><strong>${esc(chosen?.name??(q.resource||'Find an object…'))}</strong></span>${icon('search')}</button></label>`}<button class="primary test-run" data-command="prepare-check" title="Run access test · Ctrl+Enter" ${!q.result?.running&&(q.action==='Create'?createReady(q):q.resource)&&(q.mode==='role'?role:selectedTestUser(q))?'':'disabled'}>${icon('check')}${q.result?.running?'Testing…':'Run test'}</button>${testChangeFields(q,chosen)}</div>${q.mode==='user'?'<p class="test-scope">Includes all roles assigned to this user.</p>':''}${q.rerunRequired&&!q.result?'<p class="test-rerun" role="status">Applied. Run this test again on the saved configuration.</p>':''}<div class="check-result" id="check-result">${q.result?renderResult():''}</div></div>`;
     const resize = el.querySelector('.test-resize');
     const size = value => {
       state.testDockHeight = Math.max(140, Math.min(Math.floor(innerHeight * .6), value));
@@ -653,7 +727,7 @@ export function mountWorkspace({
     const testBody=el.querySelector('.test-body');
     testBody.scrollTop = q.viewScroll ?? scroll;
     testBody.addEventListener('scroll',()=>{
-      if (!testBody.isConnected || el.hidden || state.check !== q) return;
+      if (!testBody.isConnected || el.hidden || !activeTest(q)) return;
       q.viewScroll=testBody.scrollTop;void saveWorkspace().catch(showError);
     },{passive:true});
     if (q.action === 'Create') { void loadCreateSchema(q); void loadCreateLabels(q); void loadCreationRoot(q); }
@@ -687,7 +761,7 @@ export function mountWorkspace({
     const selected = t && r.selectedRule && canOpenSavedRule(r.selectedRule.rid, r.selectedRule.index)
       ? selectedRuleTrace(t, r.selectedRule.rid, r.selectedRule.index) : null;
     const summary = selected ? `<div class="selected-rule-result"><span>Selected saved rule</span><button type="button" class="quiet-button" data-command="reveal-test-trace" data-trace-target="${selected.path ?? ''}">${esc(selected.label)}</button>${selected.failures.slice(0,4).map(f => `<button type="button" class="test-failure-link" data-command="focus-test-failure" data-field="${esc(f.field ?? '')}" data-trace-target="${esc(f.path)}">${esc(f.label)}${f.field && r.request?.action === 'CREATE' ? ' · edit input' : ' · show trace'}</button>`).join('')}</div>` : '';
-    return `<div class="result-line" role="status" data-outcome="${r.stale?'unknown':outcome.tone}">${icon(r.stale?'history':outcome.glyph)}<strong>${r.stale?'Previous result: ':''}${esc(outcome.label)}</strong><span>${esc(t?traceRequestLabel(t):'')}</span>${r.stale?'<span class="result-stale">Changed since test \u00b7 run again</span>':''}</div>${summary}${t?renderEngineTrace(t,canOpenSavedRule,r.engineState??={}):''}<div class="test-diagnostics">${t?'<details class="test-full-trace"><summary>'+icon('down')+icon('list')+'Raw trace tree</summary><div class="test-diagnostic-body">'+renderTrace(t, canOpenSavedRule)+'</div></details>':''}<details><summary>${icon('down')}${icon('json')}Request JSON</summary><div class="test-diagnostic-body"><pre>${esc(JSON.stringify(r.request,null,2))}</pre></div></details></div>`;
+    return `<div class="result-line" role="status" data-outcome="${r.stale?'unknown':outcome.tone}">${icon(r.stale?'history':outcome.glyph)}<strong>${r.stale?'Previous result: ':''}${esc(outcome.label)}</strong><span>${esc(t?traceRequestLabel(t):'')}</span>${r.stale?'<span class="result-stale">Changed since test \u00b7 run again</span>':''}${renderTestTiming(t?.durationMs,r.requestMs)}</div>${summary}${t?renderEngineTrace(t,canOpenSavedRule,r.engineState??={}):''}<div class="test-diagnostics">${t?'<details class="test-full-trace"><summary>'+icon('down')+icon('list')+'Raw trace tree</summary><div class="test-diagnostic-body">'+renderTrace(t, canOpenSavedRule)+'</div></details>':''}<details><summary>${icon('down')}${icon('json')}Request JSON</summary><div class="test-diagnostic-body"><pre>${esc(JSON.stringify(r.request,null,2))}</pre></div></details></div>`;
   }
 
   function describeChange(d) {
@@ -1038,6 +1112,7 @@ export function mountWorkspace({
         request
       };
       renderDock();
+      const requestedAt = window.performance.now();
       const trace = await api({
         operation: 'trace',
         request
@@ -1045,6 +1120,7 @@ export function mountWorkspace({
       if (traceRuns.get(key) !== run || state.tests.get(key) !== q) return;
       q.result = {
         trace,
+        requestMs: window.performance.now() - requestedAt,
         request,
         selectedRule,
         stale: beforeInputs !== inputs() || beforeModel !== JSON.stringify(model)
@@ -1104,6 +1180,9 @@ export function mountWorkspace({
 
   async function command(cmd, el) {
     if (cmd === 'matrix') { showMatrix(); return; }
+    if (cmd === 'performance') { showPerformance(); return; }
+    if (cmd === 'close-performance') { performance.stop();state.performanceOpen=false;if(state.performanceShowing){state.performanceShowing=false;state.empty=true;}render();return; }
+    if (cmd === 'profile-check') { const seed=performanceSeed(state.check);performance.stop();showPerformance();void performance.run(false,seed);return; }
     if (cmd === 'close-matrix') { state.matrixOpen=false; if(state.matrixShowing){state.matrixShowing=false;state.empty=true;} render(); return; }
     if (cmd === 'matrix-test') { openMatrixTest(state.matrixTest); return; }
     if (cmd === 'close-matrix-test') { if(state.matrixTesting){state.testOpen.delete(testKey());showMatrix();} state.matrixTest=null;renderTabs();return; }
@@ -3406,9 +3485,9 @@ export function mountWorkspace({
     state.tabs = state.tabs.filter(t => model[t.kind === 'role' ? 'roles' : 'policies'].some(r => r.rid === t.rid));
     const tabAttrs = (key, active) => `role="tab" data-tab-key="${esc(key)}" data-tab-kind="${esc(key.split(':')[0])}" id="access-tab-${encodeURIComponent(key)}" aria-selected="${active}" aria-controls="${['test','matrix-test'].includes(key)?'dock':'editor'}" tabindex="${active?0:-1}"`;
     root.setAttribute('role', 'tablist');
-    root.innerHTML = (state.matrixOpen ? `<div class="doc-tab ${state.matrixShowing&&!state.reviewing&&!state.historyShowing?'active':''}" role="presentation"><button ${tabAttrs('matrix',state.matrixShowing&&!state.reviewing&&!state.historyShowing)} data-command="matrix">${icon('matrix')}<span>Access matrix</span></button>${ib('close','close-matrix','Close access matrix','tabindex="-1"')}</div>` : '') + state.tabs.map(t => {
+    root.innerHTML = (state.performanceOpen ? `<div class="doc-tab ${state.performanceShowing&&!state.reviewing&&!state.historyShowing?'active':''}" role="presentation"><button ${tabAttrs('performance',state.performanceShowing&&!state.reviewing&&!state.historyShowing)} data-command="performance">${icon('performance')}<span>Performance</span></button>${ib('close','close-performance','Close performance','tabindex="-1"')}</div>` : '') + (state.matrixOpen ? `<div class="doc-tab ${state.matrixShowing&&!state.reviewing&&!state.historyShowing?'active':''}" role="presentation"><button ${tabAttrs('matrix',state.matrixShowing&&!state.reviewing&&!state.historyShowing)} data-command="matrix">${icon('matrix')}<span>Access matrix</span></button>${ib('close','close-matrix','Close access matrix','tabindex="-1"')}</div>` : '') + state.tabs.map(t => {
       const r = model[t.kind === 'role' ? 'roles' : 'policies'].find(x => x.rid === t.rid);
-      const active = !state.matrixShowing && !state.testing && !state.historyShowing && !state.reviewing && !state.empty && t.rid === state.rid;
+      const active = !state.performanceShowing && !state.matrixShowing && !state.testing && !state.historyShowing && !state.reviewing && !state.empty && t.rid === state.rid;
       return `<div class="doc-tab ${active?'active':''}" role="presentation"><button ${tabAttrs(t.kind+':'+t.rid,active)} data-open="${t.rid}" data-kind="${t.kind}" title="${esc(r.name)}">${icon(t.kind)}<span class="tab-label">${esc(r.name)}</span>${dirtyMark(r.rid)}</button>${ib('close','close-tab','Close '+r.name+' (Delete)','data-rid="'+r.rid+'" tabindex="-1"')}</div>`;
     }).join('') + (state.objectTest ? `<div class="doc-tab ${state.testing&&!state.matrixTesting&&!state.reviewing&&!state.historyShowing?'active':''}" role="presentation"><button ${tabAttrs('test',state.testing&&!state.matrixTesting&&!state.reviewing&&!state.historyShowing)} data-command="open-test">${icon('check')}<span>Access test</span></button>${ib('close','close-object-test','Close access test (Delete)','tabindex="-1"')}</div>` : '') + (state.matrixTest ? `<div class="doc-tab ${state.matrixTesting&&!state.reviewing&&!state.historyShowing?'active':''}" role="presentation"><button ${tabAttrs('matrix-test',state.matrixTesting&&!state.reviewing&&!state.historyShowing)} data-command="matrix-test">${icon('run')}<span>Test · ${esc(state.matrixTest.type)}</span></button>${ib('close','close-matrix-test','Close matrix test','tabindex="-1"')}</div>` : '') + (state.reviewOpen ?
       `<div class="doc-tab review-tab ${state.reviewing&&!state.historyShowing?'active':''}" role="presentation"><button ${tabAttrs('review',state.reviewing&&!state.historyShowing)} data-command="review">${icon('changes')}<span>Pending edits</span></button>${ib('close','close-review','Close pending edits (Delete)','tabindex="-1"')}</div>` :
@@ -3445,7 +3524,7 @@ export function mountWorkspace({
       tabs[next]?.focus();
     } else if (e.key === 'Delete') {
       e.preventDefault();
-      const close = e.target.closest('.doc-tab').querySelector('[data-command="close-tab"],[data-command="close-review"],[data-command="history-close"],[data-command="close-object-test"],[data-command="close-matrix"],[data-command="close-matrix-test"]');
+      const close = e.target.closest('.doc-tab').querySelector('[data-command="close-tab"],[data-command="close-review"],[data-command="history-close"],[data-command="close-object-test"],[data-command="close-matrix"],[data-command="close-matrix-test"],[data-command="close-performance"]');
       close?.click();
     }
   });
@@ -3604,7 +3683,7 @@ export function mountWorkspace({
     }
     if (cmd === 'history') {
       if (state.historyShowing) return workspaceCommand('history-close', el);
-      state.historyReturn = { matrixShowing:state.matrixShowing, matrixTesting:state.matrixTesting, matrixTest:state.matrixTest, reviewing: state.reviewing, testing: state.testing, empty: state.empty,
+      state.historyReturn = { performanceShowing:state.performanceShowing, matrixShowing:state.matrixShowing, matrixTesting:state.matrixTesting, matrixTest:state.matrixTest, reviewing: state.reviewing, testing: state.testing, empty: state.empty,
         rid: state.rid, kind: state.kind, statement: state.statement, scopeSelection: state.scopeSelection, objectTest: state.objectTest };
       if (!state.historyShowing) state.historyRecord = {
         rid: state.rid,
@@ -5028,7 +5107,7 @@ export function mountWorkspace({
       const user = resolveUser(result.choices, requestedId);
       if (!user) return;
       rememberPrincipal(user); q.subject = user.rid;
-      if (state.check === q) renderDock();
+      if (activeTest(q)) renderDock();
     }).catch(showError);
   }
 
@@ -5143,7 +5222,7 @@ export function mountWorkspace({
 
   function markTestChanged(q = state.check) {
     if (q.result) q.result.stale = true;
-    if ($('#check-result') && state.check === q) { $('#check-result').innerHTML = renderResult(); mountResult(); }
+    if ($('#check-result') && activeTest(q)) { $('#check-result').innerHTML = renderResult(); mountResult(); }
   }
 
   function createReady(q) {
@@ -5199,7 +5278,7 @@ export function mountWorkspace({
       if(!currentCreateContext(q,type,revision))return;
       q.createRootLoaded=type;q.createContextError=error.message;delete q.createContextErrorSource;
     }finally{if(creationRootLoads.get(q)===request)creationRootLoads.delete(q);}
-    if(state.check===q&&!$('#dock').hidden)renderDock();
+    if(activeTest(q)&&!$('#dock').hidden)renderDock();
     void saveWorkspace().catch(showError);
   }
   async function loadCreateDefault(q,source) {
@@ -5224,7 +5303,7 @@ export function mountWorkspace({
         creationDefaultLoads.delete(q);
         if((q.createRevision??0)===revision)delete q.defaultLoading;
       }
-      if(state.check===q&&!$('#dock').hidden)renderDock();void saveWorkspace().catch(showError);
+      if(activeTest(q)&&!$('#dock').hidden)renderDock();void saveWorkspace().catch(showError);
     }
   }
   const createSchemaLoading = new Set();
@@ -5251,7 +5330,7 @@ export function mountWorkspace({
       }
     }));
     if (changed) {
-      if (state.check === q && q.action === 'Create' && !$('#dock').hidden) renderDock();
+      if (activeTest(q) && q.action === 'Create' && !$('#dock').hidden) renderDock();
       void saveWorkspace().catch(showError);
     }
   }
@@ -5262,7 +5341,7 @@ export function mountWorkspace({
     createSchemaLoading.add(type);
     try { await loadSchema(type); } catch (error) { createSchemaErrors.set(type, error.message); }
     finally { createSchemaLoading.delete(type); }
-    if (state.check === q && q.action === 'Create' && !$('#dock').hidden) renderDock();
+    if (activeTest(q) && q.action === 'Create' && !$('#dock').hidden) renderDock();
   }
 
   function createChangeFields(q) {
@@ -5372,7 +5451,7 @@ export function mountWorkspace({
     }
     if (cmd === 'create-add-field') {
       await loadSchema(values.type);
-      if (state.check !== q || !el.isConnected) return true;
+      if (!activeTest(q) || !el.isConnected) return true;
       choicePicker(el, { title: 'Add an initial value', rows: (schemaData.classes[values.type] ?? []).filter(p => !['type','parent'].includes(p.accessor)).map(p => ({ rid:p.accessor, label:p.label || p.accessor, secondary:p.accessor, detail:fieldKind(p), icon:p.reference?'link':'sliders' })),
         select: name => {
           q.createFields = [...new Set([...(q.createFields ?? []), name])];
@@ -5581,6 +5660,7 @@ export function mountWorkspace({
     const tests = preserveTestInputs ? [...state.tests.values()] : [],
       selected = selectedTestContext(tests, context, userDirectory.users, snapshot.users);
     environment.name = snapshot.name; environment.capturedOn = snapshot.loadedAt;
+    matrixEvidence.reset(); matrixBaseline = null; performance.invalidate();
     schemaLoaded.clear(); schemaPending.clear(); schemaHints.clear(); createSchemaErrors.clear(); createLabelRequests.clear(); creationRoots.clear();
     schemaData.classes = clone(snapshot.classes);
     userDirectory.users = snapshot.users;
@@ -5798,7 +5878,7 @@ export function mountWorkspace({
     if (applying) { notice('Apply is in progress. Open this link again when it finishes.'); return; }
     if (target.kind === 'test') {
       captureView();
-      state.matrixShowing=false; state.matrixTesting=false;
+      state.matrixShowing=false; state.matrixTesting=false; state.performanceShowing=false;
       state.testing = true; state.objectTest = target.object;
       state.historyShowing = false; state.reviewing = false; state.empty = true; state.scopeSelection = null;
       state.rid = ''; state.kind = 'role';

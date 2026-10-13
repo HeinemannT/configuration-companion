@@ -81,7 +81,9 @@ describe('AccessTraceCommand serialization', () => {
       references: { owner: '9000000000000000002', reviewers: ['9000000000000000003'], cleared: null }, parent_rid: '9000000000000000004',
     }));
     const values = cmd.accessTraceRequestDTO.updates.$map;
-    expect(values.type.typeId).toBe('Organisation');
+    expect(values.type).toBeUndefined();
+    const create = roundTrip(makeAccessTraceCommand('9000000000000000001', '113', 'CREATE', 10, { type:'Organisation' }));
+    expect(create.accessTraceRequestDTO.updates.$map.type.typeId).toBe('Organisation');
     expect(values['HasName.name']).toBe('Renamed');
     expect(values.count.value).toBe(2.5);
     expect(values.active.value).toBe(false);
@@ -109,6 +111,11 @@ describe('AccessTraceCommand serialization', () => {
     expect(req.indexBasedEvaluation).toBe(false);
     // updates is an (empty) map; allowedStatementPaths an (empty) list
     expect(req.allowedStatementPaths?.$elements ?? []).toHaveLength(0);
+  });
+  it('opts into indexed measurement without changing the ordinary trace default', () => {
+    const req=roundTrip(makeAccessTraceCommand('9000000000000000001','9000000000000000002','READ',10,undefined,true)).accessTraceRequestDTO;
+    expect(req.indexBasedEvaluation).toBe(true);
+    expect(String(req.entityRid.identifier)).toBe('9000000000000000002');
   });
 });
 

@@ -3,13 +3,18 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import {
   makeExtendedExecuteCommand,
   makeGetObjectCommand,
+  makeAccessTraceCommand,
+  makeLoadTypeConfigCommand,
+  makeReferenceIdentityCommand,
   parseCommandResponse,
   parseEcResults,
   parseObjectData,
   registerBmpTypes,
 } from '../../bmp-types'
+import { extractAccessTrace } from '../../bmp-client'
+import { commandResults, parseTypeCatalogue, parseReferenceIdentity } from '../../bmp-type-catalogue'
 import { deserializeResponse, deserializeStream, serializeCommands } from '../../java-serial'
-import { bridgePreview, buildDiscoveryEc, integrationTarget, parseDiscoveryRows, type DiscoveryRow, type IntegrationTarget } from './config'
+import { buildDiscoveryEc, integrationTarget, parseDiscoveryRows, type DiscoveryRow, type IntegrationTarget } from './config'
 
 registerBmpTypes()
 
@@ -23,7 +28,9 @@ describe('Binary serializer integration', () => {
     target = integrationTarget()
     jwt = await login(target)
     ticket = await getLoginTicket(target, jwt)
-    organisations = parseDiscoveryRows(await bridgePreview(target, buildDiscoveryEc('Organisation')))
+    const discovery = await executeEcDirect(target, ticket, buildDiscoveryEc('Organisation'))
+    if (!discovery.ok) throw new Error('Organisation discovery failed')
+    organisations = parseDiscoveryRows(discovery.log)
     if (!organisations.length) throw new Error('Live discovery returned no Organisation rows')
   })
 
@@ -56,6 +63,31 @@ describe('Binary serializer integration', () => {
       expect(object.rid).toBe(source.rid)
       expect(Number.isSafeInteger(Number(object.rid))).toBe(false)
     }
+  })
+
+  it('decodes live BMP trace durations at the request and rule levels', async () => {
+    const discovery = await executeEcDirect(target, ticket, buildDiscoveryEc('Role'))
+    if (!discovery.ok) throw new Error('Role discovery failed')
+    const roles = parseDiscoveryRows(discovery.log)
+    if (!roles.length) throw new Error('Live discovery returned no Role rows')
+    const buffer = await sendCommand(target, ticket, makeAccessTraceCommand(organisations[0].rid, roles[0].rid, 'READ', 4))
+    const trace = extractAccessTrace(deserializeStream(buffer, true))
+    expect(trace?.durationMs).toBeGreaterThanOrEqual(0)
+    expect(trace?.children.length).toBeGreaterThan(0)
+    for (const child of trace!.children) {
+      expect(child.durationMs).toBeGreaterThanOrEqual(0)
+      expect(child.durationMs).toBeLessThanOrEqual(trace!.durationMs!)
+    }
+  })
+
+  it('reads native type metadata and resolves identity in its declared ID space', async () => {
+    const catalogue = parseTypeCatalogue(commandResults(deserializeStream(await sendCommand(target, ticket, makeLoadTypeConfigCommand()), true), 1)[0])
+    expect(catalogue.types.Organisation.concrete).toBe(true)
+    expect(catalogue.types.Organisation.parents.length).toBeGreaterThan(0)
+    const source = organisations.find(o => o.businessId)
+    if (!source || !catalogue.types.Organisation.idSpace) throw new Error('No Organisation with an ID space available')
+    const buffer = await sendCommand(target, ticket, makeReferenceIdentityCommand(catalogue.types.Organisation.idSpace, source.businessId))
+    expect(parseReferenceIdentity(commandResults(deserializeStream(buffer, true), 1)[0])).toMatchObject({ rid: source.rid, type: 'Organisation' })
   })
 })
 

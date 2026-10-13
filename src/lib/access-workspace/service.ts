@@ -3,8 +3,10 @@ import { canonical, changes, type AccessModel, type AccessRequest, type AccessTa
 import { readAccess, readSchema, searchAccessObjects, searchAccessPrincipals, readAccessPrincipals, searchListItems, type ReadContext } from './read';
 import { assertNoConflicts, buildApplyPlan, validateModel } from './write';
 import { traceAccess } from './trace';
+import { discoverPerformance, measurePerformance } from './performance';
 import { readCreationContext } from './creation';
 import { shareRead } from './requests';
+import { readMatrixMetadata } from './matrix-metadata';
 import { requireReceipt } from './response';
 import { readJournal, writeJournal, removeJournal, type ApplyJournal } from './journal';
 import { startOperation, operationStatus, cancelOperation, releaseOperation } from './operations';
@@ -88,6 +90,9 @@ export async function handleAccessRequest(client: BmpClient, environment: string
 
 async function runTask(client: BmpClient, environment: string, name: string, request: AccessTask, assertEnvironment: () => void, context: ReadContext = {}, operationId: string = crypto.randomUUID()): Promise<unknown> {
   assertEnvironment();
+  if (request.operation === 'performanceDiscover') return discoverPerformance(client, environment, name, assertEnvironment, context);
+  if (request.operation === 'performanceMeasure') return measurePerformance(client, request.request, assertEnvironment, context.signal);
+  if (request.operation === 'matrixMetadata') return shareRead(client, canonical(request), signal => readMatrixMetadata(client, request.references, signal), context.signal);
   if (request.operation === 'creation') return shareRead(client, canonical(request), signal => readCreationContext(client, request.type, request.source, request.fields, signal), context.signal);
   if (request.operation === 'schema') return shareRead(client, 'schema:' + request.type, signal => readSchema(client, request.type, signal), context.signal);
   if (request.operation === 'search') return shareRead(client, canonical(request), signal => searchAccessObjects(client, request.query, request.type, request.prototypes, signal, request.containers, request.containerFor), context.signal);

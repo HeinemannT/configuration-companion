@@ -282,6 +282,17 @@ export class JavaWriter {
       this.writeEnum(obj);
       return;
     }
+    // Native DTOs use String[] for requested property names. Do not silently
+    // serialize arbitrary JS arrays as a different Java collection type.
+    if (Array.isArray(obj)) {
+      if (obj.some(v => v !== null && typeof v !== 'string')) throw new Error('Only Java String[] arrays are supported');
+      this.buf.push(TC_ARRAY);
+      this.writeClassDesc({ name: '[Ljava.lang.String;', uid: -5921575005990323385n, flags: SC_SERIALIZABLE, fields: [], parent: null });
+      this.assignHandle(`obj:${this.nextHandle}`);
+      this.writeInt(obj.length);
+      for (const value of obj) this.writeObject(value);
+      return;
+    }
     // Get type info from $type property
     const typeName: string = obj.$type;
     if (!typeName) throw new Error('Object missing $type property');

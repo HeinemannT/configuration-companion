@@ -333,6 +333,8 @@ export interface AccessTraceNode {
   element: string;
   result: boolean | null;
   timedOut: boolean;
+  /** BMP's elapsed time for this node, including nested evaluations. */
+  durationMs?: number;
   details: Record<string, string>;
   children: AccessTraceNode[];
 }

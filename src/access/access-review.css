@@ -1,4 +1,8 @@
 /* Access review uses the same compact chrome and control geometry as the editor. */
+.trace-timing{font-variant-numeric:tabular-nums;white-space:nowrap;font-size:10px;color:var(--secondary);font-weight:400}
+.context-test .result-line>.test-timing{display:inline-flex;align-items:baseline;gap:5px;flex-wrap:wrap;margin-left:auto;font-size:10px;color:var(--secondary)}
+.er-table .er-time{width:66px;text-align:right;white-space:nowrap}.er-time-column{width:66px}
+.er-predicate-head>.trace-timing{margin-left:auto;padding-left:8px}
 .am-section-control{position:relative;display:flex;width:100%;height:21px;align-items:center}
 .am-table .am-corner{padding:0 4px}.am-section-control>button[data-matrix-sections]{flex:1;min-width:0}
 .am-section-control>button{display:flex;align-items:center;justify-content:flex-start;gap:5px;min-height:21px;height:21px;padding:0 4px;font-size:10px;border:0;border-radius:0;box-shadow:none;background:transparent;color:#5d4d6b}
@@ -40,7 +44,11 @@
 .am-work [data-access-icon="role"],.am-search [data-access-icon="role"]{color:var(--role-ink)}
 .er-table td:first-child{white-space:nowrap}
 .create-origin{display:flex;align-items:center;gap:6px;font-size:10px;color:#897397;padding-top:3px}.create-origin button{background:transparent;border:0;box-shadow:none;min-height:18px;padding:0;gap:3px;font-size:10px}.create-origin svg{width:12px;height:12px}
-.matrix-launch{margin:6px 7px 0;justify-content:flex-start;gap:7px;padding:5px 8px;font-size:12px;flex:none}
+.matrix-launch{display:flex;align-items:center;margin:6px 7px 0;justify-content:flex-start;gap:7px;padding:5px 8px;font-size:12px;flex:none}
+.matrix-launch>[data-icon]{display:flex;flex:none;color:#755192}.matrix-launch svg{width:17px;height:17px}
+.am-unresolved{color:#746a80;font-weight:500}.am-evidence{margin:4px 0 8px;font-size:11px;color:var(--secondary);line-height:1.4}
+.am-foot button{min-height:20px;padding:1px 5px;font-size:10px;margin-left:4px}.am-crud>.am-unresolved{margin-left:4px}
+.am-empty button{font-size:inherit;padding:1px 4px;min-height:0}
 .matrix-launch[aria-pressed=true]{background:#e5dbee;border-color:#ad95c5;color:#49335f}
 #editor.matrix-workspace{padding:0;display:flex;flex-direction:column;overflow:hidden;min-height:0;background:#fff}
 .am-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:7px 9px;background:var(--chrome);border-bottom:1px solid #bfb6cc;box-shadow:inset 0 1px #fff;flex:none;color:#39343e}

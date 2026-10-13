@@ -3,7 +3,7 @@ import {
   ICON_FOLDER, ICON_SLIDERS_HORIZONTAL, ICON_PENCIL, ICON_CUBE, ICON_ARROW_LEFT,
   ICON_SHIELD_PH, ICON_SEARCH, ICON_PLUS, ICON_X,
   ICON_ARROW_UNDO, ICON_ARROW_REDO, ICON_PLAY, ICON_NOTE_PENCIL, ICON_DOTS_THREE_V,
-  ICON_INFO, ICON_COLUMNS, ICON_TRASH, ICON_COPY, ICON_ARROW_RIGHT, ICON_CARET_DOWN,
+  ICON_INFO, ICON_COLUMNS, ICON_TRASH, ICON_COPY, ICON_ARROW_RIGHT, ICON_CARET_DOWN, ICON_GAUGE,
   ICON_LINK, ICON_CODE, ICON_SAVE, ICON_CROSSHAIR,
   ICON_WARNING, ICON_CHECK, ICON_REVERT, ICON_GLOBE, ICON_LIST, ICON_CLOCK, ICON_ARROW_OUT, ICON_MINUS,
 } from '../lib/icons';
@@ -19,6 +19,7 @@ const artwork: Record<string, string> = {
   sort: accessGlyph('<path d="M2.5 4h9M2.5 9h6M2.5 14h3M15 4v12m-3-3 3 3 3-3"/>'),
   panel: accessGlyph('<rect x="2" y="3" width="16" height="14" rx="1"/><path d="M12 3v14"/>'),
   matrix: accessGlyph('<rect x="2" y="3" width="16" height="14" rx="1"/><path d="M2 8h16M2 12.5h16M8 3v14M13 3v14"/>'),
+  performance: ICON_GAUGE,
   locate: ICON_CROSSHAIR, run: ICON_PLAY,
   object: ICON_CUBE, type: ICON_CUBE, role, policy: ICON_SHIELD_PH,
   search: ICON_SEARCH, plus: ICON_PLUS, close: ICON_X, undo: ICON_ARROW_UNDO, redo: ICON_ARROW_REDO,

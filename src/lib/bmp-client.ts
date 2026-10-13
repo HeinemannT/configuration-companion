@@ -11,6 +11,8 @@ import {
   makeTreeItemCommand,
   makeAccessTraceCommand,
   makeGetTypeFieldsCommand,
+  makeLoadTypeConfigCommand,
+  makeReferenceIdentityCommand,
   type AccessTraceUpdates,
   parseEcResults,
   parseCommandResponse,
@@ -36,6 +38,7 @@ import { resolveNamespace } from './namespace';
 import { ecResolveTemplate } from './template-link';
 import type { FlowChain } from './flow-parser';
 import { EcQueryService } from './ec-query-service';
+import { commandResults, javaMapEntries, parseTypeCatalogue, parseReferenceIdentity, type BmpReferenceFact } from './bmp-type-catalogue';
 import type { IdentityChangeSet } from './object-identity';
 export { buildAccessSubjectsEc, parseAccessSubjectsLog, parseResolveTemplateLog, buildLayoutTreeEc, parseAwtColor } from './ec-query-service';
 
@@ -168,8 +171,8 @@ export function parseObjectOverrideProps(raw: unknown): string[] | null {
 
 // ── Access-trace parsing ──────────────────────────────────────────
 // The deserialized tree uses boxed java.lang.Boolean ({value}), HashMaps
-// ({$map} / {$entries}), and ArrayLists ({$elements}); java.time.Duration is
-// skipped by the deserializer (cosmetic). These coercers normalise that into
+// ({$map} / {$entries}), ArrayLists ({$elements}) and java.time.Duration.
+// These coercers normalise that into
 // a clean AccessTraceNode the UI can render directly.
 
 function atCoerceBool(v: unknown): boolean | null {
@@ -205,10 +208,12 @@ function atCoerceStringMap(v: unknown): Record<string, string> {
 
 export function parseAccessTraceNode(dto: any): AccessTraceNode {
   const kids = dto?.childrenDTOs?.$elements ?? dto?.childrenDTOs ?? [];
+  const durationMs = dto?.duration?.durationMs;
   return {
     element: String(dto?.element ?? ''),
     result: atCoerceBool(dto?.result),
     timedOut: dto?.timedOut === true,
+    ...(typeof durationMs === 'number' && Number.isFinite(durationMs) && durationMs >= 0 ? { durationMs } : {}),
     details: atCoerceStringMap(dto?.details),
     children: Array.isArray(kids) ? kids.map(parseAccessTraceNode) : [],
   };
@@ -476,8 +481,9 @@ export class BmpClient {
     action: AccessTraceAction = 'READ',
     signal?: AbortSignal,
     updates?: AccessTraceUpdates,
+    indexed = false,
   ): Promise<AccessTraceNode | null> {
-    const buffer = await this.transport.sendCommands([makeAccessTraceCommand(rid, subjectRid, action, 10, updates)], 'read', signal);
+    const buffer = await this.transport.sendCommands([makeAccessTraceCommand(rid, subjectRid, action, 10, updates, indexed)], 'read', signal);
     return extractAccessTrace(this.transport.deserializeStream(buffer));
   }
 
@@ -488,7 +494,9 @@ export class BmpClient {
     for (const obj of objects) {
       if (obj?.$class?.includes('ServerExceptionResponse')) throw new Error(obj.message ?? 'Cannot read type fields');
       const response = obj?.$elements?.[0]?.response;
-      const entries = response?.$entries ?? Object.entries(response?.$map ?? {});
+      if (!response) continue;
+      const entries = javaMapEntries(response);
+      if (entries.length !== 1 || String((entries[0][0] as { typeId?: string })?.typeId ?? entries[0][0]) !== type) throw new Error(`BMP returned fields for a different type than ${type}.`);
       const values = entries.flatMap(([, v]: [unknown, any]) => v?.$elements ?? []);
       if (values.length) return values.map((v: any) => {
         const allowed = v.referenceConstraints?.allowedTypes?.$elements ?? [];
@@ -497,6 +505,42 @@ export class BmpClient {
       });
     }
     throw new Error(`BMP returned no fields for ${type}.`);
+  }
+
+  async fetchTypeCatalogue(signal?: AbortSignal) {
+    const buffer = await this.transport.sendCommands([makeLoadTypeConfigCommand()], 'read', signal);
+    return parseTypeCatalogue(commandResults(this.transport.deserializeStream(buffer, 'read', true), 1)[0]);
+  }
+
+  /** Bounded native ID lookups, using BMP's own IdSpace mapping, not UI roots. */
+  async resolvePolicyReferences(refs: Array<{ token: string; space: string; id: string }>, signal?: AbortSignal): Promise<import('./bmp-type-catalogue').BmpReferenceResolution> {
+    const facts: Record<string, BmpReferenceFact | null> = Object.create(null);
+    const unavailable: string[] = [], problems: string[] = [];
+    for (let start = 0; start < refs.length; start += 32) {
+      signal?.throwIfAborted();
+      const batch = refs.slice(start, start + 32);
+      let results: unknown[];
+      try {
+        const buffer = await this.transport.sendCommands(batch.map(r => makeReferenceIdentityCommand(r.space, r.id)), 'read', signal);
+        results = commandResults(this.transport.deserializeStream(buffer, 'read', true), batch.length);
+      } catch (error) {
+        signal?.throwIfAborted();
+        // Keep prior batches. Stop dispatching after a transport/batch failure;
+        // an explicit retry can resume only the unavailable identities.
+        unavailable.push(...refs.slice(start).map(r => r.token));
+        problems.push(error instanceof Error ? error.message : String(error));
+        break;
+      }
+      results.forEach((value, i) => {
+        try { facts[batch[i].token] = parseReferenceIdentity(value); }
+        catch (error) {
+          unavailable.push(batch[i].token);
+          problems.push(error instanceof Error ? error.message : String(error));
+        }
+      });
+    }
+    signal?.throwIfAborted();
+    return { references:facts, unavailable, problems:[...new Set(problems)] };
   }
 
   /** List users + roles (the possible trace subjects) via EC, sorted by name. */

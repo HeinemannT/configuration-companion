@@ -8,24 +8,26 @@ it('keeps engine order, groups unmatched subjects and expands all predicate deta
   const trace=node('TraceRequest',true,[rule('1',false),rule('2',false),rule('3',true,false),rule('4',true,true)]),state:TraceReviewState={};
   document.body.innerHTML=renderEngineTrace(trace,()=>true,state);
   mountEngineTrace(document.body,trace,()=>true,state,()=>{});
-  expect(document.querySelector('.er-grants .er-rule')?.textContent).toContain('Policy 4');
+  expect(document.querySelector('.er-rule')?.textContent).toContain('Policy 4');
+  expect(document.querySelectorAll('.er-table thead')).toHaveLength(1);
+  expect(document.querySelectorAll('[data-engine-row="3"]')).toHaveLength(1);
   expect(document.querySelectorAll('[data-engine-section="all"] .er-rule')).toHaveLength(2);
   document.querySelector<HTMLButtonElement>('[data-engine-group="0"]')!.click();
-  expect([...document.querySelectorAll('[data-engine-section="all"] .er-rule')].map(el=>el.getAttribute('data-engine-row'))).toEqual(['0','1','2','3']);
+  expect([...document.querySelectorAll('[data-engine-section="all"] .er-rule')].map(el=>el.getAttribute('data-engine-row'))).toEqual(['3','0','1','2']);
   expect(document.querySelector('[data-engine-row="0"] td:nth-child(4)')?.textContent).toContain('Not evaluated');
   document.querySelector<HTMLButtonElement>('[data-engine-toggle="3"]')!.click();
   expect(document.querySelector('.er-detail')?.textContent).toContain('resource.type');
   expect(document.querySelectorAll('.er-detail details')).toHaveLength(0);
-  expect(document.querySelectorAll('[data-engine-toggle="3"][aria-expanded="true"]')).toHaveLength(2);
-  expect(document.activeElement?.closest('[data-engine-section]')?.getAttribute('data-engine-section')).toBe('grants');
+  expect(document.querySelectorAll('[data-engine-toggle="3"][aria-expanded="true"]')).toHaveLength(1);
+  expect(document.activeElement?.closest('[data-engine-section]')?.getAttribute('data-engine-section')).toBe('all');
   document.querySelector<HTMLButtonElement>('[data-engine-section="all"] [data-engine-toggle="3"]')!.click();
   expect(document.querySelectorAll('.er-detail')).toHaveLength(0);
   expect(document.activeElement?.closest('[data-engine-section]')?.getAttribute('data-engine-section')).toBe('all');
   const search=document.querySelector<HTMLInputElement>('[data-engine-search]')!;
   search.value='Policy 3';search.dispatchEvent(new Event('input'));
-  expect(document.querySelectorAll('[data-engine-section="all"] .er-rule')).toHaveLength(1);
-  document.querySelector<HTMLButtonElement>('.er-grants [data-engine-toggle="3"]')!.click();
-  expect(document.querySelector('.er-grants .er-detail')?.textContent).toContain('resource.type');
+  expect(document.querySelectorAll('[data-engine-section="all"] .er-rule')).toHaveLength(2);
+  document.querySelector<HTMLButtonElement>('[data-engine-section="all"] [data-engine-toggle="3"]')!.click();
+  expect(document.querySelector('.er-detail')?.textContent).toContain('resource.type');
   expect(state.query).toBe('Policy 3');
 });
 it('never identifies a nested permission grant as the request grant and disables changed statement links',()=>{
@@ -55,7 +57,7 @@ it('collapses a group with open children and lets the user disable grouping with
   expect(state.open).toEqual(['0']);
 });
 
-it('keeps the clicked rule at the same scroll position when its granting copy also expands',()=>{
+it('keeps the clicked rule at the same scroll position when it expands',()=>{
   const trace=node('TraceRequest',true,[rule('1',true,true)]),state:TraceReviewState={};
   document.body.innerHTML='<div class="test-body">'+renderEngineTrace(trace,()=>true,state)+'</div>';
   const host=document.querySelector<HTMLElement>('.test-body')!;host.scrollTop=100;
@@ -84,4 +86,14 @@ it('does not describe a timed-out trace as having stopped at a final grant',()=>
   document.body.innerHTML=renderEngineTrace({...node('TraceRequest',true,[rule('1',true,true)]),timedOut:true},()=>true);
   expect(document.querySelector('.er-note')?.textContent).toContain('incomplete');
   expect(document.querySelector('.er-note')?.textContent).not.toContain('first grant');
+});
+it('shows per-rule and predicate engine timings, keeping missing measurements distinct from zero',()=>{
+  const trace=node('TraceRequest',false,[rule('1',true,false),rule('2',true,false)]);
+  trace.children[0].durationMs=8.125;
+  trace.children[0].children[0].durationMs=0;
+  document.body.innerHTML=renderEngineTrace(trace,()=>true,{open:['0']});
+  expect(document.querySelector('[data-engine-row="0"] .er-time')?.textContent).toBe('8.13 ms');
+  expect(document.querySelector('[data-engine-row="1"] .er-time')?.textContent).toBe('—');
+  expect(document.querySelector('[data-engine-path="0.0"] .trace-timing')?.textContent).toBe('0 ms');
+  expect(document.querySelector('.er-detail td[colspan]')?.getAttribute('colspan')).toBe('7');
 });

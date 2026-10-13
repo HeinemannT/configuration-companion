@@ -31,11 +31,14 @@ export type AccessTask =
   | { operation: 'load' }
   | { operation: 'reconcile' }
   | { operation: 'schema'; type: string }
+  | { operation: 'matrixMetadata'; references: string[] }
   | { operation: 'creation'; type: string; source?: string; fields?: string[] }
   | { operation: 'listItems'; set: string; query: string; selected?: string[] }
   | { operation: 'search'; query: string; type?: string; prototypes?: boolean; containers?: boolean; containerFor?: string }
   | { operation: 'principals'; query: string; kind: 'User' | 'Group' }
   | { operation: 'trace'; request: AccessTest }
+  | { operation: 'performanceDiscover' }
+  | { operation: 'performanceMeasure'; request: AccessTest }
   | { operation: 'apply'; baseline: AccessModel; draft: AccessModel };
 export type AccessRequest = AccessTask
   | { operation: 'start'; id: string; task: AccessTask }

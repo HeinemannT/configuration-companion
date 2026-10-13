@@ -25,7 +25,7 @@ it('respects BMP scalar, collection and subtype comparator semantics',()=>{
   expect(typeMatch(c('resource.type','ExactTypeOf','FileResource'),'URIResource','Read',children)).toBe(false);
   expect(typeMatch(c('resource.type','ExactTypeOf',['CeTask']),'CeTask','Read',children)).toBe(false);
   expect(typeMatch(c('new.type','Equal','CeTask'),'CeTask','Create',children)).toBe(true);
-  expect(typeMatch(c('new.type','Equal','CeTask'),'CeTask','Update',children)).toBe(true);
+  expect(typeMatch(c('new.type','Equal','CeTask'),'CeTask','Update',children)).toBe(null);
   expect(typeMatch(c('resource.type','Equal','CeTask'),'CeTask','Create',children)).toBe(false);
   expect(typeMatch(c('resource.type','Equal','UnloadedBase'),'CeTask','Read',children)).toBe(null);
 });

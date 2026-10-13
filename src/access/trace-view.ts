@@ -1,6 +1,7 @@
 import type { AccessTraceNode } from '../lib/types';
 import { policyDestination } from '../lib/access-workspace/entry';
 import { icon } from './icons';
+import { renderTraceTiming } from './trace-timing';
 
 const escape = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const words = (value: string) => value.replace(/([a-z])([A-Z])/g, '$1 $2').replaceAll('_', ' ').replace(/^./, c => c.toUpperCase());
@@ -80,7 +81,7 @@ function branch(node: AccessTraceNode, path: string, canOpenRule: CanOpenRule, r
   const disabled = target?.kind === 'policy' && !canOpenRule(target.rid, target.statement ?? 0);
   const link = target?.kind === 'policy' ? `<button type="button" class="trace-open" data-command="open-trace-policy" data-rid="${target.rid}" data-statement="${target.statement ?? 0}" aria-label="Open rule" ${disabled ? 'disabled title="This saved rule differs from the local draft"' : 'title="Open this rule in Access"'}>${icon('open')}</button>` : '';
   const known = !node.timedOut && node.result != null;
-  return `<details class="trace-node" data-trace-path="${path}" ${root ? 'open data-trace-loaded="true"' : ''}><summary>${icon('down')}<span class="trace-title">${escape(traceLabel(node))}</span><span class="trace-decision" data-result="${known ? node.result : 'unknown'}" title="${root ? 'Access decision' : 'Evaluation result'}">${icon(known ? node.result ? 'valid' : 'close' : 'warning')}${result}</span>${link}</summary>${root ? contents(node, path, canOpenRule) : ''}</details>`;
+  return `<details class="trace-node" data-trace-path="${path}" ${root ? 'open data-trace-loaded="true"' : ''}><summary>${icon('down')}<span class="trace-title">${escape(traceLabel(node))}</span><span class="trace-decision" data-result="${known ? node.result : 'unknown'}" title="${root ? 'Access decision' : 'Evaluation result'}">${icon(known ? node.result ? 'valid' : 'close' : 'warning')}${result}</span>${renderTraceTiming(node.durationMs)}${link}</summary>${root ? contents(node, path, canOpenRule) : ''}</details>`;
 }
 export const renderTrace = (trace: AccessTraceNode, canOpenRule = allowRule): string => '<div class="trace-tree">' + branch(trace, '', canOpenRule, true) + '</div>';
 

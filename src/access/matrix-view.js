@@ -6,7 +6,8 @@ import { tokenizePBAC } from './pbac-highlighting.js';
 
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]);
 const json = value => tokenizePBAC(JSON.stringify(value, null, 2)).map(line => line.map(t => t.type ? `<span class="pbac-${t.type}">${esc(t.text)}</span>` : esc(t.text)).join('')).join('\n');
-const crud = cell => cell.actions.map(a => `<span data-letter="${a[0]}">${a[0]}</span>`).join('') + (cell.conditional ? '<sup title="Conditional coverage">*</sup>' : '') + (cell.deny ? '<sup class="am-deny" title="Includes a Deny rule">!</sup>' : '');
+const crud = (cell, showUnresolved = false) => cell.actions.map(a => `<span data-letter="${a[0]}" title="${a}${cell.conditionalActions?.includes(a)?' · Conditional coverage':''}">${a[0]}${cell.conditionalActions?.includes(a)?'<sup>*</sup>':''}</span>`).join('') +
+  (showUnresolved && cell.unresolved ? '<span class="am-unresolved" title="Unresolved candidates · not counted as coverage">?</span>' : '') + (cell.deny ? '<sup class="am-deny" title="Includes a Deny rule">!</sup>' : '');
 const key = (rid, type = '') => rid + '|' + type;
 
 // Rendering replaces the controls. Restore the exact control and text selection,
@@ -33,7 +34,7 @@ function restoreFocus(host, bookmark) {
 }
 
 export function matrixState() {
-  return { roleQ:'', typeQ:'', filters:[], sections:[], hideEmpty:true, sort:'name', selected:null, collapsed:false,
+  return { roleQ:'', typeQ:'', filters:[], sections:[], hideEmpty:true, unresolved:false, sort:'name', selected:null, collapsed:false,
     width:296, scroll:[0,0], inspectorScroll:0, closed:[], json:[], action:'Read', focus:'' };
 }
 
@@ -69,7 +70,7 @@ export function conditionPreview(value, depth = 0) {
 
 /** Local controller owns grid rendering, focus and sizing; the workspace owns
  * navigation, saved models and tests. No backend requests originate here. */
-export function mountMatrix(host, { index, state: s, openRule, test, canOpen, changed }) {
+export function mountMatrix(host, { index, state: s, openRule, test, canOpen, changed, metadataStatus = '', retryEvidence, moreEvidence, hasDraftChanges = false }) {
   let data, frame = 0, disposed = false, resizeObserver, sectionsOpen = false;
   const sections=[...new Set(index.columns.map(t=>t.group))];
   s.sections=(s.sections??[]).filter(group=>sections.includes(group));
@@ -94,10 +95,11 @@ export function mountMatrix(host, { index, state: s, openRule, test, canOpen, ch
       ${[['roleQ','role','Find role…'],['typeQ','type','Find type…']].map(([field,glyph,label]) => `<label class="am-search">${icon(glyph)}<input data-matrix-input="${field}" value="${esc(s[field])}" placeholder="${label}" aria-label="${label.replace('…','')}">${icon('search')}</label>`).join('')}
       <div class="am-segment" role="group" aria-label="Show cells containing any selected action"><button data-matrix-filter="All" aria-pressed="${!s.filters.length}">All</button>${PBAC_ACTIONS.map(a => `<button data-matrix-filter="${a}" data-letter="${a[0]}" aria-label="Filter ${a}" title="Show cells containing ${a}; keep their complete CRUD" aria-pressed="${s.filters.includes(a)}">${a[0]}</button>`).join('')}</div>
       <label class="am-check"><input type="checkbox" data-matrix-empty ${s.hideEmpty?'checked':''}>Hide empty</label>
+      <label class="am-check" title="Include candidates that cannot establish coverage. A question mark is not a grant."><input type="checkbox" data-matrix-unresolved ${s.unresolved?'checked':''}>Show unresolved</label>
       <div class="am-sort"><span class="am-tool-icon" title="Sort roles">${icon('sort')}</span><div class="am-segment" role="group" aria-label="Sort roles">${[['name','A–Z','Role name'],['coverage','Most','Most covered actions']].map(([v,label,title])=>`<button data-matrix-sort="${v}" aria-label="${title}" aria-pressed="${s.sort===v}">${label}</button>`).join('')}</div></div>
       <button class="am-details" data-matrix-panel aria-expanded="${!!s.selected&&!s.collapsed}" ${s.selected?'':'disabled'}>${icon('panel')}Details</button></div>
       <div class="am-work"><div class="am-grid" aria-label="Access matrix"></div>${inspector()}</div>
-      <div class="am-foot"><span>${data.rows.length} roles · ${data.cols.length} types</span><span title="Saved enabled policies, including parent roles and Everyone. Conditional coverage is not an effective access decision.">Saved policies · * conditional · ! Deny rule</span></div>`;
+      <div class="am-foot"><span>Saved policies${hasDraftChanges?' · Draft changes not included':''} · ${data.rows.length} roles · ${data.cols.length} types${metadataStatus?' · '+esc(metadataStatus):''}${retryEvidence?' <button data-matrix-retry>Retry evidence</button>':''}${moreEvidence?' <button data-matrix-more>Load next references</button>':''}</span><span title="Coverage for the selected Role entity, including ancestors. Local user assignments and unresolved candidates are not grants. Test an object for effective access.">* conditional · ? unresolved · ! Deny · Blank does not mean denied</span></div>`;
     renderGrid();
     const grid = q('.am-grid');
     [grid.scrollLeft, grid.scrollTop] = s.scroll;
@@ -154,8 +156,8 @@ export function mountMatrix(host, { index, state: s, openRule, test, canOpen, ch
     const spacer=height=>height?`<tr aria-hidden="true" class="am-spacer"><td colspan="${cols.length+1}" style="height:${height}px"></td></tr>`:'';
     body.innerHTML=spacer(start*26)+rows.slice(start,end).map((r,ri)=>`<tr aria-rowindex="${start+ri+3}" class="${s.highlight===r.rid?'am-highlight':''}"><th scope="row"><span class="am-role-name">${icon('role')}<button data-grid-key="${esc(key(r.rid))}" data-matrix-role="${esc(r.rid)}" tabindex="-1" title="${esc(r.name+' · '+r.id)}">${esc(r.name)}</button></span></th>${gap(first)}${visible.map(({t,i})=>{
       if(!matches(r.rid,t.id))return '<td class="am-filtered"></td>';
-      const cell=index.cell(r.rid,t.id), selected=s.selected?.role===r.rid&&s.selected?.type===t.id;
-      return `<td class="${i===0||cols[i-1].group!==t.group?'am-group-start':''}"><button class="am-cell" data-grid-key="${esc(key(r.rid,t.id))}" data-matrix-cell="${esc(r.rid)}" data-type="${esc(t.id)}" data-grants="${cell.actions.length}" tabindex="-1" aria-pressed="${selected}" aria-label="${esc(r.name+', '+t.id+': '+(cell.actions.join(', ')||'no Allow coverage')+(cell.conditional?', conditional':'')+(cell.deny?', Deny rule present':''))}">${crud(cell)}</button></td>`;
+      const cell=(index.summary??index.cell)(r.rid,t.id), selected=s.selected?.role===r.rid&&s.selected?.type===t.id;
+      return `<td class="${i===0||cols[i-1].group!==t.group?'am-group-start':''}"><button class="am-cell" data-grid-key="${esc(key(r.rid,t.id))}" data-matrix-cell="${esc(r.rid)}" data-type="${esc(t.id)}" data-grants="${cell.actions.length}" tabindex="-1" aria-pressed="${selected}" aria-label="${esc(r.name+', '+t.id+': '+(cell.actions.join(', ')||'no Allow coverage')+(cell.conditional?', conditional':'')+(cell.deny?', Deny rule present':'')+(s.unresolved&&cell.unresolved?', unresolved candidates available':''))}">${crud(cell,s.unresolved)}</button></td>`;
     }).join('')}${gap(cols.length-last)}</tr>`).join('')+spacer((rows.length-end)*26);
     const target=gridTarget(active??s.focus)||gridTarget(s.selected?key(s.selected.role,s.selected.type):'')||q('[data-grid-key]');
     if(target)target.tabIndex=0;
@@ -165,21 +167,24 @@ export function mountMatrix(host, { index, state: s, openRule, test, canOpen, ch
     const selection=s.selected, role=selection&&index.roles.find(r=>r.rid===selection.role);
     if(!role)return '';
     if(s.collapsed)return `<aside class="am-rail"><button class="icon-button" data-matrix-panel aria-label="Expand policy details">${icon('down')}</button></aside>`;
-    const cell=index.cell(role.rid,selection.type), hidden=!data.rows.includes(role)||!data.cols.some(t=>t.id===selection.type)||!data.matches(role.rid,selection.type);
+    const cell=index.cell(role.rid,selection.type), shownRules=[...new Map([...cell.rules,...(s.unresolved?cell.unresolvedRules??[]:[])].map(rule=>[rule.key,rule])).values()], hidden=!data.rows.includes(role)||!data.cols.some(t=>t.id===selection.type)||!data.matches(role.rid,selection.type);
     return `<aside class="am-inspector" style="--am-width:${s.width}px" aria-label="Policy details"><div class="am-resize" role="separator" tabindex="0" aria-label="Resize policy details" aria-orientation="vertical" aria-valuemin="240" aria-valuemax="520" aria-valuenow="${s.width}"></div><div class="am-pane-head">${icon('role')}<div><button data-matrix-role="${esc(role.rid)}" title="Highlight role">${esc(role.name)}</button><small>${esc(selection.type)}</small></div><button class="icon-button am-collapse" data-matrix-panel aria-label="Collapse policy details">${icon('down')}</button></div>
       ${hidden?'<div class="am-hidden">Cell hidden by filters <button data-matrix-reveal>Reveal cell</button></div>':''}
       <div class="am-test"><span>Test</span><div class="am-segment" role="group" aria-label="Test action">${PBAC_ACTIONS.map(a=>`<button data-matrix-action="${a}" data-letter="${a[0]}" aria-pressed="${s.action===a}" aria-label="Test ${a}">${a[0]}</button>`).join('')}</div><button class="icon-button" data-matrix-test aria-label="Prepare ${s.action} test" title="Choose an object and test ${s.action}">${icon('run')}</button></div>
-      <div class="am-content">${cell.rules.length?cell.rules.map(rule=>`<section class="am-rule"><div class="am-rule-head"><button class="am-disclosure" data-matrix-rule="${esc(rule.key)}" aria-expanded="${!s.closed.includes(rule.key)}" aria-label="Toggle rule ${rule.index+1}">${icon('down')}</button>${icon('policy')}<button class="am-rule-link" data-matrix-open="${esc(rule.policy.rid)}" data-statement="${rule.index}" ${canOpen(rule.policy.rid,rule.index)?'':'disabled title="Saved rule differs from the local draft; apply or reload to open safely"'}>${esc(rule.policy.name)}<small>Rule ${rule.index+1} · ${rule.effect}</small></button><span class="am-crud">${crud({actions:rule.actions,conditional:rule.conditional})}</span></div>${s.closed.includes(rule.key)?'':`<div class="am-rule-body"><div class="am-subject"><span>Subject</span>${esc(rule.statement.Subject==='*'?'Everyone':listSubjects(rule.statement.Subject))}</div>${conditionPreview(rule.statement.Resource)}<button class="am-json-toggle" data-matrix-json="${esc(rule.key)}" aria-expanded="${s.json.includes(rule.key)}">${icon('json')}JSON${icon('down')}</button>${s.json.includes(rule.key)?`<pre>${json(rule.statement)}</pre>`:''}</div>`}</section>`).join(''):'<p class="am-empty">No policy coverage for this role and type. Test an object to check effective access.</p>'}</div></aside>`;
+      <div class="am-content">${shownRules.length?shownRules.map(rule=>`<section class="am-rule"><div class="am-rule-head"><button class="am-disclosure" data-matrix-rule="${esc(rule.key)}" aria-expanded="${!s.closed.includes(rule.key)}" aria-label="Toggle rule ${rule.index+1}">${icon('down')}</button>${icon('policy')}<button class="am-rule-link" data-matrix-open="${esc(rule.policy.rid)}" data-statement="${rule.index}" ${canOpen(rule.policy.rid,rule.index)?'':'disabled title="Saved rule differs from the local draft; apply or reload to open safely"'}>${esc(rule.policy.name)}<small>Rule ${rule.index+1} · ${rule.effect}</small></button><span class="am-crud">${crud(rule)}${s.unresolved&&rule.unresolvedActions?.length?'<span class="am-unresolved" title="Unresolved candidates · not counted as coverage">? '+esc(rule.unresolvedActions.map(a=>a[0]).join(' '))+'</span>':''}</span></div>${s.closed.includes(rule.key)?'':`<div class="am-rule-body"><div class="am-subject"><span>Subject</span>${esc(rule.statement.Subject==='*'?'Everyone':listSubjects(rule.statement.Subject))}</div>${rule.reasons?.length?`<p class="am-evidence">${esc(rule.reasons.join(" · "))}</p>`:""}${s.unresolved&&rule.unresolvedReasons?.length?`<p class="am-evidence"><strong>Unresolved ${esc(rule.unresolvedActions.join(", "))}:</strong> ${esc(rule.unresolvedReasons.join(" · "))}</p>`:""}${conditionPreview(rule.statement.Resource)}<button class="am-json-toggle" data-matrix-json="${esc(rule.key)}" aria-expanded="${s.json.includes(rule.key)}">${icon('json')}JSON${icon('down')}</button>${s.json.includes(rule.key)?`<pre>${json(rule.statement)}</pre>`:''}</div>`}</section>`).join(''):'<p class="am-empty">No established coverage. Test an object to check effective access.</p>'}${!s.unresolved&&cell.unresolvedRules?.length?`<p class="am-empty">${cell.unresolvedRules.length} unresolved candidates omitted. <button data-matrix-show-unresolved>Show</button></p>`:''}</div></aside>`;
   }
   function listSubjects(value) {return (Array.isArray(value)?value:[value]).join(', ');}
   const toggle=(values,v)=>values.includes(v)?values.filter(x=>x!==v):[...values,v];
   function click(e) {
     const b=e.target.closest('button');if(!b||!host.contains(b))return;
     capture();
+    if(b.hasAttribute('data-matrix-retry')){retryEvidence?.();return;}
+    if(b.hasAttribute('data-matrix-more')){moreEvidence?.();return;}
     if(b.hasAttribute('data-matrix-sections')){sectionsOpen=!sectionsOpen;render();q('[data-matrix-sections]')?.focus({preventScroll:true});return;}
     if(b.hasAttribute('data-matrix-section')){if(!b.dataset.matrixSection)sectionsOpen=false;s.sections=b.dataset.matrixSection?toggle(s.sections,b.dataset.matrixSection):[];s.scroll=[0,0];}
     else if(b.hasAttribute('data-matrix-filter'))s.filters=b.dataset.matrixFilter==='All'?[]:toggle(s.filters,b.dataset.matrixFilter);
     else if(b.dataset.matrixSort)s.sort=b.dataset.matrixSort;
+    else if(b.hasAttribute('data-matrix-show-unresolved'))s.unresolved=true;
     else if(b.dataset.matrixCell){s.selected={role:b.dataset.matrixCell,type:b.dataset.type};s.collapsed=false;s.inspectorScroll=0;s.focus=b.dataset.gridKey;}
     else if(b.dataset.matrixRole){
       s.highlight=b.dataset.matrixRole;s.focus=key(b.dataset.matrixRole);
@@ -204,7 +209,10 @@ export function mountMatrix(host, { index, state: s, openRule, test, canOpen, ch
     if(b.hasAttribute('data-matrix-reveal'))gridTarget(s.focus)?.focus({preventScroll:true});
   }
   function input(e) {if(!e.target.dataset.matrixInput)return;capture();s[e.target.dataset.matrixInput]=e.target.value;s.scroll=[0,0];render();changed();}
-  function change(e) {if(!e.target.hasAttribute('data-matrix-empty'))return;capture();s.hideEmpty=e.target.checked;render();changed();}
+  function change(e) {
+    const field=e.target.hasAttribute('data-matrix-empty')?'hideEmpty':e.target.hasAttribute('data-matrix-unresolved')?'unresolved':null;
+    if(!field)return;capture();s[field]=e.target.checked;s.scroll=[0,0];render();changed();
+  }
   function focus(e) {if(!e.target.dataset.gridKey)return;s.focus=e.target.dataset.gridKey;for(const el of host.querySelectorAll('[data-grid-key]'))el.tabIndex=el===e.target?0:-1;}
   function keyboard(e) {
     if(e.key==='Escape'&&sectionsOpen){e.preventDefault();e.stopPropagation();sectionsOpen=false;q('.am-section-menu')?.remove();q('[data-matrix-sections]')?.setAttribute('aria-expanded','false');q('[data-matrix-sections]')?.focus({preventScroll:true});return;}

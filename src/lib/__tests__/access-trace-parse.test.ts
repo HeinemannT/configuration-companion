@@ -1,7 +1,7 @@
 /**
  * parseAccessTraceNode — normalises the deserialized AccessTraceDTO tree
  * (boxed java.lang.Boolean, HashMap {$map}/{$entries}, ArrayList {$elements},
- * skipped Duration) into the clean AccessTraceNode the UI renders.
+ * decoded Duration) into the clean AccessTraceNode the UI renders.
  */
 import { describe, it, expect } from 'vitest';
 import { parseAccessTraceNode, extractAccessTrace } from '../bmp-client';
@@ -12,7 +12,7 @@ describe('parseAccessTraceNode', () => {
       $class: 'com.corporater.bmp.dto.command.access.AccessTraceDTO',
       element: 'Statement',
       result: { $class: 'java.lang.Boolean', value: true },
-      duration: { $class: 'java.time.Ser' }, // skipped by deserializer — ignored
+      duration: { $class: 'java.time.Ser', durationMs: 12.345 },
       timedOut: false,
       details: { $class: 'java.util.HashMap', $map: { policyRid: '901', statementIndex: '2' } },
       childrenDTOs: {
@@ -26,6 +26,7 @@ describe('parseAccessTraceNode', () => {
     expect(node.element).toBe('Statement');
     expect(node.result).toBe(true);
     expect(node.timedOut).toBe(false);
+    expect(node.durationMs).toBe(12.345);
     expect(node.details).toEqual({ policyRid: '901', statementIndex: '2' });
     expect(node.children).toHaveLength(1);
     expect(node.children[0].element).toBe('Subject');
@@ -54,6 +55,9 @@ describe('parseAccessTraceNode', () => {
   it('is defensive against missing fields', () => {
     const node = parseAccessTraceNode({});
     expect(node).toEqual({ element: '', result: null, timedOut: false, details: {}, children: [] });
+  });
+  it.each([undefined, null, -1, NaN, Infinity, '12'])('omits unavailable or invalid duration %s', durationMs => {
+    expect(parseAccessTraceNode({duration:{durationMs}})).not.toHaveProperty('durationMs');
   });
 });
 

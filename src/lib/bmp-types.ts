@@ -9,6 +9,7 @@ import {
   SC_SERIALIZABLE, SC_EXTERNALIZABLE, SC_BLOCK_DATA, SC_WRITE_METHOD, SC_ENUM,
   type JavaClassDesc, type JavaReader,
 } from './java-serial';
+import { registerJavaTime } from './java-time';
 
 // ── Enum Class Descriptors ──────────────────────────────────────
 
@@ -185,8 +186,21 @@ const GET_TYPE_FIELDS_COMMAND: JavaClassDesc = {
   fields: [{ name: 'keys', type: 'L', className: 'Ljava/util/Collection;' }], parent: null,
 };
 
-export function makeGetTypeFieldsCommand(type: string): any {
-  return { $type: GET_TYPE_FIELDS_COMMAND.name, keys: { $type: 'java.util.ArrayList', $elements: [{ $type: TYPE_KEY.name, typeId: type }] } };
+const LOAD_TYPE_CONFIG_COMMAND: JavaClassDesc = {
+  name: 'com.corporater.bmp.dto.command.type.LoadTypeConfigCommand', uid: 0n, flags: SC_SERIALIZABLE, fields: [], parent: null,
+};
+const GET_PROPERTIES_BY_ID_COMMAND: JavaClassDesc = {
+  name: 'com.corporater.bmp.dto.command.repository.GetPropertiesByIdCommand', uid: 0n, flags: SC_SERIALIZABLE,
+  fields: [{ name: 'id', type: 'L', className: 'Ljava/lang/String;' }, { name: 'properties', type: '[', className: '[Ljava/lang/String;' },
+    { name: 'space', type: 'L', className: 'Lcom/corporater/base/generation/system/IdSpace;' }], parent: null,
+};
+const ID_SPACE: JavaClassDesc = { name: 'com.corporater.base.generation.system.IdSpace', uid: 0n, flags: SC_SERIALIZABLE | SC_ENUM, fields: [], parent: JAVA_LANG_ENUM };
+export const makeLoadTypeConfigCommand = () => ({ $type: LOAD_TYPE_CONFIG_COMMAND.name });
+export const makeReferenceIdentityCommand = (space: string, id: string) => ({
+  $type: GET_PROPERTIES_BY_ID_COMMAND.name, space: new JavaEnum(ID_SPACE, space), id, properties: ['getRid', 'getTypeKey', 'getModel'],
+});
+export function makeGetTypeFieldsCommand(type: string | string[]): any {
+  return { $type: GET_TYPE_FIELDS_COMMAND.name, keys: { $type: 'java.util.ArrayList', $elements: (Array.isArray(type) ? type : [type]).map(typeId => ({ $type: TYPE_KEY.name, typeId })) } };
 }
 
 /** Field keys have already been resolved against BMP's native type schema. */
@@ -196,10 +210,12 @@ export interface AccessTraceUpdates {
   references?: Record<string, string | string[] | null>;
   parent_rid?: string | null;
 }
-function makeTraceUpdates(updates?: AccessTraceUpdates): any {
+function makeTraceUpdates(updates?: AccessTraceUpdates, creating = false): any {
   const entries: [string, any][] = [];
   if (updates) {
-    entries.push(['type', { $type: TYPE_KEY.name, typeId: updates.type }]);
+    // Update carries only changed fields. The type used to resolve field keys
+    // is schema context, not an implicit submitted new.type.
+    if (creating) entries.push(['type', { $type: TYPE_KEY.name, typeId: updates.type }]);
     for (const [key, value] of Object.entries(updates.properties ?? {})) {
       entries.push([key, typeof value === 'boolean' ? { $type: JAVA_LANG_BOOLEAN.name, value } : typeof value === 'number' ? { $type: JAVA_LANG_DOUBLE.name, value } : value]);
     }
@@ -505,18 +521,19 @@ export function makeAccessTraceCommand(
   action: AccessTraceAction = 'READ',
   depth = 10,
   updates?: AccessTraceUpdates,
+  indexed = false,
 ): any {
   return {
     $type: 'com.corporater.bmp.dto.command.access.AccessTraceCommand',
     accessTraceRequestDTO: {
       $type: 'com.corporater.bmp.dto.command.access.AccessTraceRequestDTO',
-      indexBasedEvaluation: false,
+      indexBasedEvaluation: indexed,
       requestDepth: depth,
       action: new JavaEnum(ACCESS_TRACE_ACTION_DTO, action),
       allowedStatementPaths: { $type: 'java.util.ArrayList', $elements: [] },
       entityRid: makeRid(subjectRid),
       resourceRids: { $type: 'java.util.ArrayList', $elements: [makeRid(resourceRid)] },
-      updates: makeTraceUpdates(updates),
+      updates: makeTraceUpdates(updates, action === 'CREATE'),
     },
     context: makeContext({ objectRid: BigInt(resourceRid) }),
   };
@@ -773,6 +790,7 @@ export function parseCommandResponse(raw: any): any[] {
 // ── Registration ────────────────────────────────────────────────
 
 export function registerBmpTypes() {
+  registerJavaTime();
   registerType({
     desc: JAVA_UTIL_COLLSER,
     annotationWriter: (obj, writer) => {
@@ -787,7 +805,9 @@ export function registerBmpTypes() {
       if (result) {
         result.$elements = elements;
         if ((result.tag & 0xff) === 3) {
-          result.$map = Object.fromEntries(Array.from({ length: Math.floor(count / 2) }, (_, i) => [String(elements[i * 2]?.typeId ?? elements[i * 2]), elements[i * 2 + 1]]));
+          if (count % 2) throw new Error('Invalid immutable map entry count');
+          result.$entries = Array.from({ length: count / 2 }, (_, i) => [elements[i * 2], elements[i * 2 + 1]]);
+          result.$map = Object.fromEntries(result.$entries.map(([key, value]: [any, any]) => [String(key?.typeId ?? (key instanceof JavaEnum ? key.name : key)), value]));
         }
       }
       return result;
@@ -827,6 +847,8 @@ export function registerBmpTypes() {
   registerType({ desc: JAVA_LANG_BOOLEAN });
   registerType({ desc: JAVA_LANG_DOUBLE });
   registerType({ desc: GET_TYPE_FIELDS_COMMAND });
+  registerType({ desc: LOAD_TYPE_CONFIG_COMMAND });
+  registerType({ desc: GET_PROPERTIES_BY_ID_COMMAND });
 
   // Commands — no fieldExtractors needed; obj properties match field names directly
   registerType({ desc: INTEGRATION_GET_OBJECT_COMMAND });
@@ -939,18 +961,22 @@ export function registerBmpTypes() {
     extReader: (r: JavaReader, result?: any) => {
       r.blockReadInt(); // capacity
       const size = r.blockReadInt();
-      const map: Record<string, any> = {};
+      if (size < 0 || size > 100_000) throw new Error('Invalid map size');
+      const map: Record<string, any> = Object.create(null);
+      const entries: [any, any][] = [];
       for (let i = 0; i < size; i++) {
         const key = r.blockReadObject();
         const value = r.blockReadObject();
         const keyStr = key instanceof JavaEnum ? key.name : String(key ?? '');
+        entries.push([key, value]);
         map[keyStr] = value;
       }
       if (result) {
         result.$map = map;
         result.$size = size;
+        result.$entries = entries;
       }
-      return result ?? { $map: map, $size: size };
+      return result ?? { $map: map, $size: size, $entries: entries };
     },
   });
 

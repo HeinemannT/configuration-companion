@@ -33,13 +33,17 @@ export function normalizeProposed(proposed: ProposedValues, fields: Array<{ id: 
   return result;
 }
 
-export async function traceAccess(client: BmpClient, request: AccessTest, assertEnvironment: () => void) {
+export async function prepareAccessTest(client: BmpClient, request: AccessTest, signal?: AbortSignal) {
   if (typeof request.resource_rid !== 'string' || typeof request.subject_rid !== 'string') throw new Error('Resource and subject RIDs must be strings.');
   validateRid(request.resource_rid); validateRid(request.subject_rid);
   if (!['READ', 'CREATE', 'UPDATE', 'DELETE'].includes(request.action)) throw new Error('Unknown access action.');
   if (['CREATE', 'UPDATE'].includes(request.action) && !request.proposed) throw new Error('Create and Update tests require proposed values.');
   if (request.proposed && !['CREATE', 'UPDATE'].includes(request.action)) throw new Error('Read and Delete do not use proposed values.');
-  const updates = request.proposed ? normalizeProposed(request.proposed, await readTypeFields(client, request.proposed.type)) : undefined;
+  return request.proposed ? normalizeProposed(request.proposed, await readTypeFields(client, request.proposed.type, signal)) : undefined;
+}
+
+export async function traceAccess(client: BmpClient, request: AccessTest, assertEnvironment: () => void) {
+  const updates = await prepareAccessTest(client, request);
   assertEnvironment();
   const trace = await client.fetchAccessTrace(request.resource_rid, request.subject_rid, request.action, undefined, updates);
   if (!trace) throw new Error('BMP returned no access decision.');
