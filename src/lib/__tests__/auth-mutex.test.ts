@@ -230,6 +230,7 @@ describe('BmpAuth login mutex', () => {
     ]);
 
     expect(tickets).toEqual(['admin;STUDIO;42', 'admin;STUDIO;42', 'admin;STUDIO;42', 'admin;STUDIO;42']);
-    expect(fetchCallCount).toBe(1);
+    // A command rejection renews the token as well as the ticket, once total.
+    expect(fetchCallCount).toBe(3);
   });
 });

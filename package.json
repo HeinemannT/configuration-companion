@@ -1,6 +1,6 @@
 {
   "name": "configuration-companion",
-  "version": "0.13.2",
+  "version": "0.13.3",
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
@@ -47,6 +47,7 @@
     "@codemirror/view": "^6.39.15",
     "@lezer/highlight": "^1.2.3",
     "@lezer/json": "^1.0.3",
-    "js-beautify": "^1.15.4"
+    "js-beautify": "^1.15.4",
+    "tough-cookie": "6.0.2"
   }
 }

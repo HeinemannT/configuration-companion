@@ -69,6 +69,7 @@ async function createHarness(opts: { withProfile?: boolean; withClient?: boolean
       ensureAuth: vi.fn(async () => 'mock-jwt'),
       login: vi.fn(async () => 'mock-jwt'),
       invalidateLoginTicket: vi.fn(),
+      retryAuthentication: vi.fn(),
       refreshLoginTicket: vi.fn(async () => 'mock-ticket'),
       recoverAuth: vi.fn(async () => 'mock-jwt'),
       absorbAuth: vi.fn(),
@@ -220,6 +221,26 @@ describe('computeConnectionState — auth result precedence', () => {
 });
 
 describe('command outcome observation', () => {
+  it('puts authentication rejection details before metrics and does not call retries server load', async () => {
+    const h = await createHarness();
+    let observer: ((outcome: any) => void) | null = null;
+    vi.spyOn(h.ctx.client, 'setTransportOutcomeObserver').mockImplementation((fn: any) => { observer = fn; });
+    h.conn.bindConnectionClient(h.ctx.client, 'p1');
+    const message = 'BMP rejected stored-login authentication at /cs/command (HTTP 401).';
+
+    observer!({
+      ok: false, intent: 'read', operation: 'ExtendedExecuteCommand', commandCount: 1,
+      queueDepth: 0, queueWaitMs: 0, durationMs: 150, requestBytes: 800, responseBytes: 0,
+      attempts: 2, error: { kind: 'auth', status: 401, message },
+    });
+
+    expect(h.ctx.logActivity).toHaveBeenCalledWith(
+      'error', 'BMP ExtendedExecuteCommand failed (auth)',
+      expect.stringMatching(/^BMP rejected stored-login authentication.*2 attempts/),
+    );
+    expect(h.conn.computeConnectionState().authError).toBe(message);
+  });
+
   it('records only BMP requests that cross a load-pressure threshold', async () => {
     const h = await createHarness();
     let observer: ((outcome: any) => void) | null = null;
@@ -739,6 +760,23 @@ describe('separated reachability and identity lifecycle', () => {
     release({ ok: true, authenticated: true, message: 'OK' });
     await validating;
     expect(h.conn.computeConnectionState()).toMatchObject({ display: 'connected', validation: 'idle' });
+  });
+
+  it('honors Reconnect during background validation without parallel login attempts', async () => {
+    const h = await createHarness();
+    h.ctx.settings.profiles[0].commandAuthMode = 'stored';
+    let finish!: (value: TestConn) => void;
+    vi.mocked(h.ctx.client.testConnection).mockImplementationOnce(() => new Promise<TestConn>(resolve => { finish = resolve; }));
+    const background = h.conn.runAuthTest('background');
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    const reconnect = h.conn.runAuthTest('explicit');
+    const secondClick = h.conn.runAuthTest('explicit');
+    expect(h.ctx.client.auth.retryAuthentication).not.toHaveBeenCalled();
+    finish({ ok: false, authenticated: false, message: 'Login paused' });
+    await Promise.all([background, reconnect, secondClick]);
+    expect(h.ctx.client.auth.retryAuthentication).toHaveBeenCalledTimes(1);
+    expect(h.ctx.client.testConnection).toHaveBeenCalledTimes(2);
+    expect(h.conn.computeConnectionState().display).toBe('connected');
   });
 
   it('coalesces concurrent panel-attach validation triggers', async () => {

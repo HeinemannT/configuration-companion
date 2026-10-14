@@ -61,6 +61,8 @@ interface RequestMeta {
 }
 
 const TRANSIENT_HTTP = new Set([502, 503, 504]);
+const isHtml = (response: Response): boolean => /^(?:text\/html|application\/xhtml\+xml)(?:\s*;|$)/i
+  .test(response.headers.get('Content-Type') ?? '');
 
 export class BmpTransport {
   private outcomeObserver: ((outcome: BmpTransportOutcome) => void) | null = null;
@@ -97,6 +99,7 @@ export class BmpTransport {
     meta: RequestMeta = {},
   ): Promise<ArrayBuffer> {
     const queuedAt = Date.now();
+    const sessionEpoch = this.auth.sessionEpoch;
     const queueDepth = this.pendingRequests;
     this.pendingRequests++;
     return this.enqueueRequest(async () => {
@@ -110,7 +113,7 @@ export class BmpTransport {
         requestBytes: body.byteLength,
       };
       try {
-        const { buffer, attempts } = await this.sendRequestInternal(body, timeout, intent, signal);
+        const { buffer, attempts } = await this.sendRequestInternal(body, timeout, intent, sessionEpoch, signal);
         this.emitOutcome({
           ok: true,
           intent,
@@ -153,6 +156,7 @@ export class BmpTransport {
     body: Uint8Array,
     timeout: number,
     intent: CommandIntent,
+    sessionEpoch: number,
     signal?: AbortSignal,
   ): Promise<RequestResult> {
     if (signal?.aborted) {
@@ -161,9 +165,10 @@ export class BmpTransport {
 
     const deadline = Date.now() + timeout;
     const maxAttempts = intent === 'read' ? 2 : 1;
+    let renewedTicket = false;
     let ticket: string;
     try {
-      ticket = await this.auth.getLoginTicket();
+      ticket = await this.auth.getLoginTicket(sessionEpoch);
     } catch (cause) {
       throw this.classifyError(cause, 0, signal, 'Could not obtain a BMP login ticket');
     }
@@ -178,14 +183,28 @@ export class BmpTransport {
       }
 
       try {
-        const res = await this.postCommand(body, ticket, remaining, signal);
+        const { response: res, buffer } = await this.postCommand(body, ticket, remaining, signal);
+
+        if (res.type === 'opaqueredirect' || res.redirected || (res.status >= 300 && res.status < 400)) {
+          const message = 'BMP redirected /cs/command instead of accepting command authentication. Check the sign-in gateway, then reconnect.';
+          this.auth.rejectCommandAuthentication(message);
+          throw new BmpTransportError(message, 'auth', attempt, res.status || undefined);
+        }
 
         if (res.status === 401) {
           if (intent === 'write' || attempt === maxAttempts) {
-            this.auth.invalidateLoginTicket();
-            throw new BmpTransportError('BMP command authentication expired (401)', 'auth', attempt, 401);
+            const source = this.auth.authMode === 'stored' ? 'stored-login' : 'portal-session';
+            const detail = renewedTicket
+              ? this.auth.authMode === 'stored'
+                ? ' A new stored Studio session was also rejected. Automatic login retries are paused; check the gateway and account, then reconnect.'
+                : ' A renewed portal-session ticket was also rejected.'
+              : ' The command was not retried. Reconnect before trying again.';
+            const message = `BMP rejected ${source} authentication at /cs/command (HTTP 401).${detail}`;
+            this.auth.rejectCommandAuthentication(message);
+            throw new BmpTransportError(message, 'auth', attempt, 401);
           }
           ticket = await this.auth.refreshLoginTicket();
+          renewedTicket = true;
           continue;
         }
 
@@ -203,7 +222,13 @@ export class BmpTransport {
           throw new BmpTransportError(`Command failed: HTTP ${res.status}`, 'http', attempt, res.status);
         }
 
-        return { buffer: await res.arrayBuffer(), attempts: attempt };
+        if (isHtml(res)) {
+          const message = 'BMP returned an HTML sign-in page from /cs/command instead of a command response. Check the sign-in gateway, then reconnect.';
+          this.auth.rejectCommandAuthentication(message);
+          throw new BmpTransportError(message, 'auth', attempt, res.status);
+        }
+
+        return { buffer: buffer!, attempts: attempt };
       } catch (cause) {
         const error = cause instanceof BmpTransportError
           ? cause
@@ -229,16 +254,25 @@ export class BmpTransport {
     ticket: string,
     timeout: number,
     signal?: AbortSignal,
-  ): Promise<Response> {
+  ): Promise<{ response: Response; buffer: ArrayBuffer | null }> {
     const timeoutSignal = AbortSignal.timeout(timeout);
     const effectiveSignal = signal ? AbortSignal.any([timeoutSignal, signal]) : timeoutSignal;
-    const url = `${this.bmpUrl}cs/command?LOGIN_TICKET=${encodeURIComponent(ticket)}&async=false&_noctx=true`;
     const exactBody = body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer;
-    return fetch(url, {
+    return this.auth.fetchCommand(ticket, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-java-serialized-object' },
       body: exactBody,
+      credentials: 'omit',
+      redirect: 'manual',
+      cache: 'no-store',
+      referrerPolicy: 'no-referrer',
       signal: effectiveSignal,
+    }, async response => {
+      // Consume the body inside the authentication scope. A late response from
+      // a cleared identity must never be published as a successful command.
+      if (response.ok && !isHtml(response)) return { response, buffer: await response.arrayBuffer() };
+      await response.body?.cancel().catch(() => { /* the HTTP status remains authoritative */ });
+      return { response, buffer: null };
     });
   }
 

@@ -2,9 +2,9 @@
  * BMP command authentication.
  *
  * Portal mode borrows the browser session only long enough to mint Companion's own
- * JWT/refresh chain, then exchanges it for a LoginTicket. Stored mode calls
- * BMP's legacy direct-login endpoint with `credentials: 'omit'` and consumes
- * the serialized LoginTicket. It never writes to the browser cookie jar.
+ * JWT/refresh chain, then exchanges it for a LoginTicket. Stored mode uses the
+ * native Studio login with its own HTTP session and ticket. Neither command
+ * strategy writes to the browser cookie jar or falls back to the other identity.
  */
 
 import { log } from './logger';
@@ -12,6 +12,8 @@ import { AUTH_TIMEOUT } from './constants';
 import { assertHostAccess, HostAccessError } from './site-access';
 import { JavaEnum, JavaReader } from './java-serial';
 import { registerBmpTypes } from './bmp-types';
+import { BmpPrivateSession, PrivateSessionError } from './bmp-private-session';
+import type { SerializedCookieJar } from 'tough-cookie';
 import type { CommandAuthMode } from './identity-map';
 
 export type { CommandAuthMode, CommandAuthSource } from './identity-map';
@@ -23,7 +25,7 @@ export type AuthErrorCode =
   | 'exchange-failed';
 
 export class AuthError extends Error {
-  constructor(message: string, readonly code: AuthErrorCode) {
+  constructor(message: string, readonly code: AuthErrorCode, readonly retryable = false) {
     super(message);
     this.name = 'AuthError';
   }
@@ -65,12 +67,25 @@ interface StoredAuthState {
   stamp: AuthStamp;
   ticket: string;
   commandUser: string;
+  /** Required for new sessions; ticket-only envelopes from older builds expire. */
+  cookies?: SerializedCookieJar;
 }
 
-type PersistedAuthState = PortalAuthState | StoredAuthState;
+interface RejectedAuthState {
+  version: 2;
+  kind: 'rejected';
+  stamp: AuthStamp;
+  message: string;
+}
+
+type PersistedAuthState = PortalAuthState | StoredAuthState | RejectedAuthState;
 
 const LOGIN_TICKET_CLASS = 'com.corporater.bmp.base.system.auth.LoginTicket';
 const MAX_LOGIN_RESPONSE_BYTES = 1024 * 1024;
+/** Profile clients can be replaced while storage writes are still pending.
+ * Serialize by storage key, not by client instance, so old teardown finishes
+ * before a replacement persists its session. */
+const storageTails = new Map<string, Promise<void>>();
 
 function portalTicketPrincipal(ticket: string): string | null {
   const parts = ticket.split(';');
@@ -94,8 +109,9 @@ export class BmpAuth {
   private _restorePromise: Promise<boolean> | null = null;
   private _sessionLoaded = false;
   private _authEpoch = 0;
-  /** Serialize persistence so teardown cannot be overtaken by an older set(). */
-  private _storageTail: Promise<void> = Promise.resolve();
+  private _failure: AuthError | null = null;
+  private _persistedCookieRevision = -1;
+  private readonly privateSession: BmpPrivateSession;
 
   constructor(
     private bmpUrl: string,
@@ -104,7 +120,10 @@ export class BmpAuth {
     private readonly profileId = 'default',
     private commandMode: CommandAuthMode = 'portal',
     private readonly credentialRevision = '',
-  ) {}
+  ) {
+    this.bmpUrl = this.normalizedWorkspaceUrl();
+    this.privateSession = new BmpPrivateSession(this.bmpUrl);
+  }
 
   private get sessionKey(): string { return commandAuthSessionKey(this.profileId); }
 
@@ -124,6 +143,8 @@ export class BmpAuth {
   get authMode(): CommandAuthMode { return this.commandMode; }
   get commandUser(): string | null { return this._commandUser; }
   get portalActor(): string | null { return this._portalActor; }
+  /** Captured when a command is queued, so logout retires queued work too. */
+  get sessionEpoch(): number { return this._authEpoch; }
 
   bindPortalActor(actor: string): void {
     if (this.commandMode !== 'portal') return;
@@ -152,6 +173,9 @@ export class BmpAuth {
     const gqlResp = await fetch(`${this.bmpUrl}graphql`, {
       method: 'POST',
       credentials: 'include',
+      redirect: 'manual',
+      cache: 'no-store',
+      referrerPolicy: 'no-referrer',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         query: 'query AuthorizationCode { authorizationCode { code } }',
@@ -162,7 +186,7 @@ export class BmpAuth {
     });
     this.assertAuthEpoch(epoch);
 
-    if (gqlResp.status === 401 || gqlResp.redirected === true
+    if (gqlResp.status === 401 || gqlResp.type === 'opaqueredirect' || gqlResp.redirected === true
       || (gqlResp.url && !this.isBmpOrigin(gqlResp.url))) {
       throw new AuthError('No active BMP portal session. Open BMP and sign in, then retry.', 'needs-login');
     }
@@ -317,9 +341,15 @@ export class BmpAuth {
           this._refreshToken = saved.refreshToken;
           this._commandUser = saved.commandUser;
           this._portalActor = saved.portalActor ?? null;
-        } else if (saved.kind === 'direct-ticket' && this.commandMode === 'stored') {
+        } else if (saved.kind === 'direct-ticket' && this.commandMode === 'stored' && saved.cookies) {
+          this.privateSession.restore(saved.cookies);
+          this._persistedCookieRevision = this.privateSession.revision;
           this._loginTicket = saved.ticket;
           this._commandUser = saved.commandUser;
+        } else if (saved.kind === 'rejected' && this.commandMode === 'stored') {
+          this._failure = new AuthError(saved.message, 'auth-failed');
+        } else {
+          this.clearPersistedState();
         }
       } else if (saved) {
         this.clearPersistedState();
@@ -347,21 +377,22 @@ export class BmpAuth {
     return this.bmpPass === pass;
   }
 
-  /** Copy auth state only between clients with the same explicit strategy. */
+  /** Only an identical workspace/identity may adopt an existing session. */
   absorbAuth(other: BmpAuth): void {
-    if (this.commandMode !== other.commandMode) return;
-    this._authEpoch++;
+    if (other === this) return;
+    if (!this.stampsEqual(this.stamp, other.stamp) || this.bmpPass !== other.bmpPass) return;
+    this.logout();
     this._jwt = other._jwt;
     this._refreshToken = other._refreshToken;
     this._loginTicket = other._loginTicket;
     this._commandUser = other._commandUser;
     this._portalActor = other._portalActor;
+    this.privateSession.restore(other.privateSession.snapshot());
     this._sessionLoaded = true;
     this.persistCurrentState();
   }
 
-  /** Unconditional local teardown. Stored login deliberately has no browser
-   * cookie, so its server-side HTTP session expires under BMP's own policy. */
+  /** Local teardown cancels private requests; it never signs out the portal. */
   logout(): void {
     this._authEpoch++;
     this._jwt = null;
@@ -369,6 +400,8 @@ export class BmpAuth {
     this._loginTicket = null;
     this._commandUser = null;
     this._portalActor = null;
+    this._failure = null;
+    this.privateSession.clear();
     this._loginPromise = null;
     this._refreshPromise = null;
     this._recoveryPromise = null;
@@ -381,7 +414,59 @@ export class BmpAuth {
 
   invalidateLoginTicket(): void {
     this._loginTicket = null;
-    if (this.commandMode === 'stored') this.clearPersistedState();
+    if (this.commandMode === 'stored') {
+      this.privateSession.clear();
+      this.clearPersistedState();
+    }
+  }
+
+  /** Stop queued/background work repeating a rejected password or session. */
+  rejectCommandAuthentication(message: string): void {
+    this.invalidateLoginTicket();
+    if (this.commandMode === 'stored') this.pauseStoredAuthentication(new AuthError(message, 'auth-failed'));
+  }
+
+  /** Called only by the user's connection test/reconnect action. */
+  async retryAuthentication(): Promise<void> {
+    if (this.commandMode !== 'stored') return;
+    const epoch = this._authEpoch;
+    await this.restoreFromSession(epoch);
+    this.assertAuthEpoch(epoch);
+    if (this._failure) {
+      this._failure = null;
+      this.clearPersistedState();
+    }
+  }
+
+  /** One command interface owns the complete identity context. The transport
+   * decides replay safety; it cannot accidentally omit cookies or bearer auth. */
+  async fetchCommand<T>(ticket: string, init: RequestInit, consume: (response: Response) => Promise<T>): Promise<T> {
+    const epoch = this._authEpoch;
+    if (this._failure) throw this._failure;
+    if (ticket !== this._loginTicket) throw new AuthError('Command session changed. Retry the operation.', 'auth-failed');
+    // The private-session adapter performs its own permission check.
+    if (this.commandMode === 'portal') await assertHostAccess(this.bmpUrl);
+    this.assertAuthEpoch(epoch);
+    const url = `${this.bmpUrl}cs/command?LOGIN_TICKET=${encodeURIComponent(ticket)}&async=false&_noctx=true`;
+    const headers = new Headers(init.headers);
+    if (this.commandMode === 'portal' && this._jwt) headers.set('Authorization', `Bearer ${this._jwt}`);
+    const options: RequestInit = {
+      ...init, headers, credentials: 'omit', redirect: 'manual', cache: 'no-store', referrerPolicy: 'no-referrer',
+    };
+    let result: T;
+    try {
+      result = this.commandMode === 'stored'
+        ? await this.privateSession.request(url, options, consume)
+        : await consume(await fetch(url, options));
+    } catch (error) {
+      this.assertAuthEpoch(epoch);
+      throw error;
+    }
+    this.assertAuthEpoch(epoch);
+    if (this.commandMode === 'stored' && this._persistedCookieRevision !== this.privateSession.revision) {
+      this.persistCurrentState();
+    }
+    return result;
   }
 
   expireAccessToken(): void {
@@ -395,9 +480,11 @@ export class BmpAuth {
 
   async getLoginTicket(expectedEpoch = this._authEpoch): Promise<string> {
     this.assertAuthEpoch(expectedEpoch);
+    this.assertNotRejected();
     if (this._loginTicket) return this._loginTicket;
     await this.restoreFromSession(expectedEpoch);
     this.assertAuthEpoch(expectedEpoch);
+    this.assertNotRejected();
     if (this._loginTicket) return this._loginTicket;
     if (this._ticketPromise) return this._ticketPromise;
     const task = this.commandMode === 'stored'
@@ -405,13 +492,20 @@ export class BmpAuth {
       : this.fetchPortalLoginTicketWithRecovery(expectedEpoch);
     this._ticketPromise = task;
     try { return await task; }
+    catch (error) {
+      if (this.commandMode === 'stored' && expectedEpoch === this._authEpoch && error instanceof AuthError && !error.retryable) {
+        this.pauseStoredAuthentication(error);
+      }
+      throw error;
+    }
     finally { if (this._ticketPromise === task) this._ticketPromise = null; }
   }
 
   async refreshLoginTicket(): Promise<string> {
     if (this._ticketRecoveryPromise) return this._ticketRecoveryPromise;
-    this._loginTicket = null;
-    if (this.commandMode === 'stored') this.clearPersistedState();
+    this.invalidateLoginTicket();
+    // A command 401 can mean that the bearer token expired, not just the ticket.
+    if (this.commandMode === 'portal') this.expireAccessToken();
     const epoch = this._authEpoch;
     const task = this.getLoginTicket(epoch);
     this._ticketRecoveryPromise = task;
@@ -473,21 +567,25 @@ export class BmpAuth {
     url.searchParams.set('customerId', 'default');
     url.searchParams.set('_noctx', 'true');
 
-    let response: Response;
+    let result: { response: Response; buffer: ArrayBuffer | null };
     try {
-      response = await fetch(url, {
+      result = await this.privateSession.request(url, {
         method: 'GET',
         credentials: 'omit',
         redirect: 'manual',
         cache: 'no-store',
         referrerPolicy: 'no-referrer',
         signal: AbortSignal.timeout(AUTH_TIMEOUT),
-      });
+      }, async response => ({ response, buffer: response.ok ? await response.arrayBuffer() : null }));
       this.assertAuthEpoch(epoch);
     } catch (error) {
-      if (error instanceof HostAccessError) throw error;
+      this.assertAuthEpoch(epoch);
+      if (error instanceof HostAccessError || error instanceof DOMException) throw error;
+      if (error instanceof PrivateSessionError) throw new AuthError(error.message, 'auth-failed');
+      if (error instanceof TypeError) throw new TypeError('Stored configuration login could not reach BMP.');
       throw new AuthError('Stored configuration login could not reach BMP.', 'auth-failed');
     }
+    const { response, buffer } = result;
     if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) {
       throw new AuthError('Stored configuration login is not supported by this BMP gateway.', 'auth-failed');
     }
@@ -495,12 +593,11 @@ export class BmpAuth {
       throw new AuthError('Stored configuration username or password was rejected.', 'auth-failed');
     }
     if (!response.ok) {
-      throw new AuthError(`Stored configuration login failed (HTTP ${response.status}).`, 'auth-failed');
+      throw new AuthError(`Stored configuration login failed (HTTP ${response.status}).`, 'auth-failed',
+        response.status >= 500 || response.status === 408 || response.status === 429);
     }
 
-    const buffer = await response.arrayBuffer();
-    this.assertAuthEpoch(epoch);
-    if (buffer.byteLength < 5 || buffer.byteLength > MAX_LOGIN_RESPONSE_BYTES) {
+    if (!buffer || buffer.byteLength < 5 || buffer.byteLength > MAX_LOGIN_RESPONSE_BYTES) {
       throw new AuthError('BMP returned an invalid stored-login response.', 'auth-failed');
     }
     const magic = new Uint8Array(buffer, 0, 2);
@@ -544,6 +641,17 @@ export class BmpAuth {
     }
   }
 
+  private pauseStoredAuthentication(error: AuthError): void {
+    this._failure = error;
+    this.privateSession.clear();
+    const epoch = this._authEpoch;
+    const value: RejectedAuthState = { version: 2, kind: 'rejected', stamp: this.stamp, message: error.message };
+    this.queueStorage(async () => {
+      if (epoch !== this._authEpoch) return;
+      await chrome.storage.session.set({ [this.sessionKey]: value });
+    }, 'auth:persistRejection');
+  }
+
   private persistPortalState(epoch = this._authEpoch): void {
     const value: PortalAuthState = {
       version: 2,
@@ -566,12 +674,14 @@ export class BmpAuth {
   }
 
   private persistStoredState(ticket: string, commandUser: string, epoch = this._authEpoch): void {
+    this._persistedCookieRevision = this.privateSession.revision;
     const value: StoredAuthState = {
       version: 2,
       kind: 'direct-ticket',
       stamp: this.stamp,
       ticket,
       commandUser,
+      cookies: this.privateSession.snapshot(),
     };
     this.queueStorage(async () => {
       if (epoch !== this._authEpoch) return;
@@ -592,15 +702,22 @@ export class BmpAuth {
   }
 
   private queueStorage(operation: () => Promise<void>, logContext: string): void {
-    this._storageTail = this._storageTail
+    const key = this.sessionKey;
+    const task = (storageTails.get(key) ?? Promise.resolve())
       .then(operation, operation)
       .catch(error => log.swallow(logContext, error));
+    storageTails.set(key, task);
+    void task.then(() => { if (storageTails.get(key) === task) storageTails.delete(key); });
   }
 
   private assertAuthEpoch(epoch: number): void {
     if (epoch !== this._authEpoch) {
       throw new AuthError('Authentication operation was superseded.', 'auth-failed');
     }
+  }
+
+  private assertNotRejected(): void {
+    if (this._failure) throw this._failure;
   }
 
   private normalizedWorkspaceUrl(): string {

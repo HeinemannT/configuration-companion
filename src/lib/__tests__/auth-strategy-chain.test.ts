@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mockChromeStorage } from './chrome-mock';
 import { JavaEnum, JavaWriter, type JavaClassDesc } from '../java-serial';
 import { registerBmpTypes } from '../bmp-types';
+import { BmpTransport } from '../bmp-transport';
 
 const enumDesc = (name: string): JavaClassDesc => ({
   name,
@@ -37,6 +38,184 @@ beforeEach(() => {
 });
 
 describe('BmpAuth explicit strategies', () => {
+  it.each(['html', 'redirect'] as const)('pauses queued stored commands after a gateway %s response', async kind => {
+    const { BmpAuth } = await import('../bmp-auth');
+    const auth = new BmpAuth('https://bmp.test/', 'user', 'secret', `gateway-${kind}`, 'stored');
+    const bytes = directTicketBytes('user');
+    globalThis.fetch = vi.fn(async input => String(input).includes('/cs/login?')
+      ? new Response(bytes as Uint8Array<ArrayBuffer>)
+      : kind === 'html' ? new Response('<html>sign in</html>', { headers: { 'Content-Type': 'text/html' } })
+        : new Response(null, { status: 302, headers: { Location: 'https://sso.test/' } }));
+    const transport = new BmpTransport('https://bmp.test/', auth);
+    const results = await Promise.allSettled(Array.from({ length: 4 }, () => transport.sendRequest(new Uint8Array([1]), 1000, 'read')));
+    expect(results.every(r => r.status === 'rejected')).toBe(true);
+    expect(fetch).toHaveBeenCalledTimes(2); // one login and one command, no background retry storm
+    await auth.retryAuthentication();
+    await expect(transport.sendRequest(new Uint8Array([1]), 1000, 'read')).rejects.toMatchObject({ kind: 'auth' });
+    expect(fetch).toHaveBeenCalledTimes(4);
+  });
+
+  it.each(['stored', 'portal'] as const)('discards late %s bodies and queued writes after logout', async mode => {
+    const { BmpAuth } = await import('../bmp-auth');
+    const auth = new BmpAuth('https://bmp.test/', 'user', 'secret', `late-body-${mode}`, mode);
+    const bytes = directTicketBytes('user');
+    let finishBody!: (body: ArrayBuffer) => void;
+    globalThis.fetch = vi.fn(async input => {
+      const url = String(input);
+      if (url.includes('/cs/login?')) return new Response(bytes as Uint8Array<ArrayBuffer>);
+      if (url.endsWith('graphql')) return new Response(JSON.stringify({ data: { authorizationCode: { code: 'code' } } }));
+      if (url.endsWith('cstoken')) return new Response(JSON.stringify({ accessToken: 'jwt', refreshToken: 'refresh' }));
+      if (url.endsWith('ticket')) return new Response('user;STUDIO;42');
+      const response = new Response('result');
+      // Simulate a response whose headers arrived, but whose body is still downloading.
+      vi.spyOn(response, 'arrayBuffer').mockImplementation(() => new Promise(resolve => { finishBody = resolve; }));
+      return response;
+    });
+    const transport = new BmpTransport('https://bmp.test/', auth);
+    const pending = transport.sendRequest(new Uint8Array([1]), 1000, 'read').catch(error => error);
+    const queued = transport.sendRequest(new Uint8Array([2]), 1000, 'write').catch(error => error);
+    await vi.waitFor(() => expect(finishBody).toBeDefined());
+    auth.logout();
+    finishBody(new ArrayBuffer(1));
+    await expect(pending).resolves.toMatchObject({ kind: 'auth', message: expect.stringContaining('superseded') });
+    await expect(queued).resolves.toMatchObject({ attempts: 0, message: expect.stringContaining('superseded') });
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes('/cs/command?'))).toHaveLength(1);
+    expect(auth.commandUser).toBeNull();
+  });
+
+  it.each(['read', 'write'] as const)('keeps %s command recovery bounded across queued requests', async intent => {
+    const { BmpAuth } = await import('../bmp-auth');
+    const auth = new BmpAuth('https://bmp.test/', 'user', 'secret', 'blocked-command', 'stored');
+    const bytes = directTicketBytes('user');
+    globalThis.fetch = vi.fn(async input => String(input).includes('/cs/login?')
+      ? new Response(bytes as Uint8Array<ArrayBuffer>) : new Response('', { status: 401 }));
+    const transport = new BmpTransport('https://bmp.test/', auth);
+    const results = await Promise.allSettled(Array.from({ length: 4 }, () => transport.sendRequest(new Uint8Array([1]), 1000, intent)));
+    expect(results.every(r => r.status === 'rejected')).toBe(true);
+    const urls = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
+    expect(urls.filter(url => url.includes('/cs/login?'))).toHaveLength(intent === 'read' ? 2 : 1);
+    expect(urls.filter(url => url.includes('/cs/command?'))).toHaveLength(intent === 'read' ? 2 : 1);
+  });
+
+  it('sends the portal bearer on commands without browser cookies', async () => {
+    const { BmpAuth } = await import('../bmp-auth');
+    const auth = new BmpAuth('https://bmp.test/', '', '', 'portal-command', 'portal');
+    globalThis.fetch = vi.fn(async input => {
+      if (String(input).endsWith('graphql')) return new Response(JSON.stringify({ data: { authorizationCode: { code: 'code' } } }));
+      if (String(input).endsWith('cstoken')) return new Response(JSON.stringify({ accessToken: 'jwt-private', refreshToken: 'rt' }));
+      return new Response('user;STUDIO;42');
+    });
+    const ticket = await auth.getLoginTicket();
+    await auth.fetchCommand(ticket, { method: 'POST', body: 'command' }, response => response.text());
+    const [, options] = vi.mocked(fetch).mock.calls.at(-1)!;
+    expect(new Headers(options?.headers).get('Authorization')).toBe('Bearer jwt-private');
+    expect(options).toMatchObject({ credentials: 'omit', redirect: 'manual' });
+  });
+
+  it('stops rejected stored login retries until an explicit reconnect', async () => {
+    const { BmpAuth } = await import('../bmp-auth');
+    const auth = new BmpAuth('https://bmp.test/', 'user', 'wrong', 'rejected', 'stored');
+    globalThis.fetch = vi.fn(async () => new Response('', { status: 401 }));
+    await expect(auth.getLoginTicket()).rejects.toMatchObject({ code: 'auth-failed' });
+    await expect(auth.getLoginTicket()).rejects.toMatchObject({ code: 'auth-failed' });
+    await expect(auth.refreshLoginTicket()).rejects.toMatchObject({ code: 'auth-failed' });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await auth.retryAuthentication();
+    await expect(auth.getLoginTicket()).rejects.toMatchObject({ code: 'auth-failed' });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('allows recovery from a temporary network failure without resubmitting a rejected password', async () => {
+    const { BmpAuth } = await import('../bmp-auth');
+    const auth = new BmpAuth('https://bmp.test/', 'user', 'secret', 'network', 'stored');
+    const bytes = directTicketBytes('user');
+    globalThis.fetch = vi.fn().mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockResolvedValueOnce(new Response(bytes as Uint8Array<ArrayBuffer>));
+    await expect(auth.getLoginTicket()).rejects.toThrow('could not reach BMP');
+    expect(await auth.getLoginTicket()).toContain('user;STUDIO;');
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps rejected credentials paused after a worker restart until explicit reconnect', async () => {
+    const { BmpAuth, commandAuthSessionKey } = await import('../bmp-auth');
+    const auth = new BmpAuth('https://bmp.test/', 'user', 'wrong', 'persist-rejection', 'stored', 'revision');
+    globalThis.fetch = vi.fn(async () => new Response('', { status: 401 }));
+    await expect(auth.getLoginTicket()).rejects.toThrow('rejected');
+    await vi.waitFor(async () => {
+      expect((await chrome.storage.session.get(commandAuthSessionKey('persist-rejection')))[commandAuthSessionKey('persist-rejection')])
+        .toMatchObject({ kind: 'rejected' });
+    });
+    const restarted = new BmpAuth('https://bmp.test/', 'user', 'wrong', 'persist-rejection', 'stored', 'revision');
+    await expect(restarted.getLoginTicket()).rejects.toThrow('rejected');
+    expect(fetch).toHaveBeenCalledTimes(1);
+    // Reconnect works even before the replacement client has restored its session.
+    const cold = new BmpAuth('https://bmp.test/', 'user', 'wrong', 'persist-rejection', 'stored', 'revision');
+    await cold.retryAuthentication();
+    await expect(cold.getLoginTicket()).rejects.toThrow('rejected');
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not persist a temporary login service outage as a rejected account', async () => {
+    const { BmpAuth } = await import('../bmp-auth');
+    const auth = new BmpAuth('https://bmp.test/', 'user', 'secret', 'outage', 'stored');
+    const bytes = directTicketBytes('user');
+    globalThis.fetch = vi.fn().mockResolvedValueOnce(new Response('', { status: 503 }))
+      .mockResolvedValueOnce(new Response(bytes as Uint8Array<ArrayBuffer>));
+    await expect(auth.getLoginTicket()).rejects.toMatchObject({ retryable: true });
+    expect(await auth.getLoginTicket()).toContain('user;STUDIO;');
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('orders old-client teardown before replacement session persistence', async () => {
+    const { BmpAuth, commandAuthSessionKey } = await import('../bmp-auth');
+    const bytes = directTicketBytes('user');
+    globalThis.fetch = vi.fn(async () => new Response(bytes as Uint8Array<ArrayBuffer>));
+    const realSet = chrome.storage.session.set.bind(chrome.storage.session);
+    let finish!: () => void;
+    vi.mocked(chrome.storage.session.set as (value: Record<string, unknown>) => Promise<void>).mockImplementationOnce(value => new Promise<void>(resolve => {
+      finish = () => { void realSet(value).then(resolve); };
+    }));
+    const old = new BmpAuth('https://bmp.test/', 'user', 'old-password', 'replaced', 'stored', 'old');
+    await old.getLoginTicket();
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    old.logout();
+    const replacement = new BmpAuth('https://bmp.test/', 'user', 'new-password', 'replaced', 'stored', 'new');
+    await replacement.getLoginTicket();
+    finish();
+    await vi.waitFor(async () => {
+      const saved = (await chrome.storage.session.get(commandAuthSessionKey('replaced')))[commandAuthSessionKey('replaced')] as
+        { stamp: { revision: string }; cookies?: unknown } | undefined;
+      expect(saved?.stamp.revision).toBe('new');
+      expect(saved?.cookies).toBeDefined();
+    });
+  });
+
+  it('does not restore an old ticket-only stored login envelope', async () => {
+    const { BmpAuth, commandAuthSessionKey } = await import('../bmp-auth');
+    await chrome.storage.session.set({ [commandAuthSessionKey('legacy')]: {
+      version: 2, kind: 'direct-ticket', ticket: 'old;STUDIO;1', commandUser: 'old',
+      stamp: { profileId: 'legacy', workspaceUrl: 'https://bmp.test/', mode: 'stored', username: 'user', revision: '' },
+    } });
+    const auth = new BmpAuth('https://bmp.test/', 'user', 'secret', 'legacy', 'stored');
+    const bytes = directTicketBytes('user');
+    globalThis.fetch = vi.fn(async () => new Response(bytes as Uint8Array<ArrayBuffer>));
+    expect(await auth.getLoginTicket()).toContain('user;STUDIO;');
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('will not adopt authentication from a different workspace or account', async () => {
+    const { BmpAuth } = await import('../bmp-auth');
+    const source = new BmpAuth('https://bmp.test/', 'user', 'secret', 'same', 'stored');
+    const bytes = directTicketBytes('user');
+    globalThis.fetch = vi.fn(async () => new Response(bytes as Uint8Array<ArrayBuffer>));
+    await source.getLoginTicket();
+    for (const target of [new BmpAuth('https://bmp.test/Other/', 'user', 'secret', 'same', 'stored'),
+      new BmpAuth('https://bmp.test/', 'someoneElse', 'secret', 'same', 'stored')]) {
+      target.absorbAuth(source);
+      expect(target.commandUser).toBeNull();
+    }
+  });
+
   it('does not let a portal token exchange complete after logout', async () => {
     let releaseToken!: (response: Response) => void;
     const tokenResponse = new Promise<Response>(resolve => { releaseToken = resolve; });

@@ -333,6 +333,7 @@ export class BmpClient {
 
   absorbAuth(other: BmpClient) { this.auth.absorbAuth(other.auth); }
   logout() { this.auth.logout(); }
+  retryAuthentication() { return this.auth.retryAuthentication(); }
 
   // ── Object resolution ────────────────────────────────────────
 

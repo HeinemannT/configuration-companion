@@ -1,6 +1,6 @@
 import { vi } from 'vitest';
 
-/** Read helper that mirrors chrome.storage.* — supports string,
+/** Read helper that mirrors chrome.storage.* â€” supports string,
  *  string[], object (defaults), or null (return all). */
 function readShape(store: Record<string, any>, key: string | string[] | Record<string, unknown> | null) {
   if (key === null || key === undefined) {
@@ -48,7 +48,16 @@ export function mockChromeStorage() {
       setIcon: vi.fn(async () => {}),
     },
     tabs: { query: vi.fn() },
+    webRequest: { onHeadersReceived: { addListener: vi.fn(), removeListener: vi.fn() } },
+    declarativeNetRequest: {
+      getSessionRules: vi.fn(async () => []),
+      updateSessionRules: vi.fn(async () => {}),
+      RuleActionType: { MODIFY_HEADERS: 'modifyHeaders' },
+      HeaderOperation: { SET: 'set' },
+      ResourceType: { XMLHTTPREQUEST: 'xmlhttprequest' },
+    },
     runtime: {
+      id: 'test',
       lastError: null,
       getURL: vi.fn((path: string) => `chrome-extension://test/${path}`),
     },

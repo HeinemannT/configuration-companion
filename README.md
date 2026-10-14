@@ -20,9 +20,11 @@ Replace the contents of that same stable folder with the new release, then click
 Add the workspace URL under **Connect**, approve Chrome's site-access prompt, and choose the identity used for Configuration Studio commands:
 
 - **Use browser login** runs commands as the user signed into the BMP page and supports SSO.
-- **Use stored configuration login** obtains an independent BMP command ticket. The website stays signed in as the portal user, while configuration reads and writes run as the stored account.
+- **Use stored configuration login** opens an independent Studio session. Companion keeps its HTTP cookies and command ticket together, separate from the browser's portal session. The website stays signed in as the portal user, while configuration reads and writes run as the stored account.
 
 Connect shows the verified **Portal** and **Commands** identities separately. Workspace search, live CVO data, downloads, page navigation, and visible portal content retain the portal identity. Configuration lookup, Extended Code, property saves, and Blueprint use the command identity. A stored command account does not broaden what portal search or live data can see.
+
+Stored login uses BMP's local Studio authentication directly; it does not navigate through the portal's SSO login page. The portal's `sso=0` parameter is not part of the Studio protocol. A rejected stored login stops automatic retries until you click **Reconnect** or update the account. Reads can recover once from a rejected command session; writes are never automatically replayed.
 
 ## Configure roles and policies
 
@@ -190,7 +192,7 @@ Configuration Companion is proprietary software. Source availability does not gr
 
 ## Data and security
 
-- Borrowed tokens and independent command tickets live in `chrome.storage.session` and disappear when the browser closes.
+- Borrowed tokens, independent command tickets, and private HTTP cookies live in `chrome.storage.session` and disappear when the browser closes.
 - Stored passwords and AI keys are AES-GCM encrypted in `chrome.storage.local`.
 - Stored command login uses BMP's legacy direct-login route over the configured HTTPS connection. BMP places those credentials in that request's query string; use HTTPS and ensure server/proxy access logs are appropriately protected.
 - A borrowed token is separate from the token used by the BMP tab.

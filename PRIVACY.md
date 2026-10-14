@@ -1,6 +1,6 @@
 # Privacy Policy — Configuration Companion
 
-Last updated: 8 August 2026
+Last updated: 14 October 2026
 
 Configuration Companion is an independent developer tool by Tassilo Heinemann for inspecting and editing user-chosen Corporater BMP workspaces. It has no analytics, advertising, user accounts, or developer-operated data service.
 
@@ -8,9 +8,11 @@ Configuration Companion is an independent developer tool by Tassilo Heinemann fo
 
 The extension stores its settings, server profiles, favourites, caches, activity history, and optional credentials locally in Chrome or Edge storage. It accesses configuration data, code, object metadata, and the active BMP session only for features the user invokes.
 
-Borrowed BMP tokens and independent Configuration Studio command tickets are kept in browser session storage; their local copies disappear when the browser closes. BMP controls expiry of the corresponding server-side sessions. Optional saved BMP passwords and AI API keys are stored locally using AES-GCM. This protects against casual inspection of browser storage, not compromise of the device or browser profile.
+Borrowed BMP tokens, independent Configuration Studio command tickets, and their private HTTP cookies are kept in browser session storage; their local copies disappear when the browser closes. BMP controls expiry of the corresponding server-side sessions. Optional saved BMP passwords and AI API keys are stored locally using AES-GCM. This protects against casual inspection of browser storage, not compromise of the device or browser profile.
 
-When a profile uses a stored configuration login, Companion sends the username and password directly to that BMP server's legacy direct-login endpoint. BMP defines this as a GET request, so the credentials are URL query parameters and may be retained by BMP or reverse-proxy access logs. Companion does not log or retain that request URL. Use HTTPS and only enable this mode where the server operator protects or redacts access logs. This path requests an independent command ticket with browser cookies omitted; it does not sign the BMP website in as the stored account.
+When a profile uses a stored configuration login, Companion sends the username and password directly to that BMP server's legacy direct-login endpoint. BMP defines this as a GET request, so the credentials are URL query parameters and may be retained by BMP or reverse-proxy access logs. Companion does not log or retain that request URL. Use HTTPS and only enable this mode where the server operator protects or redacts access logs. This path requests an independent command ticket and HTTP session with browser cookies omitted; it does not sign the BMP website in as the stored account.
+
+For this private session, the `webRequest` permission reads response cookies only for Companion's own marked requests. Temporary `declarativeNetRequestWithHostAccess` rules attach the private cookies to the corresponding extension request, then are removed. Both capabilities remain limited by the sites you have granted. Companion does not replace or restore portal cookies, and does not forward credentials through another server.
 
 If the user configures the optional AI assistant, the API key, messages, and attached BMP or code context are sent directly from the browser to the provider selected by the user. They are not routed through or accessible to the developer. The selected provider processes that data under its own terms and privacy policy.
 

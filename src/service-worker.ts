@@ -28,6 +28,7 @@ import { setContextRid, getContextRid, deleteContextRid } from './lib/context-ri
 import { openEditorWindow, openExtendedWindow } from './lib/editor';
 import { openCodeSearchWindow } from './lib/codesearch-launcher';
 import { initSiteAccess, reconcileProfileOrigins } from './lib/site-access';
+import { clearAbandonedPrivateSessionRules } from './lib/bmp-private-session';
 import { openDiffWindow } from './lib/diff-launcher';
 import { openSidePanelFromCommand } from './lib/side-panel-command';
 
@@ -271,6 +272,7 @@ chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(e => l
 // Per-site access: reconcile the dynamic content-script registrations with the granted origins at
 // boot and on every grant/revoke. Nothing is injected anywhere until the user approves a site.
 initSiteAccess();
+void clearAbandonedPrivateSessionRules().catch(e => log.swallow('auth:clearPrivateRules', e));
 // Access invariant: grants equal configured BMP origins plus the selected AI provider origin.
 // This also migrates legacy broad grants carried over from older installs.
 void settingsReady.then(() => reconcileProfileOrigins(ctx.settings.profiles.map(p => p.bmpUrl), ctx.settings.ai));

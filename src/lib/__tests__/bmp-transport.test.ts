@@ -8,6 +8,9 @@ function mockAuth() {
     getLoginTicket: vi.fn().mockResolvedValue('ticket value'),
     refreshLoginTicket: vi.fn().mockResolvedValue('fresh ticket'),
     invalidateLoginTicket: vi.fn(),
+    rejectCommandAuthentication: vi.fn(),
+    fetchCommand: vi.fn(async (ticket: string, init: RequestInit, consume: (response: Response) => Promise<unknown>) => consume(await fetch(
+      `https://bmp.test/Workspace/cs/command?LOGIN_TICKET=${encodeURIComponent(ticket)}&async=false&_noctx=true`, init))),
   }
 }
 
@@ -97,7 +100,7 @@ describe('BmpTransport command requests', () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       'https://bmp.test/Workspace/cs/command?LOGIN_TICKET=ticket%20value&async=false&_noctx=true',
-      expect.objectContaining({ method: 'POST' }),
+      expect.objectContaining({ method: 'POST', credentials: 'omit', redirect: 'manual', cache: 'no-store', referrerPolicy: 'no-referrer' }),
     )
   })
 
@@ -127,7 +130,75 @@ describe('BmpTransport command requests', () => {
     expect(error).toBeInstanceOf(BmpTransportError)
     expect(error).toMatchObject({ kind: 'auth', status: 401, attempts: 1 })
     expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(auth.invalidateLoginTicket).toHaveBeenCalledTimes(1)
+    expect(auth.rejectCommandAuthentication).toHaveBeenCalledTimes(1)
+    expect(auth.refreshLoginTicket).not.toHaveBeenCalled()
+    expect(error.message).toContain('The command was not retried')
+    expect(error.message).not.toContain('expired')
+  })
+
+  it.each(['stored', 'portal'] as const)('explains rejection of a renewed %s ticket without claiming expiry', async (authMode) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 401 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const auth = { ...mockAuth(), authMode }
+    const transport = new BmpTransport('https://bmp.test/Workspace/', auth as never)
+
+    const error = await transport.sendRequest(new Uint8Array([0xac]), 1_000, 'read').catch(e => e)
+
+    expect(error).toMatchObject({ kind: 'auth', status: 401, attempts: 2 })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(auth.refreshLoginTicket).toHaveBeenCalledTimes(1)
+    expect(auth.rejectCommandAuthentication).toHaveBeenCalledTimes(1)
+    expect(error.message).toContain('/cs/command (HTTP 401)')
+    expect(error.message).toContain(authMode === 'stored' ? 'A new stored Studio session was also rejected' : 'A renewed portal-session ticket')
+    expect(error.message).not.toMatch(/expired|fresh ticket|LOGIN_TICKET/)
+  })
+
+  it.each(['read', 'write'] as const)('stops a %s command at a gateway redirect without another login or POST', async (intent) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, {
+      status: 307,
+      headers: { Location: 'https://sso.example/sign-in?private=hidden' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const auth = mockAuth()
+    const transport = new BmpTransport('https://bmp.test/Workspace/', auth as never)
+
+    const error = await transport.sendRequest(new Uint8Array([0xac]), 1_000, intent).catch(e => e)
+
+    expect(error).toMatchObject({ kind: 'auth', status: 307, attempts: 1 })
+    expect(error.message).toContain('redirected /cs/command')
+    expect(error.message).not.toContain('private')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(auth.refreshLoginTicket).not.toHaveBeenCalled()
+  })
+
+  it('recognizes an opaque browser redirect without exposing its destination', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ type: 'opaqueredirect', status: 0 })
+    vi.stubGlobal('fetch', fetchMock)
+    const auth = mockAuth()
+    const transport = new BmpTransport('https://bmp.test/Workspace/', auth as never)
+
+    const error = await transport.sendRequest(new Uint8Array([0xac]), 1_000, 'read').catch(e => e)
+
+    expect(error).toMatchObject({ kind: 'auth', attempts: 1 })
+    expect(error.status).toBeUndefined()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports an HTML sign-in response before binary decoding and does not log its contents', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('<html>private sign-in state</html>', {
+      status: 200,
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const auth = mockAuth()
+    const transport = new BmpTransport('https://bmp.test/Workspace/', auth as never)
+
+    const error = await transport.sendRequest(new Uint8Array([0xac]), 1_000, 'read').catch(e => e)
+
+    expect(error).toMatchObject({ kind: 'auth', status: 200, attempts: 1 })
+    expect(error.message).toContain('HTML sign-in page from /cs/command')
+    expect(error.message).not.toContain('private')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(auth.refreshLoginTicket).not.toHaveBeenCalled()
   })
 

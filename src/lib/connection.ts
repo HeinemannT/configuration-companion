@@ -33,6 +33,7 @@ let lastPollTime = 0;
 let connectionGeneration = 0;
 let authTestInFlight: Promise<void> | null = null;
 let authTestGeneration = -1;
+let authTestReason: ConnectionValidationReason = 'background';
 let healthPollInFlight: Promise<void> | null = null;
 let healthPollGeneration = -1;
 let validation: 'idle' | 'validating' = 'idle';
@@ -322,15 +323,17 @@ export function bindConnectionClient(client: BmpClient, profileId: string): void
     if (ctx.client !== client || ctx.settings.activeProfileId !== profileId) return;
     const stressed = outcome.durationMs >= 10_000
       || outcome.queueWaitMs >= 2_000
-      || outcome.attempts > 1
       || outcome.requestBytes >= 256 * 1024
       || outcome.responseBytes >= 1024 * 1024;
-    if (stressed) {
-      const result = outcome.ok ? 'completed' : `failed (${outcome.error.kind})`;
+    if ((!outcome.ok && outcome.error.kind !== 'cancelled') || stressed || outcome.attempts > 1) {
+      const result = outcome.ok
+        ? stressed ? 'completed under load' : 'completed after retry'
+        : `failed (${outcome.error.kind})`;
       ctx.logActivity(
         outcome.ok ? 'warn' : 'error',
-        `BMP ${outcome.feature ? `${outcome.feature} · ` : ''}${outcome.operation} ${result} under load`,
+        `BMP ${outcome.feature ? `${outcome.feature} · ` : ''}${outcome.operation} ${result}`,
         [
+          ...(!outcome.ok ? [outcome.error.message] : []),
           `run ${outcome.durationMs}ms`,
           `queue ${outcome.queueWaitMs}ms (depth ${outcome.queueDepth})`,
           `${outcome.attempts} attempt${outcome.attempts === 1 ? '' : 's'}`,
@@ -436,11 +439,21 @@ export type ConnectionValidationReason = 'explicit' | 'background' | 'evidence-c
 
 export function runAuthTest(reason: ConnectionValidationReason = 'explicit'): Promise<void> {
   const generationAtStart = connectionGeneration;
-  if (authTestInFlight && authTestGeneration === generationAtStart) return authTestInFlight;
+  if (authTestInFlight && authTestGeneration === generationAtStart) {
+    if (reason === 'explicit' && authTestReason !== 'explicit') {
+      // Reconnect must clear a paused login even if a background check already
+      // owns the slot. Coalesce clicks into one explicit follow-up validation.
+      return authTestInFlight.then(() => {
+        if (connectionGeneration === generationAtStart) return runAuthTest('explicit');
+      });
+    }
+    return authTestInFlight;
+  }
   const clientAtStart = getCtx().client;
   const task = runAuthTestInternal(generationAtStart, clientAtStart, reason);
   authTestInFlight = task;
   authTestGeneration = generationAtStart;
+  authTestReason = reason;
   const clear = () => {
     if (authTestInFlight === task) authTestInFlight = null;
   };
@@ -497,6 +510,8 @@ async function runAuthTestInternal(
   if (reason === 'explicit') ctx.logActivity('info', 'Testing command connection\u2026');
   const hadIncident = activeIncidentEpoch > 0;
   try {
+    if (reason === 'explicit') await clientAtStart.retryAuthentication();
+    if (connectionGeneration !== generationAtStart || ctx.client !== clientAtStart) return;
     // Resolve the browser actor before validating the command channel. When a
     // borrowed chain is unbound (legacy state) or belongs to another actor,
     // discard it first so this validation performs exactly one command login.
