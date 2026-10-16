@@ -88,6 +88,22 @@ const MAX_LOGIN_RESPONSE_BYTES = 1024 * 1024;
  * before a replacement persists its session. */
 const storageTails = new Map<string, Promise<void>>();
 
+function queueSessionStorage(key: string, operation: () => Promise<void>, logContext: string): Promise<void> {
+  const task = (storageTails.get(key) ?? Promise.resolve())
+    .then(operation, operation)
+    .catch(error => log.swallow(logContext, error));
+  storageTails.set(key, task);
+  void task.then(() => { if (storageTails.get(key) === task) storageTails.delete(key); });
+  return task;
+}
+
+/** Also used for logout events when this profile has no pooled client. */
+export function clearCommandAuthSession(profileId: string): Promise<void> {
+  return queueSessionStorage(commandAuthSessionKey(profileId),
+    () => chrome.storage.session.remove([commandAuthSessionKey(profileId), legacySessionTokenKey(profileId)]),
+    'auth:clearSession');
+}
+
 function portalTicketPrincipal(ticket: string): string | null {
   const parts = ticket.split(';');
   if (parts.length !== 3) return null;
@@ -110,6 +126,8 @@ export class BmpAuth {
   private _restorePromise: Promise<boolean> | null = null;
   private _sessionLoaded = false;
   private _authEpoch = 0;
+  private _retired = false;
+  private sessionAbort = new AbortController();
   private _failure: AuthError | null = null;
   private _persistedCookieRevision = -1;
   private readonly privateSession: BmpPrivateSession;
@@ -146,6 +164,7 @@ export class BmpAuth {
   get portalActor(): string | null { return this._portalActor; }
   /** Captured when a command is queued, so logout retires queued work too. */
   get sessionEpoch(): number { return this._authEpoch; }
+  get revision(): string { return this.credentialRevision; }
 
   bindPortalActor(actor: string): void {
     if (this.commandMode !== 'portal') return;
@@ -333,6 +352,10 @@ export class BmpAuth {
 
   private async doRestoreFromSession(epoch: number): Promise<boolean> {
     try {
+      // A previous client can still be removing this profile's session. A
+      // replacement must not restore the envelope that logout is retiring.
+      await storageTails.get(this.sessionKey);
+      this.assertAuthEpoch(epoch);
       const result = await chrome.storage.session.get([this.sessionKey, legacySessionTokenKey(this.profileId)]);
       this.assertAuthEpoch(epoch);
       const saved = result[this.sessionKey] as PersistedAuthState | undefined;
@@ -395,7 +418,14 @@ export class BmpAuth {
 
   /** Local teardown cancels private requests; it never signs out the portal. */
   logout(): void {
+    if (this._retired) return;
+    this.clearSession();
+  }
+
+  private clearSession(): void {
     this._authEpoch++;
+    this.sessionAbort.abort();
+    this.sessionAbort = new AbortController();
     this._jwt = null;
     this._refreshToken = null;
     this._loginTicket = null;
@@ -413,10 +443,19 @@ export class BmpAuth {
     this.clearPersistedState();
   }
 
+  /** A removed/reconfigured client may still have asynchronous callers. They
+   * must never sign in again with the previous account or workspace. */
+  retire(): void {
+    if (this._retired) return;
+    this._retired = true;
+    this.clearSession();
+  }
+
   invalidateLoginTicket(): void {
     this._loginTicket = null;
     if (this.commandMode === 'stored') {
-      this.privateSession.clear();
+      // Renew in the same private HTTP session. Native Studio login retires
+      // its previous registered ticket; dropping cookies would abandon it.
       this.clearPersistedState();
     }
   }
@@ -443,6 +482,7 @@ export class BmpAuth {
    * decides replay safety; it cannot accidentally omit cookies or bearer auth. */
   async fetchCommand<T>(ticket: string, init: Omit<RequestInit, 'body'> & { body: ArrayBuffer }, consume: (response: Response) => Promise<T>): Promise<T> {
     const epoch = this._authEpoch;
+    this.assertAuthEpoch(epoch);
     if (this._failure) throw this._failure;
     if (ticket !== this._loginTicket) throw new AuthError('Command session changed. Retry the operation.', 'auth-failed');
     // The private-session adapter performs its own permission check.
@@ -462,6 +502,7 @@ export class BmpAuth {
     if (this.commandMode === 'portal' && this._jwt) headers.set('Authorization', `Bearer ${this._jwt}`);
     const options: RequestInit = {
       ...init, body, headers, credentials: 'omit', redirect: 'manual', cache: 'no-store', referrerPolicy: 'no-referrer',
+      signal: init.signal ? AbortSignal.any([init.signal, this.sessionAbort.signal]) : this.sessionAbort.signal,
     };
     let result: T;
     try {
@@ -473,6 +514,7 @@ export class BmpAuth {
       throw error;
     }
     this.assertAuthEpoch(epoch);
+    options.signal?.throwIfAborted();
     if (this.commandMode === 'stored' && this._persistedCookieRevision !== this.privateSession.revision) {
       this.persistCurrentState();
     }
@@ -511,13 +553,13 @@ export class BmpAuth {
     finally { if (this._ticketPromise === task) this._ticketPromise = null; }
   }
 
-  async refreshLoginTicket(): Promise<string> {
+  async refreshLoginTicket(expectedEpoch = this._authEpoch): Promise<string> {
+    this.assertAuthEpoch(expectedEpoch);
     if (this._ticketRecoveryPromise) return this._ticketRecoveryPromise;
     this.invalidateLoginTicket();
     // A command 401 can mean that the bearer token expired, not just the ticket.
     if (this.commandMode === 'portal') this.expireAccessToken();
-    const epoch = this._authEpoch;
-    const task = this.getLoginTicket(epoch);
+    const task = this.getLoginTicket(expectedEpoch);
     this._ticketRecoveryPromise = task;
     try { return await task; }
     finally { if (this._ticketRecoveryPromise === task) this._ticketRecoveryPromise = null; }
@@ -705,22 +747,15 @@ export class BmpAuth {
   }
 
   private clearPersistedState(): void {
-    this.queueStorage(
-      () => chrome.storage.session.remove([this.sessionKey, legacySessionTokenKey(this.profileId)]),
-      'auth:clearSession',
-    );
+    void clearCommandAuthSession(this.profileId);
   }
 
   private queueStorage(operation: () => Promise<void>, logContext: string): void {
-    const key = this.sessionKey;
-    const task = (storageTails.get(key) ?? Promise.resolve())
-      .then(operation, operation)
-      .catch(error => log.swallow(logContext, error));
-    storageTails.set(key, task);
-    void task.then(() => { if (storageTails.get(key) === task) storageTails.delete(key); });
+    void queueSessionStorage(this.sessionKey, operation, logContext);
   }
 
-  private assertAuthEpoch(epoch: number): void {
+  assertAuthEpoch(epoch: number): void {
+    if (this._retired) throw new AuthError('This BMP connection was retired. Use the current connection.', 'auth-failed');
     if (epoch !== this._authEpoch) {
       throw new AuthError('Authentication operation was superseded.', 'auth-failed');
     }

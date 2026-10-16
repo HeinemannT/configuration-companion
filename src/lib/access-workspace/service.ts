@@ -89,6 +89,10 @@ export async function handleAccessRequest(client: BmpClient, environment: string
 }
 
 async function runTask(client: BmpClient, environment: string, name: string, request: AccessTask, assertEnvironment: () => void, context: ReadContext = {}, operationId: string = crypto.randomUUID()): Promise<unknown> {
+  const epoch = client.auth?.sessionEpoch;
+  const assertSession = () => {
+    if (client.auth?.sessionEpoch !== epoch) throw new Error('BMP connection changed. Reload from BMP before applying again.');
+  };
   assertEnvironment();
   if (request.operation === 'performanceDiscover') return discoverPerformance(client, environment, name, assertEnvironment, context);
   if (request.operation === 'performanceMeasure') return measurePerformance(client, request.request, assertEnvironment, context.signal);
@@ -145,17 +149,21 @@ async function runTask(client: BmpClient, environment: string, name: string, req
     const preview = await client.executeEc(plan.preview, undefined, false, undefined, 120_000);
     requireReceipt(preview, plan.receipts.preview);
     assertEnvironment();
+    assertSession();
     // Persist the complete intent before dispatch. Never replay it automatically.
     const journal: ApplyJournal = { id: operationId, environment, at: new Date().toISOString(), phase: 'writing', baseline: live.model, draft: merged, submittedDraft: request.draft, temporaryIds: plan.temporaryIds };
     await writeJournal(journal);
     await chrome.storage.local.set({ [recoveryKey(environment)]: { id: operationId, at: journal.at } });
     assertEnvironment();
     context.progress?.('Saving changes in BMP…');
+    assertSession();
     const applied = await client.executeEc(plan.code, undefined, true, undefined, 120_000);
     requireReceipt(applied, plan.receipts.apply);
     journal.phase = 'verifying'; await writeJournal(journal);
     if (plan.finish) {
+      assertSession();
       const staged = await readAccess(client, environment, name, context);
+      assertSession();
       verifyApplied(live.model, merged, staged.model, { temporaryIds: plan.temporaryIds });
       // Refuse to cascade-delete a branch added while this apply was running.
       const removed = new Set(changes(live.model, merged).filter(d => d.before && (!d.after || plan.temporaryIds[d.before.rid])).map(d => d.before!.rid));
@@ -164,11 +172,14 @@ async function runTask(client: BmpClient, environment: string, name: string, req
       // including when the sidebar switches connection during the operation.
       journal.phase = 'finishing'; await writeJournal(journal);
       context.progress?.('Finishing verified moves and deletions…');
+      assertSession();
       const finished = await client.executeEc(plan.finish, undefined, true, undefined, 120_000);
       requireReceipt(finished, plan.receipts.finish);
     }
     context.progress?.('Verifying saved changes…');
+    assertSession();
     const snapshot: AccessSnapshot = await readAccess(client, environment, name, context);
+    assertSession();
     const mapping = verifyApplied(live.model, merged, snapshot.model);
     const result = { snapshot, mapping, operationId };
     journal.phase = 'complete'; journal.result = result; await writeJournal(journal);

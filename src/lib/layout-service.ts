@@ -42,8 +42,10 @@ export function makeLayoutIO(
   timeoutMs = LAYOUT_EC_TIMEOUT,
   signal?: AbortSignal,
 ): LayoutIO {
+  const epoch = client.auth?.sessionEpoch;
   return {
     async exec(code: string, commit = false) {
+      if (client.auth?.sessionEpoch !== epoch) return { ok: false, error: 'BMP connection changed. Reload the layout before applying.' };
       const t0 = Date.now();
       const r = await client.executeEc(code, undefined, commit, signal, timeoutMs);
       const line = `${Date.now() - t0}ms (commit=${commit}, ${code.length}ch → ${r.log?.length ?? 0}ch)`;

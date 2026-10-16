@@ -39,6 +39,47 @@ beforeEach(() => {
 });
 
 describe('BmpAuth explicit strategies', () => {
+  it('waits for an earlier logout before restoring the same profile session', async () => {
+    const { BmpAuth, commandAuthSessionKey } = await import('../bmp-auth');
+    const first = new BmpAuth('https://bmp.test/', 'user', 'secret', 'restore-order', 'stored');
+    globalThis.fetch = vi.fn(async () => new Response(directTicketBytes('user') as Uint8Array<ArrayBuffer>));
+    await first.getLoginTicket();
+    await vi.waitFor(async () => expect((await chrome.storage.session.get(commandAuthSessionKey('restore-order')))[commandAuthSessionKey('restore-order')]).toBeDefined());
+    const originalRemove = chrome.storage.session.remove.bind(chrome.storage.session);
+    let finish!: () => void;
+    vi.mocked(chrome.storage.session.remove as (keys: string | string[]) => Promise<void>).mockImplementationOnce(async keys => {
+      await new Promise<void>(resolve => { finish = resolve; });
+      await originalRemove(keys);
+    });
+    first.retire();
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+    const replacement = new BmpAuth('https://bmp.test/', 'user', 'secret', 'restore-order', 'stored');
+    const restoring = replacement.restoreFromSession();
+    // Give the restore an opportunity to read before the pending removal.
+    await new Promise(resolve => setTimeout(resolve, 0));
+    finish();
+    expect(await restoring).toBe(false);
+    expect(replacement.commandUser).toBeNull();
+  });
+
+  it('renews a stored ticket with its existing private cookie', async () => {
+    const { BmpAuth } = await import('../bmp-auth');
+    const auth = new BmpAuth('https://bmp.test/', 'user', 'secret', 'cookie-renewal', 'stored');
+    globalThis.fetch = vi.fn(async input => {
+      const url = String(input);
+      for (const [listener] of vi.mocked(chrome.webRequest.onHeadersReceived.addListener).mock.calls) {
+        listener({ url, initiator: 'chrome-extension://test',
+          responseHeaders: [{ name: 'Set-Cookie', value: 'JSESSIONID=private-session; Path=/; Secure' }],
+        } as chrome.webRequest.OnHeadersReceivedDetails);
+      }
+      return new Response(directTicketBytes('user') as Uint8Array<ArrayBuffer>);
+    });
+    await auth.getLoginTicket();
+    await auth.refreshLoginTicket();
+    const cookies = vi.mocked(chrome.declarativeNetRequest.updateSessionRules).mock.calls
+      .flatMap(([options]) => options.addRules ?? []).flatMap(rule => rule.action.requestHeaders ?? []);
+    expect(cookies).toContainEqual(expect.objectContaining({ header: 'Cookie', value: 'JSESSIONID=private-session' }));
+  });
   it.each(['portal', 'stored'] as const)('signs the exact body with the renewed %s ticket', async mode => {
     const { BmpAuth } = await import('../bmp-auth');
     const auth = new BmpAuth('https://bmp.test/', 'user', 'secret', `signed-${mode}`, mode);
@@ -124,8 +165,8 @@ describe('BmpAuth explicit strategies', () => {
     await vi.waitFor(() => expect(finishBody).toBeDefined());
     auth.logout();
     finishBody(new ArrayBuffer(1));
-    await expect(pending).resolves.toMatchObject({ kind: 'auth', message: expect.stringContaining('superseded') });
-    await expect(queued).resolves.toMatchObject({ attempts: 0, message: expect.stringContaining('superseded') });
+    await expect(pending).resolves.toMatchObject({ kind: 'cancelled' });
+    await expect(queued).resolves.toMatchObject({ kind: 'cancelled', attempts: 0 });
     expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes('/cs/command?'))).toHaveLength(1);
     expect(auth.commandUser).toBeNull();
   });
@@ -227,14 +268,29 @@ describe('BmpAuth explicit strategies', () => {
     await vi.waitFor(() => expect(finish).toBeDefined());
     old.logout();
     const replacement = new BmpAuth('https://bmp.test/', 'user', 'new-password', 'replaced', 'stored', 'new');
-    await replacement.getLoginTicket();
+    const pending = replacement.getLoginTicket();
     finish();
+    await pending;
     await vi.waitFor(async () => {
       const saved = (await chrome.storage.session.get(commandAuthSessionKey('replaced')))[commandAuthSessionKey('replaced')] as
         { stamp: { revision: string }; cookies?: unknown } | undefined;
       expect(saved?.stamp.revision).toBe('new');
       expect(saved?.cookies).toBeDefined();
     });
+  });
+
+  it('does not let repeated retirement erase a replacement session', async () => {
+    const { BmpAuth, commandAuthSessionKey } = await import('../bmp-auth');
+    const old = new BmpAuth('https://bmp.test/', 'user', 'secret', 'retire-once', 'stored', 'old');
+    old.retire();
+    globalThis.fetch = vi.fn(async () => new Response(directTicketBytes('user') as Uint8Array<ArrayBuffer>));
+    const replacement = new BmpAuth('https://bmp.test/', 'user', 'secret', 'retire-once', 'stored', 'new');
+    await replacement.getLoginTicket();
+    await vi.waitFor(async () => expect((await chrome.storage.session.get(commandAuthSessionKey('retire-once')))[commandAuthSessionKey('retire-once')]).toBeDefined());
+    vi.mocked(chrome.storage.session.remove).mockClear();
+    old.retire(); old.logout();
+    await Promise.resolve();
+    expect(chrome.storage.session.remove).not.toHaveBeenCalled();
   });
 
   it('does not restore an old ticket-only stored login envelope', async () => {

@@ -39,6 +39,28 @@ beforeEach(() => {
 });
 
 describe('action activity logging', () => {
+  it.each(['EC_EXECUTE', 'SAVE_PROPERTY'] as const)('keeps late %s outcomes attached to the original workspace', async type => {
+    const ctx = makeContext({ ok: true });
+    ctx.settings = { activeProfileId: 'old' };
+    ctx.client.serverUrl = 'https://old.test/';
+    ctx.client.commandUser = 'original-user';
+    ctx.client.authMode = 'stored';
+    let finish!: (result: unknown) => void;
+    const operation = type === 'EC_EXECUTE' ? ctx.client.executeEc : ctx.client.saveProperty;
+    operation.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const respond = vi.fn();
+    const pending = (await handler(type))({ type, code: '1', rid: 'rid-1', objectRid: 'rid-1',
+      property: 'name', value: 'Example', environment: 'old@https://old.test/' } as any, respond, { isOneShot: true });
+    ctx.settings.activeProfileId = 'new';
+    ctx.client = { serverUrl: 'https://new.test/' };
+    finish({ ok: true });
+    await pending;
+    expect(ctx.scriptHistory.record).not.toHaveBeenCalled();
+    expect(ctx.history.record).not.toHaveBeenCalled();
+    expect(invalidateRid).not.toHaveBeenCalled();
+    expect(ctx.logActivity).toHaveBeenCalledWith('success', expect.any(String), undefined,
+      expect.objectContaining({ profileId: 'old', commandActor: 'original-user', commandAuthSource: 'stored-login' }));
+  });
   it('rejects an editor command loaded from a different BMP environment', async () => {
     const ctx = makeContext({ ok: true });
     ctx.settings = { activeProfileId: 'current' };

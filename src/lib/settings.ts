@@ -5,7 +5,7 @@
 import type { InspectorSettings, ServerProfile } from './types';
 import { getCtx } from './sw-context';
 import { BmpClient } from './bmp-client';
-import { commandAuthSessionKey, legacySessionTokenKey } from './bmp-auth';
+import { clearCommandAuthSession } from './bmp-auth';
 import { bindConnectionClient, ensureConnectionMonitoring, markPortalSignedOut, normalizeUrl, resetConnectionState, pushConnectionState, restoreConnectionEvidence, runAuthTest } from './connection';
 import { incrementGeneration } from './enrichment';
 import { clearAllContextRids } from './context-rid';
@@ -250,12 +250,11 @@ function getOrCreateClient(profile: ServerProfile): BmpClient {
   const existing = clientPool.get(profile.id);
   // Reuse only when all command-auth material still matches. Credential
   // changes must retire both direct tickets and borrowed portal token chains.
-  if (existing && existing.serverUrl === bmpUrl && existing.username === profile.bmpUser
-    && existing.authMode === authMode && existing.passwordMatches(profile.bmpPass)) {
+  if (existing && clientMatchesProfile(existing, profile)) {
     return existing;
   }
   if (existing) {
-    existing.logout();
+    existing.retire();
     clientPool.delete(profile.id);
   }
   const client = new BmpClient(
@@ -270,10 +269,16 @@ function getOrCreateClient(profile: ServerProfile): BmpClient {
   return client;
 }
 
+function clientMatchesProfile(client: BmpClient, profile: ServerProfile): boolean {
+  return client.serverUrl === normalizeUrl(profile.bmpUrl) && client.username === profile.bmpUser
+    && client.authMode === (profile.commandAuthMode ?? 'portal') && client.passwordMatches(profile.bmpPass)
+    && client.authRevision === (profile.commandAuthRevision ?? '');
+}
+
 /** Evict a profile from the pool (called when the profile is deleted). */
 export function evictPooledClient(profileId: string): void {
   const c = clientPool.get(profileId);
-  if (c) { c.logout(); clientPool.delete(profileId); }
+  if (c) { c.retire(); clientPool.delete(profileId); }
 }
 
 /** When a BMP session cookie is removed (the user logged out, or it expired),
@@ -302,8 +307,9 @@ export async function handleSessionCookieRemoved(info: chrome.cookies.CookieChan
   const ctx = getCtx();
   await ctx.settingsReady;
 
-  for (const p of ctx.settings.profiles) {
+  for (const p of ctx.settings.profiles.map(profile => ({ ...profile }))) {
     const client = clientPool.get(p.id);
+    const epoch = client?.auth.sessionEpoch;
     const borrowed = (p.commandAuthMode ?? 'portal') === 'portal';
 
     let stillPresent: boolean;
@@ -316,16 +322,20 @@ export async function handleSessionCookieRemoved(info: chrome.cookies.CookieChan
       continue;
     }
     if (stillPresent) continue;  // the cookie that changed wasn't this profile's
+    // Cookie observation is asynchronous. It belongs only to the profile and
+    // command session captured before that read, not a replacement account.
+    const current = ctx.settings.profiles.find(profile => profile.id === p.id);
+    if (!current || clientPool.get(p.id) !== client || client?.auth.sessionEpoch !== epoch
+      || (['bmpUrl', 'bmpUser', 'bmpPass', 'commandAuthMode', 'commandAuthRevision'] as const)
+        .some(field => current[field] !== p[field])) continue;
 
     if (p.id === ctx.settings.activeProfileId && !borrowed) {
       markPortalSignedOut();
     }
     if (!borrowed) continue;
 
-    client?.logout();
-    // Clear the persisted chain even when no client is pooled (logout already
-    // does this for a pooled client; this covers a warm-but-unpooled profile).
-    chrome.storage.session.remove([commandAuthSessionKey(p.id), legacySessionTokenKey(p.id)]).catch(e => log.swallow('settings:clearTeardownToken', e));
+    if (client) client.logout();
+    else void clearCommandAuthSession(p.id);
     log.info('settings:sessionCookieGone', `BMP session ended for ${p.label}; cleared the borrowed token`);
     if (p.id === ctx.settings.activeProfileId) {
       resetConnectionState();
@@ -342,6 +352,9 @@ async function rebuildClientInternal(clearCache: boolean, requestedProfileId: st
   const profile = ctx.settings.profiles.find(p => p.id === requestedProfileId);
   const previousClient = ctx.client;
   previousClient?.setTransportOutcomeObserver(null);
+  // ObjectCache switches its backing profile in place. A warm inactive client
+  // must resolve identities from its own server, never the next profile's cache.
+  if (previousClient) previousClient.cache = null;
   ctx.client = null;
 
   // A URL is the only hard requirement now — a `session` profile carries no
@@ -365,6 +378,8 @@ async function rebuildClientInternal(clearCache: boolean, requestedProfileId: st
   // Settings may have changed while storage backends were switching. Do not
   // publish or bind the stale client; the newer queued rebuild owns commit.
   if (ctx.settings.activeProfileId !== requestedProfileId) return;
+  const currentProfile = ctx.settings.profiles.find(p => p.id === requestedProfileId);
+  if (nextClient && (!currentProfile || !clientMatchesProfile(nextClient, currentProfile))) return;
   ctx.client = nextClient;
   if (nextClient && profile) {
     nextClient.cache = ctx.cache;

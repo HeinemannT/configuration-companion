@@ -28,6 +28,14 @@ function port(reads: Array<StoredIdentity | null> = [before, after]): IdentitySa
 }
 
 describe('identity save workflow', () => {
+  it('does not write after the session changes during its initial read', async () => {
+    const bmp = port();
+    const guard = () => { throw new Error('Session changed'); };
+    await expect(saveIdentity(bmp, '42', requested, guard)).rejects.toThrow('Session changed');
+    expect(bmp.lookupIdentity).toHaveBeenCalledTimes(1);
+    expect(bmp.applyIdentityChanges).not.toHaveBeenCalled();
+  });
+
   it('normalizes input, writes only changed fields, and verifies with a fresh read', async () => {
     const bmp = port();
 
@@ -132,6 +140,16 @@ describe('identity save workflow', () => {
       ok: false,
       error: 'BMP may have saved some identity values, but the verification read failed. Reload the object before retrying.',
     });
+  });
+
+  it('reports an uncertain save when the account changes after dispatch without issuing a new read', async () => {
+    const bmp = port();
+    const guard = vi.fn().mockImplementationOnce(() => {}).mockImplementation(() => { throw new Error('Session changed'); });
+    await expect(saveIdentity(bmp, '42', requested, guard)).resolves.toMatchObject({
+      ok: false, error: expect.stringContaining('BMP may have saved'),
+    });
+    expect(bmp.applyIdentityChanges).toHaveBeenCalledTimes(1);
+    expect(bmp.lookupIdentity).toHaveBeenCalledTimes(1);
   });
 
   it('does not manage or verify a template ID when the field is omitted', async () => {

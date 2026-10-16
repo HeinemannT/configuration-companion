@@ -95,6 +95,14 @@ async function createHarness(profiles = makeProfiles(), activeId = 'sbx'): Promi
 }
 
 describe('matchProfile — longest-prefix winner', () => {
+  it('retires a pooled client when its authentication revision changes', async () => {
+    const h = await createHarness();
+    const old = h.ctx.client;
+    h.ctx.settings.profiles[0].commandAuthRevision = 'new-account-revision';
+    await h.settings.rebuildClient();
+    expect(h.ctx.client).not.toBe(old);
+    await expect(old.auth.getLoginTicket()).rejects.toThrow(/retired|replaced/i);
+  });
   it('matches each environment by hostname', async () => {
     const h = await createHarness();
     expect(h.settings.matchProfile('https://sbx.x.de/Steadfast/?rid=1', h.ctx.settings.profiles)?.id).toBe('sbx');
@@ -267,6 +275,23 @@ describe('autoDetectProfile — dedupe + cross-env switch', () => {
 });
 
 describe('client pool — reuse warm clients across profile swaps', () => {
+  it('does not publish obsolete credentials when the same profile changes during storage switching', async () => {
+    const h = await createHarness();
+    const old = h.ctx.client;
+    let release!: () => void;
+    h.ctx.history.switchProfile = vi.fn(() => new Promise<void>(resolve => { release = resolve; }));
+    const pending = h.settings.rebuildClient(false);
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+    h.ctx.settings.profiles[0].commandAuthRevision = 'changed';
+    release();
+    await pending;
+    expect(h.ctx.client).toBeNull();
+    h.ctx.history.switchProfile = vi.fn(async () => {});
+    await h.settings.rebuildClient(false);
+    expect(h.ctx.client).not.toBe(old);
+    expect(h.ctx.client.authRevision).toBe('changed');
+  });
+
   it('reuses the same BmpClient when switching back to a profile', async () => {
     const h = await createHarness(makeProfiles(), 'sbx');
     const sbxClient = h.ctx.client;
@@ -276,12 +301,16 @@ describe('client pool — reuse warm clients across profile swaps', () => {
     await h.settings.autoDetectProfile('https://dev.x.de/Steadfast/?rid=1');
     const devClient = h.ctx.client;
     expect(devClient).not.toBe(sbxClient);
+    expect(sbxClient._cache).toBeNull();
+    expect(devClient._cache).toBe(h.ctx.cache);
 
     // dev → sbx (manual override on dev so autoDetect doesn't bounce back)
     h.settings.setManualOverride('dev');
     h.ctx.settings.activeProfileId = 'sbx';
     await h.settings.rebuildClient(false);
     expect(h.ctx.client).toBe(sbxClient); // POOL HIT
+    expect(sbxClient._cache).toBe(h.ctx.cache);
+    expect(devClient._cache).toBeNull();
   });
 
   it('evicts pooled client when URL changes under the same id', async () => {

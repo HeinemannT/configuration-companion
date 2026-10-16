@@ -140,6 +140,8 @@ async function createHarness(): Promise<TestHarness> {
 
   // Keep the auth surface complete for any client method that reaches transport.
   (client as any).auth = {
+    sessionEpoch: 0,
+    assertAuthEpoch: vi.fn(),
     ensureAuth: vi.fn(async () => 'mock-jwt'),
     login: vi.fn(async () => 'mock-jwt'),
     logout: vi.fn(),

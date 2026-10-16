@@ -50,7 +50,7 @@ describe('SAVE_IDENTITY handler adapter', () => {
 
     await h.handler(message as any, respond, { isOneShot: true });
 
-    expect(mocks.saveIdentity).toHaveBeenCalledWith(h.ctx.client, message.rid, message);
+    expect(mocks.saveIdentity).toHaveBeenCalledWith(h.ctx.client, message.rid, message, expect.any(Function));
     expect(respond).toHaveBeenCalledWith({
       type: 'SAVE_IDENTITY_RESULT',
       ok: true,
@@ -102,7 +102,6 @@ describe('SAVE_IDENTITY handler adapter', () => {
       error: ENVIRONMENT_CHANGED_ERROR,
     });
   });
-
   it('rejects a disconnected save without entering the workflow', async () => {
     const h = await harness(null);
     const respond = vi.fn();

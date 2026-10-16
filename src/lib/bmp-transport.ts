@@ -61,6 +61,27 @@ interface RequestMeta {
 }
 
 const TRANSIENT_HTTP = new Set([502, 503, 504]);
+const REPLAYABLE_COMMANDS = new Set([
+  'com.corporater.bmp.dto.command.repository.IntegrationGetObjectCommand',
+  'com.corporater.bmp.dto.command.repository.GetPropertiesByIdCommand',
+  'com.corporater.bmp.dto.command.tree.TreeItemCommand',
+  'com.corporater.bmp.dto.command.type.GetTypeFieldsCommand',
+  'com.corporater.bmp.dto.command.type.LoadTypeConfigCommand',
+  'com.corporater.bmp.dto.command.access.AccessTraceCommand',
+]);
+
+/** Caller intent can prohibit replay, but cannot make a mutation replayable.
+ * Unknown commands fail closed until their read semantics are established. */
+export function commandReplayIntent(commands: readonly unknown[], intent: CommandIntent): CommandIntent {
+  if (intent === 'write' || commands.length === 0) return 'write';
+  return commands.every(command => {
+    if (!command || typeof command !== 'object') return false;
+    const value = command as { $type?: string; transactional?: unknown };
+    return value.$type === 'com.corporater.bmp.dto.command.extended.ExtendedExecuteCommand'
+      ? value.transactional === false
+      : typeof value.$type === 'string' && REPLAYABLE_COMMANDS.has(value.$type);
+  }) ? 'read' : 'write';
+}
 const isHtml = (response: Response): boolean => /^(?:text\/html|application\/xhtml\+xml)(?:\s*;|$)/i
   .test(response.headers.get('Content-Type') ?? '');
 
@@ -159,9 +180,13 @@ export class BmpTransport {
     sessionEpoch: number,
     signal?: AbortSignal,
   ): Promise<RequestResult> {
-    if (signal?.aborted) {
-      throw new BmpTransportError('BMP request cancelled', 'cancelled', 0);
-    }
+    const assertCurrent = (attempts: number) => {
+      if (signal?.aborted) throw new BmpTransportError('BMP request cancelled', 'cancelled', attempts);
+      if (sessionEpoch !== this.auth.sessionEpoch) {
+        throw new BmpTransportError('BMP connection changed. The previous request was cancelled.', 'cancelled', attempts);
+      }
+    };
+    assertCurrent(0);
 
     const deadline = Date.now() + timeout;
     const maxAttempts = intent === 'read' ? 2 : 1;
@@ -170,13 +195,12 @@ export class BmpTransport {
     try {
       ticket = await this.auth.getLoginTicket(sessionEpoch);
     } catch (cause) {
+      assertCurrent(0);
       throw this.classifyError(cause, 0, signal, 'Could not obtain a BMP login ticket');
     }
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      if (signal?.aborted) {
-        throw new BmpTransportError('BMP request cancelled', 'cancelled', attempt - 1);
-      }
+      assertCurrent(attempt - 1);
       const remaining = deadline - Date.now();
       if (remaining <= 0) {
         throw new BmpTransportError(`BMP at ${this.bmpUrl} timed out`, 'timeout', attempt - 1);
@@ -184,6 +208,7 @@ export class BmpTransport {
 
       try {
         const { response: res, buffer } = await this.postCommand(body, ticket, remaining, signal);
+        assertCurrent(attempt);
 
         if (res.type === 'opaqueredirect' || res.redirected || (res.status >= 300 && res.status < 400)) {
           const message = 'BMP redirected /cs/command instead of accepting command authentication. Check the sign-in gateway, then reconnect.';
@@ -203,7 +228,7 @@ export class BmpTransport {
             this.auth.rejectCommandAuthentication(message);
             throw new BmpTransportError(message, 'auth', attempt, 401);
           }
-          ticket = await this.auth.refreshLoginTicket();
+          ticket = await this.auth.refreshLoginTicket(sessionEpoch);
           renewedTicket = true;
           continue;
         }
@@ -230,6 +255,7 @@ export class BmpTransport {
 
         return { buffer: buffer!, attempts: attempt };
       } catch (cause) {
+        assertCurrent(attempt);
         const error = cause instanceof BmpTransportError
           ? cause
           : this.classifyError(cause, attempt, signal);
@@ -310,7 +336,7 @@ export class BmpTransport {
     return this.sendRequest(
       serializeCommands(commands),
       AUTH_TIMEOUT,
-      intent,
+      commandReplayIntent(commands, intent),
       signal,
       { operation: commandOperation(commands), commandCount: commands.length },
     );
@@ -325,6 +351,7 @@ export class BmpTransport {
     timeoutMs?: number,
     feature?: BmpTransportMetrics['feature'],
   ): Promise<any[]> {
+    intent = commandReplayIntent([command], intent);
     const buffer = await this.sendRequest(
       serializeCommands([command]),
       timeoutMs ?? EC_TIMEOUT,

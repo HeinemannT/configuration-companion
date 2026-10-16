@@ -34,6 +34,8 @@ async function createClientHarness(): Promise<CodegenHarness> {
     formatError: (e: unknown) => e instanceof Error ? e.message : String(e),
   };
   (client as any).auth = {
+    sessionEpoch: 0,
+    assertAuthEpoch: vi.fn(),
     ensureAuth: vi.fn(async () => 'mock-jwt'),
     login: vi.fn(async () => 'mock-jwt'),
     logout: vi.fn(),

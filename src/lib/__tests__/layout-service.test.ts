@@ -7,6 +7,16 @@ const stubClient = (impl: (code: string, rid: string | undefined, commit: boolea
   ({ executeEc: vi.fn(async (code: string, rid?: string, commit = false) => impl(code, rid, commit)) } as unknown as BmpClient);
 
 describe('layout-service.makeLayoutIO', () => {
+  it('cannot continue a prepared layout under a replacement session', async () => {
+    const auth = { sessionEpoch: 0 };
+    const client = Object.assign(stubClient(() => ({ ok: true })), { auth });
+    const io = makeLayoutIO(client);
+    await io.exec('preview');
+    auth.sessionEpoch++;
+    expect(await io.exec('apply', true)).toMatchObject({ ok: false, error: expect.stringContaining('connection changed') });
+    expect(client.executeEc).toHaveBeenCalledTimes(1);
+  });
+
   it('passes commit through to executeEc as the transactional flag', async () => {
     const seen: boolean[] = [];
     const io = makeLayoutIO(stubClient((_c, _r, commit) => { seen.push(commit); return { ok: true, log: 'ok' }; }));

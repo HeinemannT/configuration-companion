@@ -41,6 +41,15 @@ function setup() {
   mocks.read.mockResolvedValue(live);
   return { live, draft, client, executeEc, request: { operation: 'apply' as const, baseline: live.model, draft } };
 }
+
+it('does not apply after logout during preview even when the profile is unchanged', async () => {
+  const { client, executeEc, request } = setup();
+  const auth = { sessionEpoch: 0 };
+  Object.assign(client, { auth });
+  executeEc.mockImplementation(async code => { auth.sessionEpoch++; return writeResult(code); });
+  await expect(handleAccessRequest(client, environment, 'Test', request, () => {})).rejects.toThrow('connection changed');
+  expect(executeEc).toHaveBeenCalledTimes(1);
+});
 it('does not write when the connection changes during the fresh read', async () => {
   const { client, executeEc, request } = setup(); let switched = false;
   mocks.read.mockImplementation(async () => { switched = true; return snapshot(); });
@@ -143,4 +152,31 @@ it('never deletes the old parent if the retained child move did not persist', as
   await expect(handleAccessRequest(client, environment, 'Test', { operation: 'apply', baseline: live.model, draft }, () => {})).rejects.toThrow('different values');
   expect(executeEc).toHaveBeenCalledTimes(2);
   expect(storage[recoveryKey(environment)]).toBeTruthy();
+});
+
+it('does not finish a staged apply under a new session, and retains recovery', async () => {
+  const { client, executeEc, live } = setup();
+  const auth = { sessionEpoch: 0 };
+  Object.assign(client, { auth });
+  live.model.roles.push({ rid: '4', id: 'child', name: 'Child', parent: '3' });
+  const draft = structuredClone(live.model); draft.roles.shift(); draft.roles[0].parent = '';
+  const staged = structuredClone(live); staged.model.roles[1].parent = '';
+  mocks.read.mockResolvedValueOnce(live).mockImplementationOnce(async () => { auth.sessionEpoch++; return staged; });
+  await expect(handleAccessRequest(client, environment, 'Test', { operation: 'apply', baseline: live.model, draft }, () => {})).rejects.toThrow('connection changed');
+  expect(executeEc.mock.calls.map(args => args[2])).toEqual([false, true]);
+  expect(storage[recoveryKey(environment)]).toBeTruthy();
+});
+
+it('retains reconciliation when the session changes after commit during final verification', async () => {
+  const { client, executeEc, request, live, draft } = setup();
+  const auth = { sessionEpoch: 0 };
+  Object.assign(client, { auth });
+  mocks.read.mockResolvedValueOnce(live).mockImplementationOnce(async () => {
+    auth.sessionEpoch++;
+    return { ...live, model: draft };
+  });
+  await expect(handleAccessRequest(client, environment, 'Test', request, () => {})).rejects.toThrow('connection changed');
+  expect(executeEc.mock.calls.map(args => args[2])).toEqual([false, true]);
+  expect(storage[recoveryKey(environment)]).toBeTruthy();
+  expect([...journals.values()].some(journal => journal.phase === 'complete')).toBe(false);
 });

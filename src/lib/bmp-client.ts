@@ -340,6 +340,7 @@ export class BmpClient {
   get serverUrl(): string { return this.bmpUrl; }
   get username(): string { return this.auth.username; }
   get authMode(): CommandAuthMode { return this.auth.authMode; }
+  get authRevision(): string { return this.auth.revision; }
   get commandUser(): string | null { return this.auth.commandUser; }
   get portalActor(): string | null { return this.auth.portalActor; }
   bindPortalActor(actor: string): void { this.auth.bindPortalActor(actor); }
@@ -348,7 +349,7 @@ export class BmpClient {
     this.transport.setOutcomeObserver(observer);
   }
   /** Inject enrichment cache for resolveRef lookups. */
-  set cache(c: IdentityCache) { this._cache = c; }
+  set cache(c: IdentityCache | null) { this._cache = c; }
 
   /** Apply version flags — called once when BMP version is detected. */
   applyVersionFlags(version: string) {
@@ -396,7 +397,8 @@ export class BmpClient {
   }
 
   absorbAuth(other: BmpClient) { this.auth.absorbAuth(other.auth); }
-  logout() { this.auth.logout(); }
+  logout() { this.resetCapabilities(); this.auth.logout(); }
+  retire() { this.resetCapabilities(); this.auth.retire(); }
   retryAuthentication() {
     this.lookupProbeFailure = null;
     return this.auth.retryAuthentication();
@@ -408,9 +410,11 @@ export class BmpClient {
    *  On 5.6.3+ (lookup available): returns "lookup(rid)".
    *  On pre-5.6.3: resolves business ID via cache or native TreeItemCommand. */
   async resolveRef(rid: string, signal?: AbortSignal): Promise<string> {
+    const epoch = this.auth.sessionEpoch;
     validateRid(rid);
     signal?.throwIfAborted();
     const supportsLookup = await this.ensureLookupSupport();
+    this.auth.assertAuthEpoch(epoch);
     signal?.throwIfAborted();
     if (supportsLookup) return `lookup(${rid})`;
 
@@ -663,12 +667,14 @@ export class BmpClient {
     timeoutMs?: number,
     feature?: import('./bmp-transport').BmpTransportMetrics['feature'],
   ): Promise<EcResult> {
+    const epoch = this.auth.sessionEpoch;
     try {
       const cmd = makeExtendedExecuteCommand(code, {
         objectRid: objectRid ? BigInt(objectRid) : undefined,
         orgRid: objectRid ? await this.resolveOrgRid(objectRid, signal) : undefined,
         transactional,
       });
+      this.auth.assertAuthEpoch(epoch);
       const objects = await this.transport.sendStreamingCommand(
         cmd,
         transactional ? 'write' : 'read',
@@ -758,9 +764,11 @@ export class BmpClient {
 
   /** Save a code property via EC */
   async saveCodeViaEc(rid: string, property: string, code: string): Promise<{ ok: boolean; error?: string }> {
+    const epoch = this.auth.sessionEpoch;
     validateEcIdentifier(property);
     const escaped = formatEcLiteral(code);
     const ref = await this.resolveRef(rid);
+    this.auth.assertAuthEpoch(epoch);
     const ec = `_o := ${ref}\n_o.change(${property} := "${escaped}")`;
     const result = await this.executeEc(ec, undefined, true);
     if (!result.ok) {
@@ -838,6 +846,7 @@ export class BmpClient {
     changes: Record<string, string | number | boolean>,
     resetProps: string[] = [],
   ): Promise<{ ok: boolean; error?: string }> {
+    const epoch = this.auth.sessionEpoch;
     const props = Object.keys(changes);
     if (props.length === 0 && resetProps.length === 0) return { ok: true };
     if (target === 'template' && resetProps.length > 0) {
@@ -893,6 +902,7 @@ export class BmpClient {
       if (assignments.length > 0) lines.push(`_o.change(${assignments.join(', ')})`);
       for (const prop of resetProps) lines.push(`_o.reset(${prop})`);
     }
+    this.auth.assertAuthEpoch(epoch);
     const result = await this.executeEc(lines.join('\n'), undefined, true);
     if (!result.ok) return { ok: false, error: result.error ?? result.log ?? 'Change failed' };
     if (result.log?.includes('no template')) return { ok: false, error: 'Object has no template' };
@@ -912,6 +922,7 @@ export class BmpClient {
     rid: string,
     changes: IdentityChangeSet,
   ): Promise<{ ok: boolean; writeAttempted: boolean; error?: string }> {
+    const epoch = this.auth.sessionEpoch;
     const changesTemplate = Object.hasOwn(changes, 'templateBusinessId');
     const instanceAssignments: string[] = [];
 
@@ -931,6 +942,7 @@ export class BmpClient {
     }
 
     const ref = await this.resolveRef(rid);
+    this.auth.assertAuthEpoch(epoch);
     const lines = [`_o := ${ref}`];
     const instanceChange = instanceAssignments.length > 0
       ? `_o.change(${instanceAssignments.join(', ')})`
@@ -965,6 +977,7 @@ export class BmpClient {
       return { ok: false, writeAttempted: false, error: 'Could not resolve the linked template.' };
     }
 
+    this.auth.assertAuthEpoch(epoch);
     const result = await this.executeEc(script, undefined, true);
     if (!result.ok || result.hasWarning) {
       return {

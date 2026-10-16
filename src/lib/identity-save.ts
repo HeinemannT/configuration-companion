@@ -29,12 +29,14 @@ export async function saveIdentity(
   port: IdentitySavePort,
   rid: string,
   input: IdentityEditInput,
+  assertSession: () => void = () => {},
 ): Promise<IdentitySaveResult> {
   const validation = normalizeAndValidateIdentity(input);
   if (!validation.ok) return validation;
   const { businessId, name, templateBusinessId } = validation.value;
 
   const before = await port.lookupIdentity(rid);
+  assertSession();
   if (!before) return { ok: false, error: 'Could not read the current identity.' };
 
   const changes: IdentityChangeSet = {};
@@ -51,7 +53,16 @@ export async function saveIdentity(
 
   // Old BMP versions resolve objects through cached business IDs. Once an ID changes that reference is
   // stale, so any possible write must bypass it before deciding what actually persisted.
-  const stored = await port.lookupIdentity(rid, saved.writeAttempted ? { fresh: true } : undefined);
+  let stored: StoredIdentity | null = null;
+  try {
+    assertSession();
+    stored = await port.lookupIdentity(rid, saved.writeAttempted ? { fresh: true } : undefined);
+    assertSession();
+  } catch {
+    // The write may already have landed. A lost connection or changed account
+    // prevents verification; neither is evidence that repeating it is safe.
+    stored = null;
+  }
   if (!stored) {
     return {
       ok: false,

@@ -12,11 +12,31 @@ import type { ActivityMeta } from '../types';
 import { activityObject, activityObjectLabel, ecActivityDetail } from '../activity-format';
 import { saveIdentity } from '../identity-save';
 import { ENVIRONMENT_CHANGED_ERROR, environmentMatches, environmentToken } from '../environment';
+import { currentCommandActor } from '../command-actor';
 
 // Props saved as EC string literals (saveCodeViaEc). SCRIPT_PROPS plus the
 // TextElement HTML bodies — their typed binary save path rejects the value
 // ("argument type mismatch"); `_o.change(text := "…")` is the verified route.
 const SCRIPT_PROPS_SET = new Set<string>([...SCRIPT_PROPS, 'text', 'longText']);
+
+function commandOrigin(ctx: ReturnType<typeof getCtx>) {
+  const client = ctx.client!;
+  const profileId = ctx.settings?.activeProfileId;
+  const epoch = client.auth?.sessionEpoch;
+  const actor = currentCommandActor();
+  return {
+    meta: {
+      profileId,
+      commandActor: client.commandUser ?? actor?.user,
+      commandAuthSource: client.authMode === 'stored' ? 'stored-login' as const : 'portal-session' as const,
+    },
+    isCurrent: () => ctx.client === client && ctx.settings?.activeProfileId === profileId
+      && client.auth?.sessionEpoch === epoch,
+    assertSession: () => {
+      if (client.auth?.sessionEpoch !== epoch) throw new Error('BMP connection changed. Reload before saving.');
+    },
+  };
+}
 
 register('EC_EXECUTE', async (msg, respond) => {
   const ctx = getCtx();
@@ -26,17 +46,18 @@ register('EC_EXECUTE', async (msg, respond) => {
     return;
   }
   const client = ctx.client;
+  const origin = commandOrigin(ctx);
+  const cached = msg.objectRid ? ctx.cache.get(msg.objectRid) : undefined;
   const startTime = Date.now();
   try {
     const result = await client.executeEc(msg.code, msg.objectRid, msg.transactional ?? false);
     const durationMs = Date.now() - startTime;
     respond({ type: 'EC_RESULT', ...result, durationMs });
-    ctx.scriptHistory.record({
+    if (origin.isCurrent()) ctx.scriptHistory.record({
       code: msg.code, timestamp: Date.now(), ok: result.ok,
       mode: msg.transactional ? 'execute' : 'preview', durationMs,
     });
-    if (msg.objectRid && result.ok) {
-      const cached = ctx.cache.get(msg.objectRid);
+    if (origin.isCurrent() && msg.objectRid && result.ok) {
       ctx.history.record({
         rid: msg.objectRid,
         name: cached?.name,
@@ -50,11 +71,12 @@ register('EC_EXECUTE', async (msg, respond) => {
     // Activity log: EC runs are first-class actions worth surfacing in the Log
     // tab — previously only enrichment / connection / detection touched it.
     const mode = msg.transactional ? 'execute' : 'preview';
-    const object = msg.objectRid ? activityObject(msg.objectRid, ctx.cache.get(msg.objectRid)) : undefined;
+    const object = msg.objectRid ? activityObject(msg.objectRid, cached) : undefined;
     const target = object ? activityObjectLabel(object, msg.objectRid!) : 'standalone code';
     const property = msg.property ? ` · ${msg.property}` : '';
     const verb = msg.transactional ? 'Executed' : 'Previewed';
     const meta: ActivityMeta = {
+      ...origin.meta,
       category: 'execution',
       action: mode,
       ...(object ? { object } : {}),
@@ -69,18 +91,16 @@ register('EC_EXECUTE', async (msg, respond) => {
   } catch (e) {
     const errMsg = e instanceof Error ? e.message : String(e);
     respond({ type: 'EC_RESULT', ok: false, error: errorMessage(e) });
-    const object = msg.objectRid ? activityObject(msg.objectRid, ctx.cache.get(msg.objectRid)) : undefined;
+    const object = msg.objectRid ? activityObject(msg.objectRid, cached) : undefined;
     ctx.logActivity('error', `EC request failed on ${activityObjectLabel(object, msg.objectRid ?? 'standalone code')}`, errMsg, {
+      ...origin.meta,
       category: 'execution',
       action: msg.transactional ? 'execute' : 'preview',
       ...(object ? { object } : {}),
     });
-    // Thrown EC (vs result.ok=false) means BMP never even saw the
-    // request — usually auth/network. Editor surfaces ok=false inline,
-    // but a thrown error can race the SW unload and leave the editor
-    // hanging. Toast guarantees user feedback regardless of which
-    // surface initiated the run.
-    ctx.toast(`EC threw: ${errMsg}`, 'error');
+    // A transport failure can occur after BMP received a write. Do not imply
+    // rollback, or show this old workspace's toast over the new workspace.
+    if (origin.isCurrent()) ctx.toast(`EC request failed: ${errMsg}`, 'error');
   }
 });
 
@@ -92,6 +112,8 @@ register('SAVE_PROPERTY', async (msg, respond) => {
     return;
   }
   const client = ctx.client;
+  const origin = commandOrigin(ctx);
+  const object = activityObject(msg.rid, ctx.cache.get(msg.rid));
   const isCodeProp = SCRIPT_PROPS_SET.has(msg.property);
   const startTime = Date.now();
   try {
@@ -104,9 +126,9 @@ register('SAVE_PROPERTY', async (msg, respond) => {
     // the response was lost between SW and the editor (MV3 SW unload race).
     log.debug('handler:save', `SAVE_PROPERTY ${msg.property} on ${msg.rid}: ok=${result.ok}, ${durationMs}ms${result.error ? `, error=${result.error}` : ''}`);
     respond({ type: 'SAVE_RESULT', ...result });
-    const object = activityObject(msg.rid, ctx.cache.get(msg.rid));
     const label = activityObjectLabel(object, msg.rid);
     const meta: ActivityMeta = {
+      ...origin.meta,
       category: 'change',
       action: 'save-property',
       object,
@@ -117,15 +139,15 @@ register('SAVE_PROPERTY', async (msg, respond) => {
       // Drop the cached enrichment + re-fetch so badges / side panel
       // pick up any name/type/businessId change immediately. Fire-and-
       // forget; this doesn't block the editor's "saved" UI.
-      invalidateRid(msg.rid).catch(e => log.swallow('handler:save:invalidate', e));
+      if (origin.isCurrent()) invalidateRid(msg.rid).catch(e => log.swallow('handler:save:invalidate', e));
     } else {
       ctx.logActivity('error', `Save failed for ${msg.property} on ${label} (${durationMs}ms)`, result.error, meta);
     }
   } catch (e) {
     const errMsg = e instanceof Error ? e.message : String(e);
     respond({ type: 'SAVE_RESULT', ok: false, error: errorMessage(e) });
-    const object = activityObject(msg.rid, ctx.cache.get(msg.rid));
     ctx.logActivity('error', `Save request failed for ${msg.property} on ${activityObjectLabel(object, msg.rid)}`, errMsg, {
+      ...origin.meta,
       category: 'change',
       action: 'save-property',
       object,
@@ -133,7 +155,7 @@ register('SAVE_PROPERTY', async (msg, respond) => {
     // Thrown save means SW lost track before BMP responded. Editor
     // window may already be torn down — surface via toast so the user
     // doesn't think the save silently succeeded.
-    ctx.toast(`Save failed: ${errMsg}`, 'error');
+    if (origin.isCurrent()) ctx.toast(`Save failed: ${errMsg}`, 'error');
   }
 });
 
@@ -148,18 +170,20 @@ register('SAVE_IDENTITY', async (msg, respond) => {
     return;
   }
   const client = ctx.client;
+  const origin = commandOrigin(ctx);
+  const object = activityObject(msg.rid, ctx.cache.get(msg.rid));
 
   const startTime = Date.now();
   try {
-    const result = await saveIdentity(client, msg.rid, msg);
+    const result = await saveIdentity(client, msg.rid, msg, origin.assertSession);
     if (!result.ok) {
       respond({ type: 'SAVE_IDENTITY_RESULT', ...result });
       return;
     }
 
     const durationMs = Date.now() - startTime;
-    const object = activityObject(msg.rid, ctx.cache.get(msg.rid));
     ctx.logActivity('success', `Saved identity on ${activityObjectLabel(object, msg.rid)} (${durationMs}ms)`, undefined, {
+      ...origin.meta,
       category: 'change',
       action: 'save-property',
       object,
@@ -169,14 +193,15 @@ register('SAVE_IDENTITY', async (msg, respond) => {
     // The identity workflow already verified the write. Refreshing the
     // shared cache/badges is best-effort and must not turn a verified save
     // into a UI error if a later enrichment broadcast happens to fail.
-    invalidateRid(msg.rid).catch(e => log.swallow('handler:saveIdentity:invalidate', e));
+    if (origin.isCurrent()) invalidateRid(msg.rid).catch(e => log.swallow('handler:saveIdentity:invalidate', e));
   } catch (e) {
     const error = errorMessage(e);
     respond({ type: 'SAVE_IDENTITY_RESULT', ok: false, error });
     ctx.logActivity('error', `Identity save failed on ${msg.rid}`, error, {
+      ...origin.meta,
       category: 'change',
       action: 'save-property',
-      object: activityObject(msg.rid, ctx.cache.get(msg.rid)),
+      object,
     });
   }
 });

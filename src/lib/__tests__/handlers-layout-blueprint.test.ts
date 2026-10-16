@@ -299,6 +299,24 @@ describe('toggleBlueprint', () => {
 });
 
 describe('Blueprint request version gates', () => {
+  it('keeps the source environment on a layout that finishes after a workspace switch', async () => {
+    const h = makeHarness({ supportsLookup: true });
+    h.ctx.client.serverUrl = 'https://a.test/';
+    const service = await import('../layout-service');
+    let finish!: (result: Awaited<ReturnType<typeof service.loadPage>>) => void;
+    const load = vi.spyOn(service, 'loadPage').mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const { getHandler } = await import('../handler-registry');
+    await import('../handlers/layout');
+    const respond = vi.fn();
+    const pending = getHandler('LAYOUT_LOAD')!({ type: 'LAYOUT_LOAD', rid: '42' } as any, respond, { isOneShot: true });
+    h.ctx.settings.activeProfileId = 'p2';
+    h.ctx.client = { serverUrl: 'https://b.test/' };
+    finish({ kind: 'page', ctx: { pageClass: 'Scorecard', pageId: 'page' }, load: {} } as any);
+    await pending;
+    expect(respond).toHaveBeenCalledWith(expect.objectContaining({ ok: true, env: 'p1@https://a.test/' }));
+    load.mockRestore();
+  });
+
   it('rejects load and apply requests before executing Blueprint code on an old BMP', async () => {
     makeHarness({ supportsLookup: false });
     const { getHandler } = await import('../handler-registry');

@@ -52,12 +52,25 @@ async function setup(opts: { authMode: CommandAuthMode; cookieStillPresent: bool
   };
   (await import('../sw-context')).setSwContext(ctx as any);
   const settingsMod = await import('../settings');
-  return { settingsMod, removeSpy: chrome.storage.session.remove as any };
+  return { settingsMod, ctx, removeSpy: chrome.storage.session.remove as any };
 }
 
 const KEY = commandAuthSessionKey('p1');
 
 describe('handleSessionCookieRemoved', () => {
+  it('ignores a delayed cookie check after the same profile changes login mode', async () => {
+    const { settingsMod, ctx, removeSpy } = await setup({ authMode: 'portal', cookieStillPresent: false });
+    let finish!: (cookie: null) => void;
+    vi.mocked(chrome.cookies.get as (details: chrome.cookies.CookieDetails) => Promise<chrome.cookies.Cookie | null>)
+      .mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const pending = settingsMod.handleSessionCookieRemoved(cookieInfo({ removed: true, cause: 'explicit' }));
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+    ctx.settings.profiles[0] = { ...ctx.settings.profiles[0], commandAuthMode: 'stored', commandAuthRevision: 'new' };
+    finish(null);
+    await pending;
+    expect(removeSpy).not.toHaveBeenCalled();
+  });
+
   it('tears down a session-mode profile when its cookie is gone (explicit logout)', async () => {
     const { settingsMod, removeSpy } = await setup({ authMode: 'portal', cookieStillPresent: false });
     await settingsMod.handleSessionCookieRemoved(cookieInfo({ removed: true, cause: 'explicit' }));

@@ -510,6 +510,8 @@ export const DEFAULT_SETTINGS: InspectorSettings = {
 export type ActivityCategory = 'execution' | 'change' | 'blueprint' | 'studio' | 'system';
 
 export interface ActivityMeta {
+  /** Explicit origin for work that may finish after a profile switch. */
+  profileId?: string;
   category: ActivityCategory;
   action?: string;
   object?: ObjectReference;

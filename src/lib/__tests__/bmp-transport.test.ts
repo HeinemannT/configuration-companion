@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { BmpTransport, BmpTransportError } from '../bmp-transport'
+import { BmpTransport, BmpTransportError, commandReplayIntent } from '../bmp-transport'
+import { makeExtendedExecuteCommand, makeGetObjectCommand, makeUpdateCommand, registerBmpTypes } from '../bmp-types'
 
 afterEach(() => vi.unstubAllGlobals())
 
 function mockAuth() {
   return {
+    sessionEpoch: 0,
     getLoginTicket: vi.fn().mockResolvedValue('ticket value'),
     refreshLoginTicket: vi.fn().mockResolvedValue('fresh ticket'),
     invalidateLoginTicket: vi.fn(),
@@ -15,6 +17,51 @@ function mockAuth() {
 }
 
 describe('BmpTransport command requests', () => {
+  it('reports session replacement during authentication as cancellation without dispatch', async () => {
+    const auth = mockAuth()
+    auth.getLoginTicket.mockImplementation(async () => { auth.sessionEpoch++; throw new Error('Superseded login') })
+    const transport = new BmpTransport('https://bmp.test/', auth as never)
+    await expect(transport.sendRequest(new Uint8Array([1]), 1000, 'write')).rejects.toMatchObject({ kind: 'cancelled', attempts: 0 })
+    expect(auth.fetchCommand).not.toHaveBeenCalled()
+  })
+
+  it('defaults unknown commands and ambiguous EC flags to no replay', () => {
+    expect(commandReplayIntent([{ $type: 'FutureCommand' }], 'read')).toBe('write')
+    expect(commandReplayIntent([makeExtendedExecuteCommand('1'), { $type: 'FutureCommand' }], 'read')).toBe('write')
+    const ec = makeExtendedExecuteCommand('1')
+    delete ec.transactional
+    expect(commandReplayIntent([ec], 'read')).toBe('write')
+    expect(commandReplayIntent([makeGetObjectCommand('1')], 'write')).toBe('write')
+    expect(commandReplayIntent([makeGetObjectCommand('1'), makeExtendedExecuteCommand('1')], 'read')).toBe('read')
+  })
+  it.each(['cancel', 'identity'] as const)('does not recover an old read after %s at the response boundary', async change => {
+    const auth = mockAuth()
+    const controller = new AbortController()
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      if (change === 'cancel') controller.abort()
+      else auth.sessionEpoch++
+      return new Response(null, { status: 401 })
+    }))
+    const transport = new BmpTransport('https://bmp.test/', auth as never)
+    await expect(transport.sendRequest(new Uint8Array([1]), 1000, 'read', controller.signal)).rejects.toBeInstanceOf(BmpTransportError)
+    expect(auth.refreshLoginTicket).not.toHaveBeenCalled()
+    expect(auth.rejectCommandAuthentication).not.toHaveBeenCalled()
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['update', 'mixed batch', 'committed EC'] as const)('never replays %s even when a caller labels it read', async kind => {
+    registerBmpTypes()
+    const auth = mockAuth()
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 401 })))
+    const transport = new BmpTransport('https://bmp.test/', auth as never)
+    const update = makeUpdateCommand('1', 'Organisation', { name: 'example' })
+    const request = kind === 'committed EC'
+      ? transport.sendStreamingCommand(makeExtendedExecuteCommand('1', { transactional: true }), 'read')
+      : transport.sendCommands(kind === 'update' ? [update] : [makeGetObjectCommand('1'), update], 'read')
+    await expect(request).rejects.toBeInstanceOf(BmpTransportError)
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(auth.refreshLoginTicket).not.toHaveBeenCalled()
+  })
   it('serializes concurrent command posts sharing one transport session', async () => {
     let releaseFirst: ((response: Response) => void) | undefined
     const firstResponse = new Promise<Response>((resolve) => {

@@ -183,6 +183,7 @@ register('LAYOUT_LOAD', async (msg, respond) => {
   const ctx = getCtx();
   if (!ctx.client) { respond({ type: 'LAYOUT_LOAD_RESULT', ok: false, error: 'Not connected' }); return; }
   if (!blueprintSupported(ctx)) { respond({ type: 'LAYOUT_LOAD_RESULT', ok: false, error: BLUEPRINT_VERSION_ERROR }); return; }
+  const environment = environmentToken(ctx);
   const t0 = Date.now();
   const timings: string[] = []; // operation-local — see makeLayoutIO
   try {
@@ -193,7 +194,7 @@ register('LAYOUT_LOAD', async (msg, respond) => {
       return;
     }
     respond({
-      type: 'LAYOUT_LOAD_RESULT', ok: true, env: environmentToken(ctx),
+      type: 'LAYOUT_LOAD_RESULT', ok: true, env: environment,
       ctx: res.ctx, model: res.load.model, baseline: res.load.baseline, orphans: res.load.orphans,
     });
     ctx.logActivity('success', `Blueprint loaded ${res.ctx.pageClass} ${res.ctx.pageId}${res.ctx.resultOnly ? ' (result-only, no tabset)' : ''} (${Date.now() - t0}ms)`, `EC calls: ${timings.join(' | ')}`);
