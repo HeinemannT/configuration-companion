@@ -66,13 +66,15 @@ describe('BmpClient.resolveRef — version branches', () => {
     expect(ref).toBe('lookup(1234567890123456789)');
   });
 
-  it('supportsLookup === null (not yet detected) → lookup(rid) — safe default', async () => {
+  it('supportsLookup === null verifies support before generating lookup(rid)', async () => {
     const { client } = await createClientHarness();
     // No version flags applied → supportsLookup is null
     expect(client.supportsLookup).toBeNull();
+    client.executeEc.mockResolvedValue({ ok: true, log: 'CREV_LOOKUP_SUPPORTED' });
 
     const ref = await client.resolveRef('111');
     expect(ref).toBe('lookup(111)');
+    expect(client.supportsLookup).toBe(true);
   });
 
   it('supportsLookup === false + cache hit → namespace prefix + businessId', async () => {
@@ -87,7 +89,7 @@ describe('BmpClient.resolveRef — version branches', () => {
 
     const ref = await client.resolveRef('111');
     // Scorecard isn't in NAMESPACE_MAP → falls back to 't'
-    expect(ref).toBe('t.sc_main');
+    expect(ref).toContain('LIST(t.get("sc_main")).filter(str(rid) = "111").first()');
   });
 
   it('supportsLookup === false + cache hit for ExtendedMethodConfig → k.{bid}', async () => {
@@ -99,7 +101,7 @@ describe('BmpClient.resolveRef — version branches', () => {
 
     const ref = await client.resolveRef('111');
     // ExtendedMethodConfig → "k" namespace
-    expect(ref).toBe('k.pMyProp');
+    expect(ref).toContain('LIST(k.get("pMyProp")).filter(str(rid) = "111").first()');
   });
 
   it('supportsLookup === false + cache miss → binary identity fetch fallback', async () => {
@@ -127,7 +129,7 @@ describe('BmpClient.resolveRef — version branches', () => {
     });
     try {
       const ref = await client.resolveRef('999');
-      expect(ref).toBe('t.sc_fetched');
+      expect(ref).toContain('LIST(t.get("sc_fetched")).filter(str(rid) = "999").first()');
     } finally {
       proto.getObjectIdentity = origGetIdentity;
     }
@@ -147,7 +149,7 @@ describe('BmpClient.resolveRef — version branches', () => {
       rid, businessId: 'new_id', type: 'Scorecard', name: 'Renamed',
     });
     client.batchEnrich = vi.fn(async (rids: string[]) => {
-      expect(await client.resolveRef(rids[0])).toBe('t.new_id');
+      expect(await client.resolveRef(rids[0])).toContain('LIST(t.get("new_id")).filter(str(rid) = "9007199254740993").first()');
       return { results: { [rids[0]]: { businessId: 'new_id', name: 'Renamed' } } };
     });
     try {
@@ -292,7 +294,7 @@ describe('BmpClient.saveCodeViaEc — escaping', () => {
     client.executeEc = vi.fn(async (ec: string) => { captured = ec; return { ok: true }; });
     await client.saveCodeViaEc('1234567890123456789', 'expression', 'test');
 
-    expect(captured).toContain('_o := t.sc_main');
+    expect(captured).toContain('_o := LIST(t.get("sc_main")).filter(str(rid) = "1234567890123456789").first()');
     expect(captured).toContain('_o.change(expression := "test")');
   });
 });

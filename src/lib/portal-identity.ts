@@ -58,6 +58,12 @@ export async function probePortalIdentity(bmpUrl: string): Promise<EffectiveActo
       };
     }
     const body = await response.json().catch(() => null) as { userName?: unknown } | null;
+    // AuthenticationServlet returns HTTP 200 with an explicit null username
+    // when no portal session exists (including the SSO login metadata reply).
+    // This is authoritative sign-out, unlike a missing field or invalid JSON.
+    if (body?.userName === null) {
+      return { status: 'unavailable', user: null, source: 'portal-session', error: 'No active BMP portal login.' };
+    }
     const user = typeof body?.userName === 'string' ? body.userName.trim() : '';
     if (!user) {
       return {

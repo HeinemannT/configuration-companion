@@ -13,7 +13,8 @@ import { resolveDisplayIdentity } from './object-identity';
 
 const NAMESPACE_MAP: Record<string, string> = {
   // Groups / Access / Roles
-  Group: 'g', ROLE: 'role', ACCESSPROFILE: 'ap', DEFAULTS: 'd',
+  Organisation: 'o', User: 'u', Group: 'g', ROLE: 'role',
+  AccessPolicy: 'acpol', ACCESSPROFILE: 'ap', DEFAULTS: 'd', ClassConfig: 'c', SystemMethodConfig: 'c',
 
   // Resources
   FileResource: 'r', TranslationFile: 'r', APIResource: 'r', RemoteResource: 'r',
@@ -31,7 +32,7 @@ const NAMESPACE_MAP: Record<string, string> = {
   ListPropertySet: 'k', ListPropertySetItem: 'k',
 
   // Categories / Templates / Portal
-  Category: 't', ExtendedExpression: 't', ProcessDefinition: 't', ClassConfig: 't', Transformer: 't',
+  Category: 't', ExtendedExpression: 't', ProcessDefinition: 't', Transformer: 't',
 
   // Enterprise objects
   CEVENDOR: 'ceven', CETASK: 'cetas', CECOMMENT: 'cecom', CEINCIDENT: 'ceinc',

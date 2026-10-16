@@ -7,6 +7,7 @@ import { mockChromeStorage } from './chrome-mock';
 import { JavaEnum, JavaWriter, type JavaClassDesc } from '../java-serial';
 import { registerBmpTypes } from '../bmp-types';
 import { BmpTransport } from '../bmp-transport';
+import { createHmac } from 'node:crypto';
 
 const enumDesc = (name: string): JavaClassDesc => ({
   name,
@@ -16,13 +17,13 @@ const enumDesc = (name: string): JavaClassDesc => ({
   parent: null,
 });
 
-function directTicketBytes(user = 'config.user'): Uint8Array {
+function directTicketBytes(user = 'config.user', key = 9223372036854775707n): Uint8Array {
   registerBmpTypes();
   const writer = new JavaWriter();
   writer.writeStreamHeader();
   writer.writeObject({
     $type: 'com.corporater.bmp.base.system.auth.LoginTicket',
-    key: 9223372036854775707n,
+    key,
     clientUserAgent: new JavaEnum(enumDesc('com.corporater.bmp.base.system.auth.ClientUserAgent'), 'STUDIO'),
     onBehalfOfId: user,
     onBehalfOfType: new JavaEnum(enumDesc('com.corporater.bmp.base.system.auth.OnBehalfOfType'), 'USER'),
@@ -38,6 +39,52 @@ beforeEach(() => {
 });
 
 describe('BmpAuth explicit strategies', () => {
+  it.each(['portal', 'stored'] as const)('signs the exact body with the renewed %s ticket', async mode => {
+    const { BmpAuth } = await import('../bmp-auth');
+    const auth = new BmpAuth('https://bmp.test/', 'user', 'secret', `signed-${mode}`, mode);
+    let issued = 40;
+    let commands = 0;
+    globalThis.fetch = vi.fn(async input => {
+      const url = String(input);
+      if (url.includes('/cs/login?')) return new Response(directTicketBytes('user', BigInt(++issued)) as Uint8Array<ArrayBuffer>);
+      if (url.endsWith('graphql')) return Response.json({ data: { authorizationCode: { code: 'code' } } });
+      if (url.endsWith('cstoken')) return Response.json({ accessToken: 'jwt-private', refreshToken: 'refresh' });
+      if (url.endsWith('ticket')) return new Response(`user;STUDIO;${++issued}`);
+      return new Response('', { status: ++commands === 1 ? 401 : 200 });
+    });
+    const transport = new BmpTransport('https://bmp.test/', auth);
+    // The signature must not accidentally include the backing buffer's ends.
+    await transport.sendRequest(new Uint8Array([99, 0, 128, 255, 99]).subarray(1, 4), 1000, 'read');
+    const calls = vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes('/cs/command?'));
+    expect(calls).toHaveLength(2);
+    for (const [index, [url, options]] of calls.entries()) {
+      const ticket = `user;STUDIO;${41 + index}`;
+      const headers = new Headers(options?.headers);
+      const bytes = new Uint8Array(options?.body as ArrayBuffer);
+      expect([...bytes]).toEqual([0, 128, 255]);
+      expect(new URL(String(url)).searchParams.get('LOGIN_TICKET')).toBe(ticket);
+      expect(headers.get('X-CS-Login-Ticket')).toBe(ticket);
+      expect(headers.get('X-CS-Signature')).toBe(createHmac('sha256', ticket).update(bytes).digest('hex'));
+    }
+  });
+
+  it.each(['logout', 'cancel'] as const)('does not send a signed command after %s during signing', async event => {
+    const { BmpAuth } = await import('../bmp-auth');
+    const auth = new BmpAuth('https://bmp.test/', 'user', 'secret', `signing-${event}`, 'stored');
+    globalThis.fetch = vi.fn(async () => new Response(directTicketBytes('user') as Uint8Array<ArrayBuffer>));
+    const ticket = await auth.getLoginTicket();
+    let finish!: (value: ArrayBuffer) => void;
+    vi.spyOn(crypto.subtle, 'sign').mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const controller = new AbortController();
+    const pending = auth.fetchCommand(ticket, { body: new ArrayBuffer(1), signal: controller.signal }, r => r.text()).catch(e => e);
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    if (event === 'logout') auth.logout(); else controller.abort();
+    finish(new ArrayBuffer(32));
+    const result = await pending;
+    expect(result).toBeInstanceOf(Error);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it.each(['html', 'redirect'] as const)('pauses queued stored commands after a gateway %s response', async kind => {
     const { BmpAuth } = await import('../bmp-auth');
     const auth = new BmpAuth('https://bmp.test/', 'user', 'secret', `gateway-${kind}`, 'stored');
@@ -106,7 +153,7 @@ describe('BmpAuth explicit strategies', () => {
       return new Response('user;STUDIO;42');
     });
     const ticket = await auth.getLoginTicket();
-    await auth.fetchCommand(ticket, { method: 'POST', body: 'command' }, response => response.text());
+    await auth.fetchCommand(ticket, { method: 'POST', body: new TextEncoder().encode('command').buffer }, response => response.text());
     const [, options] = vi.mocked(fetch).mock.calls.at(-1)!;
     expect(new Headers(options?.headers).get('Authorization')).toBe('Bearer jwt-private');
     expect(options).toMatchObject({ credentials: 'omit', redirect: 'manual' });

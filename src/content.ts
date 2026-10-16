@@ -390,10 +390,7 @@ onPortMessage((msg: InspectorMessage) => {
       // to prevent duplicate in-flight queries, not to block
       // retries. Without this clear, a transient enrichment failure
       // would lock the rid out for the lifetime of the page.
-      for (const [rid, data] of Object.entries(msg.enrichments)) {
-        s.enrichments.set(rid, data);
-        s.requestedRids.delete(rid);
-      }
+      s.receiveEnrichments(msg.enrichments);
       if (s.inspectActive) {
         updateLabels(s);
         syncPageHeaderIdentity(s, getPageHeaderRid());
@@ -411,7 +408,7 @@ onPortMessage((msg: InspectorMessage) => {
       }
       break;
     case 'RE_ENRICH':
-      s.requestedRids.clear();
+      s.retryFailedEnrichments();
       if (s.inspectActive) syncInspectSurface();
       break;
     case 'RESET_OVERLAY_CACHES':

@@ -66,8 +66,8 @@ const VERSION_PROBE_RETRY_DELAY = 30_000;
  * open. Health and command probes are authoritative; `/buildNum` only refines
  * feature flags. One generation-owned record coalesces the parallel health and
  * auth paths, remembers a JWT that arrives mid-probe, and retries only
- * transient failures. Endpoint absence is a terminal modern-capability
- * fallback; an anonymous authorization response may be retried with the JWT.
+ * transient failures. Endpoint absence leaves capability detection to the
+ * client's EC probe; an anonymous authorization response can retry with JWT.
  */
 function ensureVersionDetection(
   bmpUrl: string,
@@ -197,16 +197,14 @@ export function markPortalSignedOut(): void {
   pushConnectionState();
 }
 
-/** Apply BMP version flags to client. When /buildNum is unavailable, prefer
- *  modern capabilities: current deployments may hide that endpoint. */
+/** Missing version metadata must not overwrite an actual capability result. */
 function applyVersionFlags(version: string | null, reason?: string) {
   const ctx = getCtx();
   if (!ctx.client) return;
   if (!version) {
-    ctx.client.supportsLookup = true;
     log.info('connection:versionFlags', reason
-      ? `Version detection: ${reason} — assuming lookup() support`
-      : 'Version detection failed — assuming lookup() support');
+      ? `Version detection: ${reason} — EC capability probe required`
+      : 'Version detection failed — EC capability probe required');
     return;
   }
   ctx.client.applyVersionFlags(version);
@@ -250,7 +248,7 @@ export function resetConnectionState() {
   // Reset version flags — will be re-evaluated when version is detected
   const ctx = getCtx();
   if (ctx.client) {
-    ctx.client.supportsLookup = null;
+    ctx.client.resetCapabilities();
   }
 }
 
@@ -511,6 +509,9 @@ async function runAuthTestInternal(
   const hadIncident = activeIncidentEpoch > 0;
   try {
     if (reason === 'explicit') await clientAtStart.retryAuthentication();
+    // A fresh worker starts with an unbound in-memory actor. Restore the
+    // workspace-scoped envelope before deciding whether that actor changed.
+    if (profile.commandAuthMode === 'portal') await clientAtStart.auth.restoreFromSession();
     if (connectionGeneration !== generationAtStart || ctx.client !== clientAtStart) return;
     // Resolve the browser actor before validating the command channel. When a
     // borrowed chain is unbound (legacy state) or belongs to another actor,
@@ -522,7 +523,7 @@ async function runAuthTestInternal(
       && clientAtStart.portalActor !== portalActor.user) {
       const previousActor = clientAtStart.portalActor ?? 'unbound';
       const candidateKey = `${generationAtStart}|${profile.id}|${previousActor}|${portalActor.user}`;
-      if (!identityReconcileKeys.has(candidateKey)) {
+      if (reason === 'explicit' || !identityReconcileKeys.has(candidateKey)) {
         identityReconcileKeys.add(candidateKey);
         reconcileKey = candidateKey;
         clientAtStart.logout();
@@ -556,6 +557,9 @@ async function runAuthTestInternal(
       if (connectionGeneration !== generationAtStart || ctx.client !== clientAtStart) return;
       if (actorBeforeLogin && portalActor.status === 'connected' && portalActor.user === actorBeforeLogin) {
         clientAtStart.bindPortalActor(portalActor.user);
+        // Suppress only an unresolved reconciliation. A completed A -> B
+        // transition must not prevent a later A -> B after switching back.
+        if (clientAtStart.portalActor === portalActor.user) identityReconcileKeys.delete(reconcileKey);
       } else {
         identityReconcileKeys.delete(reconcileKey);
         // The command chain was minted while the browser actor changed (or

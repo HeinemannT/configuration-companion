@@ -13,6 +13,7 @@ import { assertHostAccess, HostAccessError } from './site-access';
 import { JavaEnum, JavaReader } from './java-serial';
 import { registerBmpTypes } from './bmp-types';
 import { BmpPrivateSession, PrivateSessionError } from './bmp-private-session';
+import { commandSignature } from './bmp-command-signature';
 import type { SerializedCookieJar } from 'tough-cookie';
 import type { CommandAuthMode } from './identity-map';
 
@@ -440,7 +441,7 @@ export class BmpAuth {
 
   /** One command interface owns the complete identity context. The transport
    * decides replay safety; it cannot accidentally omit cookies or bearer auth. */
-  async fetchCommand<T>(ticket: string, init: RequestInit, consume: (response: Response) => Promise<T>): Promise<T> {
+  async fetchCommand<T>(ticket: string, init: Omit<RequestInit, 'body'> & { body: ArrayBuffer }, consume: (response: Response) => Promise<T>): Promise<T> {
     const epoch = this._authEpoch;
     if (this._failure) throw this._failure;
     if (ticket !== this._loginTicket) throw new AuthError('Command session changed. Retry the operation.', 'auth-failed');
@@ -448,10 +449,19 @@ export class BmpAuth {
     if (this.commandMode === 'portal') await assertHostAccess(this.bmpUrl);
     this.assertAuthEpoch(epoch);
     const url = `${this.bmpUrl}cs/command?LOGIN_TICKET=${encodeURIComponent(ticket)}&async=false&_noctx=true`;
+    // Keep the URL ticket for older BMPs. Signed headers are accepted by both
+    // generations, so no version detection, downgrade or extra command is needed.
+    // Snapshot before hashing: the bytes signed must be exactly the bytes sent.
+    const body = init.body.slice(0);
     const headers = new Headers(init.headers);
+    headers.set('X-CS-Login-Ticket', ticket);
+    headers.set('X-CS-Signature', await commandSignature(ticket, body));
+    this.assertAuthEpoch(epoch);
+    init.signal?.throwIfAborted();
+    if (ticket !== this._loginTicket) throw new AuthError('Command session changed. Retry the operation.', 'auth-failed');
     if (this.commandMode === 'portal' && this._jwt) headers.set('Authorization', `Bearer ${this._jwt}`);
     const options: RequestInit = {
-      ...init, headers, credentials: 'omit', redirect: 'manual', cache: 'no-store', referrerPolicy: 'no-referrer',
+      ...init, body, headers, credentials: 'omit', redirect: 'manual', cache: 'no-store', referrerPolicy: 'no-referrer',
     };
     let result: T;
     try {

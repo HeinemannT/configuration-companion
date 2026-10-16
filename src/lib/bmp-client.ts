@@ -251,9 +251,69 @@ export class BmpClient {
    *  queries go here; new binary commands stay on BmpClient. */
   private ecQuery: EcQueryService;
 
-  /** Whether server supports EC lookup(). null = unknown (not yet detected).
-   *  Set by applyVersionFlags() after version detection. */
+  /** Whether server supports EC lookup(). null = unknown. Resolved from a
+   * recognized version or one read-only capability probe. */
   supportsLookup: boolean | null = null;
+  private lookupProbe: Promise<boolean> | null = null;
+  private lookupProbeFailure: { error: Error; retryAt: number } | null = null;
+  private capabilityRevision = 0;
+
+  /** Invalidate in-flight capability work as well as its cached result. */
+  resetCapabilities(): void {
+    this.capabilityRevision++;
+    this.supportsLookup = null;
+    this.lookupProbe = null;
+    this.lookupProbeFailure = null;
+    this.orgRidCache.clear();
+  }
+
+  /** Hidden/missing build metadata is not evidence of a modern EC engine.
+   * Probe once per client, sharing the result across concurrent badge batches.
+   * Only a parser rejection of this fixed expression selects the legacy path;
+   * authentication, transport, and unreadable responses remain failures. */
+  async ensureLookupSupport(): Promise<boolean> {
+    if (this.supportsLookup !== null) return this.supportsLookup;
+    if (this.lookupProbe) return this.lookupProbe;
+    if (this.lookupProbeFailure && Date.now() < this.lookupProbeFailure.retryAt) {
+      throw this.lookupProbeFailure.error;
+    }
+    const revision = this.capabilityRevision;
+    const task = (async () => {
+      const marker = 'CREV_LOOKUP_SUPPORTED';
+      const result = await this.executeEc(`lookup(0).whenMissing("${marker}")`, undefined, false, undefined, AUTH_TIMEOUT);
+      if (this.capabilityRevision !== revision) throw new Error('BMP capability detection was reset; retry the operation');
+      const supported = result.ok && !result.hasWarning
+        && result.log?.split(/\r?\n/).some(line => line.trim() === marker);
+      const rejectedSyntax = result.outputEntries?.some(entry => entry.logType === 'ERROR'
+        && /Encountered[\s\S]+Was expecting|(?:unknown|undefined|unrecognized|unsupported)\s+(?:function|method)[\s\S]*lookup/i.test(entry.message));
+      if (!supported && !rejectedSyntax) {
+        throw new Error(result.error || result.log || 'BMP lookup capability probe returned no recognizable result');
+      }
+      // Version discovery may have completed during this command. It can
+      // refine compatibility, but must never hide a transport/auth failure.
+      if (this.supportsLookup !== null) return this.supportsLookup;
+      this.supportsLookup = Boolean(supported);
+      this.lookupProbeFailure = null;
+      log.info('bmpClient:capabilities', supported ? 'EC lookup() verified' : 'Legacy EC engine — using native object identity resolution');
+      return this.supportsLookup;
+    })();
+    this.lookupProbe = task;
+    try {
+      return await task;
+    } catch (error) {
+      // A page can enqueue hundreds of RIDs. Do not repeat a failed probe for
+      // every batch; reconnect/reset clears this short retry window at once.
+      if (this.lookupProbe === task) {
+        this.lookupProbeFailure = {
+          error: error instanceof Error ? error : new Error(String(error)),
+          retryAt: Date.now() + 30_000,
+        };
+      }
+      throw error;
+    } finally {
+      if (this.lookupProbe === task) this.lookupProbe = null;
+    }
+  }
 
   constructor(
     private bmpUrl: string,
@@ -271,7 +331,7 @@ export class BmpClient {
     this.ecQuery = new EcQueryService(
       (code, objectRid, transactional, signal, timeoutMs, feature) =>
         this.executeEc(code, objectRid, transactional, signal, timeoutMs, feature),
-      (rid) => this.resolveRef(rid),
+      (rid, signal) => this.resolveRef(rid, signal),
       PANE_PROPS,
     );
   }
@@ -320,6 +380,10 @@ export class BmpClient {
       if (!probe.ok) {
         return { ok: false, message: probe.error ?? probe.log ?? 'BMP command probe failed', authenticated: true };
       }
+      if (probe.hasWarning || !probe.log?.split(/\r?\n/).some(line => line.trim() === '1')) {
+        return { ok: false, message: 'BMP command probe returned no recognizable result', authenticated: true };
+      }
+      await this.ensureLookupSupport();
       return { ok: true, message: 'Authenticated and command channel ready', authenticated: true };
     } catch (e) {
       // AuthError carries a precise cause; everything else (network throw,
@@ -333,25 +397,35 @@ export class BmpClient {
 
   absorbAuth(other: BmpClient) { this.auth.absorbAuth(other.auth); }
   logout() { this.auth.logout(); }
-  retryAuthentication() { return this.auth.retryAuthentication(); }
+  retryAuthentication() {
+    this.lookupProbeFailure = null;
+    return this.auth.retryAuthentication();
+  }
 
   // ── Object resolution ────────────────────────────────────────
 
   /** Resolve a RID to an EC object reference expression.
    *  On 5.6.3+ (lookup available): returns "lookup(rid)".
-   *  On pre-5.6.3: resolves business ID via cache or binary GetObject, returns "t.{bid}". */
-  async resolveRef(rid: string): Promise<string> {
+   *  On pre-5.6.3: resolves business ID via cache or native TreeItemCommand. */
+  async resolveRef(rid: string, signal?: AbortSignal): Promise<string> {
     validateRid(rid);
-    if (this.supportsLookup !== false) return `lookup(${rid})`;
+    signal?.throwIfAborted();
+    const supportsLookup = await this.ensureLookupSupport();
+    signal?.throwIfAborted();
+    if (supportsLookup) return `lookup(${rid})`;
 
     // Try enrichment cache first
     const cached = this._cache?.get(rid);
-    if (cached?.businessId) return `${resolveNamespace(cached.type ?? '')}.${cached.businessId}`;
-
-    // Binary GetObject fallback
-    const identity = await this.getObjectIdentity(rid);
+    const identity = cached?.businessId ? cached : await this.getObjectIdentity(rid, signal);
+    signal?.throwIfAborted();
     if (!identity?.businessId) throw new Error(`Cannot resolve object ${rid}: not found on server`);
-    return `${resolveNamespace(identity.type ?? '')}.${identity.businessId}`;
+    // Business IDs are unique only within their native IdSpace. Validate in
+    // the consuming EC request (including writes), not in a separate check
+    // that costs another round trip and can race a rename. get() quotes the
+    // ID as data, including IDs that are not legal bare EC identifiers.
+    const ref = `${resolveNamespace(identity.type ?? '')}.get("${formatEcLiteral(identity.businessId)}")`;
+    // EC numeric literals round large RIDs. Compare exact decimal text.
+    return `LIST(${ref}).filter(str(rid) = "${rid}").first().whenMissing(error("BMP object identity no longer matches RID ${rid}; refresh the object"))`;
   }
 
   /** Send a TreeItemCommand and extract the TreeNodeInformationDto from the response.
@@ -362,7 +436,7 @@ export class BmpClient {
     const objects = this.transport.deserializeStream(buffer);
     for (const obj of objects) {
       const cls = obj?.$class ?? '';
-      if (cls.includes('ServerExceptionResponse')) continue;
+      if (cls.includes('ServerExceptionResponse')) throw new Error(obj.message ?? 'BMP object identity request failed');
       if (cls === 'java.util.ArrayList') {
         const dto = obj.$elements?.[0]?.response;
         if (dto?.$class?.includes('TreeNodeInformationDto')) {
@@ -375,9 +449,8 @@ export class BmpClient {
 
   /** Fetch identity (rid, businessId, type, name) via TreeItemCommand.
    *  Lighter than GetObjectCommand — avoids NullPointerException on old BMP. */
-  private async getObjectIdentity(rid: string): Promise<{ rid: string; businessId?: string; type?: string; name?: string } | null> {
-    try { return await this.fetchTreeItem(rid); }
-    catch { return null; }
+  private async getObjectIdentity(rid: string, signal?: AbortSignal): Promise<{ rid: string; businessId?: string; type?: string; name?: string } | null> {
+    return this.fetchTreeItem(rid, signal);
   }
 
   // ── Object operations ────────────────────────────────────────
@@ -562,22 +635,24 @@ export class BmpClient {
    *  owning org. Cache: the org binding of an object never changes mid-session. */
   private orgRidCache = new Map<string, bigint | undefined>();
 
-  private async resolveOrgRid(objectRid: string): Promise<bigint | undefined> {
+  private async resolveOrgRid(objectRid: string, signal?: AbortSignal): Promise<bigint | undefined> {
+    signal?.throwIfAborted();
     if (this.orgRidCache.has(objectRid)) return this.orgRidCache.get(objectRid);
-    try {
-      // Tag the value with a marker: parseEcResults strips BMP's "Result : "
-      // prefix, so a bare number would be indistinguishable from the status/
-      // duration log lines. `whenMissing(0)` yields "ORG=0" for no owning org.
-      const cmd = makeExtendedExecuteCommand(`"ORG=" + str(lookup(${objectRid}).organisation.rid.whenMissing(0))`, {});
-      const r = parseEcResults(await this.transport.sendStreamingCommand(cmd, 'read'));
-      if (!r.ok) return undefined; // transient failure: don't cache, retry next run
-      const m = r.log?.match(/ORG=(-?\d+)/);
-      const org = m && m[1] !== '0' ? BigInt(m[1]) : undefined;
-      this.orgRidCache.set(objectRid, org); // cache only a definitive answer
-      return org;
-    } catch {
-      return undefined; // network/unsupported: don't cache, so a recovery retries
-    }
+    // Tag the value with a marker: parseEcResults strips BMP's "Result : "
+    // prefix, so a bare number would be indistinguishable from the status/
+    // duration log lines. `whenMissing(0)` yields "ORG=0" for no owning org.
+    const revision = this.capabilityRevision;
+    const ref = await this.resolveRef(objectRid, signal);
+    const cmd = makeExtendedExecuteCommand(`"ORG=" + str(${ref}.organisation.rid.whenMissing(0))`, {});
+    const r = parseEcResults(await this.transport.sendStreamingCommand(cmd, 'read', signal));
+    signal?.throwIfAborted();
+    if (revision !== this.capabilityRevision) throw new Error('BMP context resolution was reset; retry the operation');
+    if (!r.ok) throw new Error(r.error || r.log || 'Could not resolve the BMP organisation context');
+    const m = r.log?.match(/ORG=(-?\d+)/);
+    if (!m) throw new Error('BMP returned no organisation context');
+    const org = m[1] !== '0' ? BigInt(m[1]) : undefined;
+    this.orgRidCache.set(objectRid, org); // cache only a definitive answer
+    return org;
   }
 
   async executeEc(
@@ -591,7 +666,7 @@ export class BmpClient {
     try {
       const cmd = makeExtendedExecuteCommand(code, {
         objectRid: objectRid ? BigInt(objectRid) : undefined,
-        orgRid: objectRid ? await this.resolveOrgRid(objectRid) : undefined,
+        orgRid: objectRid ? await this.resolveOrgRid(objectRid, signal) : undefined,
         transactional,
       });
       const objects = await this.transport.sendStreamingCommand(
@@ -1033,7 +1108,8 @@ export class BmpClient {
       if (!res.ok) return { status: 'unavailable' };
       const data = await res.json().catch(() => null);
       const version = typeof data?.version === 'string' ? data.version.trim() : '';
-      return version ? { status: 'known', version } : { status: 'unavailable' };
+      return /^(?:v\.?)?\d+\.\d+\.\d+(?:\.\d+)?(?:\b|$)/i.test(version)
+        ? { status: 'known', version } : { status: 'unavailable' };
     } catch (e) {
       log.swallow('bmpClient:getBuildNumber', e);
       return { status: 'transient' };

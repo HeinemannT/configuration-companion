@@ -54,6 +54,21 @@ describe('probePortalIdentity', () => {
     });
   });
 
+  it.each([
+    { userName: null },
+    { userName: null, externalAuthProviderURL: 'https://sso.test/login' },
+  ])('recognizes BMP signed-out metadata as authoritative: %j', async body => {
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify(body)));
+    expect(await probePortalIdentity('https://bmp.test/Workspace/')).toEqual({
+      status: 'unavailable', user: null, source: 'portal-session', error: 'No active BMP portal login.',
+    });
+  });
+
+  it.each([{}, { userName: '' }, { userName: 123 }])('does not infer sign-out from malformed metadata: %j', async body => {
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify(body)));
+    expect(await probePortalIdentity('https://bmp.test/Workspace/')).toMatchObject({ status: 'failed' });
+  });
+
   it('keeps 403 as transient rather than proving sign-out', async () => {
     globalThis.fetch = vi.fn(async () => ({
       ok: false, status: 403, redirected: false,

@@ -109,7 +109,9 @@ export async function enrichBadges(rids: string[]) {
   }
 
   const gen = enrichmentGeneration;
-  enrichAbort = new AbortController();
+  // Concurrent batches belong to one generation. Do not replace its abort
+  // controller: refresh/profile changes must cancel every active caller.
+  enrichAbort ??= new AbortController();
   const signal = enrichAbort.signal;
   const cancelled = () => gen !== enrichmentGeneration;
 
@@ -150,7 +152,6 @@ export async function enrichBadges(rids: string[]) {
   }
 
   if (uncached.length === 0) {
-    enrichAbort = null; // nothing in-flight to abort
     if (cacheHitCount > 0 || alreadyFailed.length > 0) {
       // Cache hits are routine \u2014 push to debug only, not the activity feed.
       // The feed used to drown in "Enriched 12 (cached)" every navigation.
@@ -185,6 +186,7 @@ export async function enrichBadges(rids: string[]) {
         if (data) {
           chunkHits[rid] = data;
           enrichedRids.add(rid);
+          permanentlyFailed.delete(rid);
           cacheObjs.push({
             rid,
             businessId: data.businessId,
@@ -245,7 +247,7 @@ export async function enrichBadges(rids: string[]) {
     for (let i = 0; i < retryResults.length; i++) {
       const result = retryResults[i];
       if (result.batchError) {
-        for (const rid of batchFailedChunks[i].chunk) permanentlyFailed.set(rid, Date.now());
+        failedRids.push(...batchFailedChunks[i].chunk);
         ctx.logActivity('warn', `Batch retry failed (${result.errorMsg ?? 'unknown'}): ${batchFailedChunks[i].chunk.length} RIDs skipped`);
       } else {
         failedRids.push(...result.failed);
@@ -255,18 +257,21 @@ export async function enrichBadges(rids: string[]) {
 
   if (cancelled()) { ctx.logActivity('info', 'Enrichment cancelled (profile changed)'); return; }
 
-  // Mark remaining failures as permanently failed
-  for (const rid of failedRids) permanentlyFailed.set(rid, Date.now());
+  // Another caller may have resolved the same RID while this batch retried.
+  // A late failure must not overwrite that generation's successful identity.
+  const unresolvedRids = [...new Set(failedRids)].filter(rid => !enrichedRids.has(rid));
+  for (const rid of unresolvedRids) permanentlyFailed.set(rid, Date.now());
   capPermanentlyFailed();
 
   // Broadcast empty enrichment for failed RIDs so content removes loading state
-  if (failedRids.length > 0) {
+  if (unresolvedRids.length > 0) {
     const failedEnrichments: Record<string, EnrichmentData> = {};
-    for (const rid of failedRids) failedEnrichments[rid] = {};
+    for (const rid of unresolvedRids) failedEnrichments[rid] = {};
     ctx.broadcastToContent({ type: 'BADGE_ENRICHMENT', enrichments: failedEnrichments });
   }
 
-  ctx.logActivity('success', `Enriched ${total} object${total !== 1 ? 's' : ''}`);
+  ctx.logActivity(unresolvedRids.length ? 'warn' : 'success',
+    `Enriched ${total} object${total !== 1 ? 's' : ''}${unresolvedRids.length ? `; ${unresolvedRids.length} could not be loaded` : ''}`);
   ctx.sendToPanel({ type: 'CACHE_STATS', count: ctx.cache.size });
   // Flush cache to storage immediately — setTimeout-based batching won't
   // survive SW suspension, and enrichment is the main cache write path.

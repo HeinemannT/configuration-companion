@@ -157,7 +157,7 @@ describe('runAuthTest broadcasts RE_ENRICH after confirmed recovery', () => {
     const testConnection = vi.fn().mockResolvedValue({
       ok: true, message: 'Authenticated and command channel ready', authenticated: true,
     });
-    ctx.client = { retryAuthentication: vi.fn(),
+    ctx.client = { retryAuthentication: vi.fn(), auth: { restoreFromSession: vi.fn(async () => false) },
       jwt: 'new-jwt',
       commandUser: 'admin',
       testConnection,
@@ -185,7 +185,7 @@ describe('runAuthTest broadcasts RE_ENRICH after confirmed recovery', () => {
     const testConnection = vi.fn()
       .mockResolvedValueOnce({ ok: false, message: 'socket failed', authenticated: true })
       .mockResolvedValueOnce({ ok: true, message: 'ready', authenticated: true });
-    ctx.client = { retryAuthentication: vi.fn(),
+    ctx.client = { retryAuthentication: vi.fn(), auth: { restoreFromSession: vi.fn(async () => false) },
       jwt: 'new-jwt', commandUser: 'admin', testConnection,
       applyVersionFlags: vi.fn(), supportsLookup: true,
     } as any;
@@ -201,7 +201,7 @@ describe('runAuthTest broadcasts RE_ENRICH after confirmed recovery', () => {
 
   it('authenticated command failure does not broadcast RE_ENRICH', async () => {
     const ctx = makeCtx();
-    ctx.client = { retryAuthentication: vi.fn(),
+    ctx.client = { retryAuthentication: vi.fn(), auth: { restoreFromSession: vi.fn(async () => false) },
       jwt: 'valid-jwt',
       commandUser: 'admin',
       testConnection: vi.fn().mockResolvedValue({
@@ -218,7 +218,7 @@ describe('runAuthTest broadcasts RE_ENRICH after confirmed recovery', () => {
 
   it('auth failure does NOT broadcast RE_ENRICH', async () => {
     const ctx = makeCtx();
-    ctx.client = { retryAuthentication: vi.fn(),
+    ctx.client = { retryAuthentication: vi.fn(), auth: { restoreFromSession: vi.fn(async () => false) },
       jwt: null,
       testConnection: vi.fn().mockResolvedValue({
         ok: false, message: 'Wrong username or password', authenticated: false,
@@ -265,7 +265,7 @@ describe('runAuthTest broadcasts RE_ENRICH after confirmed recovery', () => {
     const probe = new Promise<{ ok: boolean; message: string; authenticated: boolean }>(
       resolve => { finish = resolve; },
     );
-    const oldClient = { retryAuthentication: vi.fn(),
+    const oldClient = { retryAuthentication: vi.fn(), auth: { restoreFromSession: vi.fn(async () => false) },
       jwt: 'old-jwt',
       commandUser: 'admin',
       testConnection: vi.fn(() => probe),
@@ -276,7 +276,7 @@ describe('runAuthTest broadcasts RE_ENRICH after confirmed recovery', () => {
 
     const pending = runAuthTest();
     await vi.waitFor(() => expect(oldClient.testConnection).toHaveBeenCalledTimes(1));
-    ctx.client = { retryAuthentication: vi.fn(), testConnection: vi.fn() } as any;
+    ctx.client = { retryAuthentication: vi.fn(), auth: { restoreFromSession: vi.fn(async () => false) }, resetCapabilities: vi.fn(), testConnection: vi.fn() } as any;
     resetConnectionState();
     finish({ ok: true, message: 'late success', authenticated: true });
     await pending;
@@ -303,7 +303,7 @@ describe('no concurrent logins (race condition prevention)', () => {
       return { ok: true, message: 'ready', authenticated: true };
     });
 
-    ctx.client = { retryAuthentication: vi.fn(),
+    ctx.client = { retryAuthentication: vi.fn(), auth: { restoreFromSession: vi.fn(async () => false) },
       jwt: 'old-jwt',
       commandUser: 'admin',
       testConnection,

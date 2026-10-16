@@ -34,9 +34,10 @@ let healthResult = { up: false, reachable: false, responseMs: 0 };
 let buildNumberResult: BuildNumberProbeResult = { status: 'unavailable' };
 let testConnResult: TestConn = { ok: true, message: 'Authenticated', authenticated: true };
 
-async function createHarness(opts: { withProfile?: boolean; withClient?: boolean } = {}): Promise<ConnHarness> {
+async function createHarness(opts: { withProfile?: boolean; withClient?: boolean; realAuth?: boolean } = {}): Promise<ConnHarness> {
   vi.resetModules();
   vi.clearAllMocks();
+  vi.restoreAllMocks();
   mockChromeStorage();
   if (!('navigator' in globalThis)) {
     (globalThis as any).navigator = { onLine: true };
@@ -64,12 +65,13 @@ async function createHarness(opts: { withProfile?: boolean; withClient?: boolean
   vi.spyOn(bmpModule.BmpClient, 'getBuildNumber').mockImplementation(async () => buildNumberResult);
 
   const client = withClient ? new bmpModule.BmpClient('https://bmp.test/Workspace/', 'admin', 'pass', 'p1') : null;
-  if (client) {
+  if (client && !opts.realAuth) {
     const fakeAuth: any = {
       ensureAuth: vi.fn(async () => 'mock-jwt'),
       login: vi.fn(async () => 'mock-jwt'),
       invalidateLoginTicket: vi.fn(),
       retryAuthentication: vi.fn(),
+      restoreFromSession: vi.fn(async () => false),
       refreshLoginTicket: vi.fn(async () => 'mock-ticket'),
       recoverAuth: vi.fn(async () => 'mock-jwt'),
       absorbAuth: vi.fn(),
@@ -138,6 +140,71 @@ async function createHarness(opts: { withProfile?: boolean; withClient?: boolean
 }
 
 describe('computeConnectionState — initial states', () => {
+  it('restores saved portal authentication before comparing the actor on a fresh worker', async () => {
+    const h = await createHarness({ realAuth: true });
+    const { commandAuthSessionKey } = await import('../bmp-auth');
+    await chrome.storage.session.set({ [commandAuthSessionKey('p1')]: {
+      kind: 'portal-token', jwt: 'saved-test-jwt', refreshToken: 'saved-test-refresh',
+      commandUser: 'admin', portalActor: 'portal.a',
+      stamp: { profileId: 'p1', workspaceUrl: 'https://bmp.test/Workspace/', mode: 'portal', username: '', revision: '' },
+    } });
+    const logout = vi.spyOn(h.ctx.client.auth, 'logout');
+    h.ctx.client.applyVersionFlags('5.6.7.2');
+    vi.spyOn(h.ctx.client, 'executeEc').mockResolvedValue({ ok: true, log: '1' });
+    const requests: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
+      requests.push(input);
+      if (input.endsWith('/cs/authentication')) return new Response(JSON.stringify({ userName: 'portal.a' }));
+      if (input.endsWith('/ticket')) {
+        expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer saved-test-jwt');
+        return new Response('admin;STUDIO;123');
+      }
+      throw new Error('Unexpected login exchange');
+    }));
+    try {
+      await h.conn.runAuthTest('background');
+      expect(h.conn.computeConnectionState().display).toBe('connected');
+      expect(logout).not.toHaveBeenCalled();
+      expect(requests).toEqual(['https://bmp.test/Workspace/cs/authentication', 'https://bmp.test/Workspace/ticket']);
+      expect(h.ctx.client.portalActor).toBe('portal.a');
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it('reconciles repeated A to B to A to B actor switches', async () => {
+    const h = await createHarness();
+    h.ctx.client.auth.portalActor = 'portal.a';
+    let actor = 'portal.b';
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ userName: actor }))));
+    try {
+      for (actor of ['portal.b', 'portal.a', 'portal.b']) {
+        await h.conn.runAuthTest('background');
+        expect(h.conn.computeConnectionState()).toMatchObject({ display: 'connected', identities: { sameUser: true } });
+        expect(h.ctx.client.portalActor).toBe(actor);
+      }
+      expect(h.ctx.client.auth.logout).toHaveBeenCalledTimes(3);
+      await h.conn.runAuthTest('background');
+      expect(h.ctx.client.auth.logout).toHaveBeenCalledTimes(3);
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it('allows explicit retry of an unresolved actor mismatch without background loops', async () => {
+    const h = await createHarness();
+    h.ctx.client.auth.portalActor = 'portal.a';
+    h.ctx.client.auth.logout = vi.fn();
+    h.ctx.client.auth.bindPortalActor = vi.fn();
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ userName: 'portal.b' }))));
+    try {
+      await h.conn.runAuthTest('background');
+      await h.conn.runAuthTest('background');
+      expect(h.ctx.client.auth.logout).toHaveBeenCalledTimes(1);
+      h.ctx.client.auth.logout.mockImplementation(() => { h.ctx.client.auth.portalActor = null; });
+      h.ctx.client.auth.bindPortalActor.mockImplementation((actor: string) => { h.ctx.client.auth.portalActor = actor; });
+      await h.conn.runAuthTest('explicit');
+      expect(h.ctx.client.auth.logout).toHaveBeenCalledTimes(2);
+      expect(h.conn.computeConnectionState().display).toBe('connected');
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it('no profile → not-configured', async () => {
     const h = await createHarness({ withProfile: false });
     const state = h.conn.computeConnectionState();
@@ -449,15 +516,24 @@ describe('resetConnectionState — clears stale state', () => {
 });
 
 describe('Blueprint version capability', () => {
-  it('assumes lookup support when /buildNum is unavailable', async () => {
+  it('leaves lookup unresolved when /buildNum is unavailable', async () => {
     const h = await createHarness();
     h.setHealthResult({ up: true, reachable: true });
     h.setBuildNumber(null);
 
     await h.conn.pollHealth();
 
-    expect(h.ctx.client.supportsLookup).toBe(true);
+    expect(h.ctx.client.supportsLookup).toBeNull();
     expect(h.conn.computeConnectionState().blueprintSupported).toBe(true);
+  });
+
+  it('does not overwrite a verified legacy capability when /buildNum is unavailable', async () => {
+    const h = await createHarness();
+    h.ctx.client.assumeOldBmp();
+    h.setHealthResult({ up: true, reachable: true });
+    h.setBuildNumber(null);
+    await h.conn.pollHealth();
+    expect(h.ctx.client.supportsLookup).toBe(false);
   });
 
   it('disables Blueprint for a known pre-5.6.3 version', async () => {
@@ -672,14 +748,33 @@ describe('separated reachability and identity lifecycle', () => {
     }
   });
 
-  it('authoritative sign-out invalidates a borrowed chain once', async () => {
+  it.each(['http-401', 'json-null'] as const)('authoritative sign-out (%s) invalidates a borrowed chain once', async kind => {
     const h = await createHarness();
-    vi.stubGlobal('fetch', vi.fn(async () => portalResponse({ status: 401 })));
+    vi.stubGlobal('fetch', vi.fn(async () => kind === 'http-401'
+      ? portalResponse({ status: 401 }) : new Response(JSON.stringify({ userName: null }))));
     try {
       await h.conn.runAuthTest('background');
       await h.conn.runAuthTest('background');
       expect(h.ctx.client.auth.logout).toHaveBeenCalledTimes(1);
+      expect(h.ctx.client.testConnection).not.toHaveBeenCalled();
       expect(h.conn.computeConnectionState().display).toBe('needs-login');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('keeps stored command login independent of explicit portal sign-out', async () => {
+    const h = await createHarness();
+    h.ctx.settings.profiles[0].commandAuthMode = 'stored';
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ userName: null }))));
+    try {
+      await h.conn.runAuthTest('background');
+      expect(h.ctx.client.auth.logout).not.toHaveBeenCalled();
+      expect(h.ctx.client.testConnection).toHaveBeenCalledTimes(1);
+      expect(h.conn.computeConnectionState()).toMatchObject({
+        display: 'connected',
+        identities: { portal: { status: 'unavailable' }, command: { status: 'connected', source: 'stored-login' } },
+      });
     } finally {
       vi.unstubAllGlobals();
     }

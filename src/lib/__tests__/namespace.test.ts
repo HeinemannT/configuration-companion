@@ -11,6 +11,13 @@ import { describe, it, expect } from 'vitest';
 import { resolveNamespace, resolveCopyText } from '../namespace';
 
 describe('resolveNamespace', () => {
+  it.each([['Organisation', 'o'], ['User', 'u'], ['AccessPolicy', 'acpol'], ['ClassConfig', 'c'], ['SystemMethodConfig', 'c']])(
+    'uses the native IdSpace for %s', (type, prefix) => {
+      expect(resolveNamespace(type)).toBe(prefix);
+      expect(resolveNamespace(type.toUpperCase())).toBe(prefix);
+      expect(resolveCopyText({ rid: '9007199254740993', type, businessId: '100' }, 'ctrl').text).toBe(`${prefix}.100`);
+    },
+  );
   it('resolves enterprise PascalCase classNames (the bug)', () => {
     expect(resolveNamespace('CeRiskAssessment')).toBe('ceras');
     expect(resolveNamespace('CeVendor')).toBe('ceven');

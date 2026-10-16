@@ -609,7 +609,7 @@ export class EcQueryService {
       feature?: import('./bmp-transport').BmpTransportMetrics['feature'],
     ) => Promise<EcResult>,
     /** BmpClient.resolveRef, same dynamic-dispatch rationale. */
-    private readonly resolveRef: (rid: string) => Promise<string>,
+    private readonly resolveRef: (rid: string, signal?: AbortSignal) => Promise<string>,
     /** BmpClient.PANE_PROPS — passed by value so this file doesn't need to
      *  import a runtime value back out of bmp-client.ts. */
     private readonly paneProps: readonly string[],
@@ -656,19 +656,25 @@ export class EcQueryService {
     if (valid.length > BATCH_CHUNK_SIZE) valid = valid.slice(0, BATCH_CHUNK_SIZE);
 
     // Resolve all refs in parallel (version-aware: lookup() or t.{bid})
+    const resolutionErrors = new Set<string>();
     const resolved = await pMap(valid, async (rid): Promise<{ rid: string; ref: string } | null> => {
+      signal?.throwIfAborted();
       try {
-        const ref = await this.resolveRef(rid);
+        const ref = await this.resolveRef(rid, signal);
+        signal?.throwIfAborted();
         return { rid, ref };
       } catch (e) {
+        signal?.throwIfAborted();
         log.debug('batchEnrich', `resolveRef failed for ${rid}:`, e);
+        resolutionErrors.add(e instanceof Error ? e.message : String(e));
         return null;
       }
     }, MAX_PARALLEL);
+    signal?.throwIfAborted();
     const refs = resolved.filter((r): r is { rid: string; ref: string } => r !== null);
 
     if (refs.length === 0) {
-      return { results: {}, error: `All ${valid.length} RIDs failed ref resolution` };
+      return { results: {}, error: `All ${valid.length} RIDs failed ref resolution: ${[...resolutionErrors].slice(0, 3).join('; ')}` };
     }
 
     const lines = ['_d := "|||"', '_r := ""'];
@@ -715,7 +721,11 @@ export class EcQueryService {
     const code = lines.join('\n');
 
     const result = await this.executeEc(code, undefined, false, signal);
-    if (!result.ok) { log.debug('batchEnrich', `EC failed for ${refs.length} RIDs:`, result.error); return { results: {}, error: result.error ?? 'EC execution failed' }; }
+    if (!result.ok) {
+      const error = result.error || result.log || 'EC execution failed';
+      log.debug('batchEnrich', `EC failed for ${refs.length} RIDs:`, error);
+      return { results: {}, error };
+    }
     if (result.log == null) { log.debug('batchEnrich', 'EC returned null output'); return { results: {}, error: 'EC returned null output' }; }
     if (result.log.trim() === '') { log.debug('batchEnrich', `EC returned empty for ${refs.length} RIDs:`, refs.map(r => r.rid)); return { results: {} }; }
 

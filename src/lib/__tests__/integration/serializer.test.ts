@@ -14,6 +14,7 @@ import {
 import { extractAccessTrace } from '../../bmp-client'
 import { commandResults, parseTypeCatalogue, parseReferenceIdentity } from '../../bmp-type-catalogue'
 import { deserializeResponse, deserializeStream, serializeCommands } from '../../java-serial'
+import { commandSignature } from '../../bmp-command-signature'
 import { buildDiscoveryEc, integrationTarget, parseDiscoveryRows, type DiscoveryRow, type IntegrationTarget } from './config'
 
 registerBmpTypes()
@@ -150,7 +151,11 @@ async function sendCommand(target: IntegrationTarget, ticket: string, command: u
   const params = new URLSearchParams({ LOGIN_TICKET: ticket, async: 'false', _noctx: 'true' })
   const res = await fetch(`${target.bmpUrl}cs/command?${params}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-java-serialized-object' },
+    headers: {
+      'Content-Type': 'application/x-java-serialized-object',
+      'X-CS-Login-Ticket': ticket,
+      'X-CS-Signature': await commandSignature(ticket, exact as ArrayBuffer),
+    },
     body: exact as unknown as BodyInit,
   })
   if (!res.ok) {

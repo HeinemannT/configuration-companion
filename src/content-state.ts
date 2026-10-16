@@ -66,6 +66,13 @@ export class ContentState {
   // Enrichment data from server (RID → identity)
   enrichments = new Map<string, EnrichmentData>();
 
+  receiveEnrichments(enrichments: Record<string, EnrichmentData>): void {
+    for (const [rid, data] of Object.entries(enrichments)) {
+      this.enrichments.set(rid, data);
+      this.requestedRids.delete(rid);
+    }
+  }
+
   // Cached properties for technical overlay cards
   overlayProps = new Map<string, Record<string, string>>();
 
@@ -74,6 +81,17 @@ export class ContentState {
 
   // Dedup: RIDs we've already requested enrichment for
   requestedRids = new Set<string>();
+
+  /** Empty results stop the spinner and suppress render-driven retry loops.
+   * A deliberate refresh or recovered connection must make them eligible again. */
+  retryFailedEnrichments(): void {
+    this.requestedRids.clear();
+    for (const [rid, data] of this.enrichments) {
+      if (!data.businessId && !data.type && !data.name && !data.templateBusinessId && !data.cascade) {
+        this.enrichments.delete(rid);
+      }
+    }
+  }
 
   // Dedup: RIDs we've already sent as OBJECTS_DISCOVERED
   discoveredRids = new Set<string>();

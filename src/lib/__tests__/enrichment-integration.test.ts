@@ -516,7 +516,7 @@ describe('Enrichment Integration — Full Pipeline', () => {
 
   // ── Scenario 9: Double failure → permanently failed ────────────────
 
-  it('marks RID as permanently failed after two failures, broadcasts empty on next call', async () => {
+  it('clears loading badges immediately after two failures and does not report green success', async () => {
     // Both attempts fail
     harness.transportMock.mockResolvedValue(
       makeErrorResponseObjects('Server down'),
@@ -531,6 +531,13 @@ describe('Enrichment Integration — Full Pipeline', () => {
     expect(harness.ctx._activities).toContainEqual(
       expect.objectContaining({ level: 'warn', message: expect.stringContaining('skipped') }),
     );
+    expect(harness.ctx._broadcasts).toContainEqual({
+      type: 'BADGE_ENRICHMENT', enrichments: { [RIDS.scorecard]: {} },
+    });
+    expect(harness.ctx._activities).toContainEqual({
+      level: 'warn', message: 'Enriched 0 objects; 1 could not be loaded',
+    });
+    expect(harness.ctx._activities.some(activity => activity.level === 'success')).toBe(false);
   });
 
   it('permanently failed RID gets empty broadcast without network call', async () => {

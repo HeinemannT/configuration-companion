@@ -103,6 +103,7 @@ describe('batchEnrich truncates oversized input', () => {
     const client = new BmpClient('https://bmp.test/', 'admin', 'pass');
 
     let capturedCode = '';
+    client.applyVersionFlags('5.6.7.2');
     client.executeEc = vi.fn(async (code: string) => {
       capturedCode = code;
       return { ok: true, log: '' };
@@ -266,6 +267,7 @@ describe('Invalid RID pre-filter in batchEnrich', () => {
     const client = new BmpClient('https://bmp.test/', 'admin', 'pass');
 
     // Mock executeEc to return results for valid RIDs
+    client.applyVersionFlags('5.6.7.2');
     client.executeEc = vi.fn(async (code: string) => {
       return {
         ok: true,
