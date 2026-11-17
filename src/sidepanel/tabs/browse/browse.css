@@ -1,0 +1,190 @@
+/* Browse tab (side panel). Shared
+ * primitives (icons, focus ring, icon and text buttons, input, menu, ID,
+ * spacing scale) come from src/styles/ui.css; this sheet keeps the tab's
+ * layout. Colours from src/styles/tokens.css (crev-light / crev-dark).
+ * Text edge of every row and block: band inset 8 + padding 8 = 16px.
+ * Everything is scoped under .bw. */
+
+#panel-browse.active { display: flex; flex-direction: column; height: 100%; padding: 0; overflow: hidden; }
+
+.bw {
+  --bw-res-h: 40px;
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+:where(.bw) button { margin: 0; text-align: left; }
+.bw [hidden] { display: none !important; }
+
+/* ── search bar ─────────────────────────────── */
+.bw-bar { flex: none; padding: var(--space-2) var(--ui-inset) 0; }
+.bw-field { position: relative; }
+.bw-field .bw-field-ic { position: absolute; left: var(--space-2); top: 6px; color: var(--text-helper); pointer-events: none; }
+.bw-q { width: 100%; height: 28px; padding: 0 36px 0 32px; color: var(--text-primary); font: 400 var(--ui-fs-base)/20px var(--font-ui); }
+.bw-kbd, .bw-foot kbd {
+  font: 400 11px/16px var(--font-mono); color: var(--text-helper);
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-1); padding: 0 var(--space-1); background: var(--bg);
+}
+.bw-kbd { position: absolute; right: var(--space-2); top: 5px; pointer-events: none; }
+.bw-field .bw-clr { position: absolute; right: 2px; top: 2px; display: none; }
+.bw-field.has .bw-clr { display: grid; }
+.bw-field.has .bw-kbd { display: none; }
+
+.bw-tools { display: flex; align-items: center; gap: var(--space-1); height: var(--ui-ctl-h); margin: var(--space-2) 0; }
+.bw-sp { flex: 1; }
+.bw-seg { display: inline-flex; flex: none; gap: var(--space-0); height: var(--ui-ctl-h); padding: var(--space-0); background: var(--layer-01); border-radius: var(--radius-2); }
+.bw-seg button { height: 20px; padding: 0 var(--space-2); border-radius: var(--radius-1); font-size: 12px; line-height: 20px; color: var(--text-secondary); }
+.bw-seg button:hover { color: var(--text-primary); }
+.bw-seg button[aria-pressed="true"] { background: var(--bg); color: var(--text-primary); font-weight: 600; box-shadow: 0 0 0 1px var(--border-subtle); }
+.bw .ui-tbtn[aria-expanded="true"] { background: var(--layer-hover); color: var(--text-primary); }
+.bw .ui-tbtn.on { background: var(--brand-bg); color: var(--text-brand); }
+.bw .ui-ibtn[aria-pressed="true"] { background: var(--brand-bg); color: var(--text-brand); }
+
+.bw-menu { z-index: 5; min-width: 148px; }
+.bw-menu button { display: flex; }
+.bw-menu .bw-ck { color: var(--text-brand); visibility: hidden; }
+.bw-menu button[aria-checked="true"] .bw-ck { visibility: visible; }
+
+/* ── scrolling body ─────────────────────────── */
+.bw-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding-bottom: var(--space-2); scrollbar-width: thin; outline: 0; }
+
+.bw-crumbs { display: flex; align-items: center; min-width: 0; height: var(--ui-row-h); padding: 0 var(--space-3); font-size: 12px; color: var(--text-secondary); }
+.bw-crumb { flex: 0 1 auto; min-width: 0; height: var(--ui-ctl-h); padding: 0 var(--space-1); border-radius: var(--radius-2); line-height: var(--ui-ctl-h); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bw-crumb:hover { background: var(--layer-hover); color: var(--text-primary); }
+.bw-crumb.last { flex: 0 100 auto; color: var(--text-primary); font-weight: 600; }
+.bw-crumbs .bw-sep { color: var(--text-helper); }
+
+.bw-note { display: flex; align-items: flex-start; gap: var(--space-2); margin: var(--space-1) var(--ui-inset); padding: var(--space-1) var(--space-2); font-size: 12px; line-height: 16px; color: var(--text-secondary); }
+.bw-note .ic { color: var(--text-helper); }
+.bw-lnk { color: var(--text-brand); font-weight: 500; }
+.bw-lnk:hover { text-decoration: underline; }
+.bw-quiet { margin: 0 var(--ui-inset); padding: var(--space-1) var(--space-2); font-size: 12px; line-height: 20px; color: var(--text-helper); }
+
+/* group header: clear space above, quiet label */
+.bw-grp { display: flex; align-items: center; justify-content: space-between; height: var(--ui-ctl-h); margin: var(--space-3) var(--ui-inset) 0; padding: 0 var(--space-2); border-radius: var(--radius-2); font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+.bw-gc, .bw-gl { display: inline-flex; align-items: center; gap: var(--space-1); font-size: 11px; font-weight: 400; color: var(--text-helper); }
+button.bw-grp { width: calc(100% - 2 * var(--ui-inset)); }
+button.bw-grp:hover { background: var(--layer-01); }
+/* a folding header: chevron first, in the tree's chevron column */
+.bw-grp.tog { justify-content: flex-start; gap: var(--space-1); }
+.bw-grp.tog .bw-gchev { margin: 0 var(--space-0); color: var(--text-helper); transition: transform 80ms; }
+.bw-grp.tog[aria-expanded="false"] .bw-gchev { transform: rotate(-90deg); }
+.bw-grp.tog .bw-gc { margin-left: auto; }
+
+.bw-pickhint { flex: 1 1 auto; min-width: 0; height: var(--ui-ctl-h); padding: 0 var(--space-2); border-radius: var(--radius-2); background: var(--brand-bg); color: var(--text-brand); font-size: 12px; line-height: var(--ui-ctl-h); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── rows ───────────────────────────────────── */
+.bw-row {
+  --band: transparent;
+  position: relative; display: flex; align-items: center; gap: var(--space-1);
+  height: var(--ui-row-h); margin: 0 var(--ui-inset);
+  padding: 0 var(--space-2) 0 calc(var(--space-2) + var(--d, 0) * var(--ui-indent));
+  border-radius: var(--radius-2); background: var(--band);
+  cursor: default; user-select: none;
+}
+.bw-row:hover { --band: var(--ui-row-hover); }
+.bw-row .kind { color: var(--text-secondary); }
+.bw-chev { position: relative; display: grid; flex: none; place-items: center; width: 16px; height: 16px; border-radius: var(--radius-1); color: var(--text-helper); }
+.bw-chev:not(:empty):hover { background: var(--layer-active); color: var(--text-primary); cursor: pointer; }
+/* the chevron takes clicks over the row's full height, not just its 16 px */
+.bw-chev:not(:empty)::after { content: ""; position: absolute; inset: -6px -4px; }
+.bw-chev .ic { transition: transform 80ms; }
+.bw-chev.closed .ic { transform: rotate(-90deg); }
+.bw-lbl { flex: 1 1 0; min-width: 0; height: var(--ui-row-h); display: flex; flex-wrap: wrap; align-content: flex-start; overflow: hidden; }
+.bw-nm { flex: 0 1 auto; max-width: 100%; min-width: 0; line-height: var(--ui-row-h); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bw-nm.unnamed { color: var(--text-helper); }
+.bw-id { flex: none; margin-left: var(--space-2); line-height: var(--ui-row-h); }
+.bw-mark { display: grid; flex: none; place-items: center; width: 16px; height: 16px; color: var(--text-brand); }
+
+/* current position: band, bar, bold name, marker icon */
+.bw-row.cur { --band: var(--brand-bg); }
+.bw-row.cur::before { content: ""; position: absolute; left: 0; top: 4px; bottom: 4px; width: 2px; border-radius: 1px; background: var(--brand); }
+.bw-row.cur .bw-nm { font-weight: 600; }
+.bw-row.cur .kind { color: var(--text-brand); }
+
+/* keyboard selection (tree, lists) and the selected result */
+.bw-row.kb { --band: var(--layer-hover); box-shadow: inset 0 0 0 1px var(--brand); }
+.bw-row.cur.kb { --band: var(--brand-bg); }
+.bw-row.sel, .bw-row.sel:hover { --band: var(--brand-bg); }
+.bw-row.flash { animation: bw-flash 1.4s ease-out; }
+@keyframes bw-flash { 0%, 40% { background: var(--brand-bg); box-shadow: inset 0 0 0 1px var(--brand); } 100% { box-shadow: inset 0 0 0 1px transparent; } }
+
+/* actions: on hover or a keyboard selection only (never because a row is
+   merely selected), laid over the row's end on the band's own colour with a
+   short fade; the row does not move and reserves no room for them. The ID
+   gives way only where the two would touch (.idc, set by the tab). */
+.bw-acts {
+  position: absolute; top: 2px; right: var(--space-1); display: none; align-items: center; height: var(--ui-ctl-h);
+  padding-left: var(--space-2);
+  background: linear-gradient(var(--band), var(--band)), var(--bg);
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 var(--space-2));
+  mask-image: linear-gradient(to right, transparent, #000 var(--space-2));
+}
+.bw-row:hover .bw-acts, .bw-row.kf .bw-acts { display: flex; }
+/* Where they would touch, the ID gives way, but stays a target: pointing at
+   it brings it back and puts the actions away, so it can still be copied. */
+.bw-row.idc:is(:hover, .kf) .bw-id { opacity: 0; }
+.bw-row.idc .bw-id:hover { opacity: 1; }
+.bw-row.idc:has(.bw-id:hover) .bw-acts { display: none; }
+.bw-row:hover .bw-mark, .bw-row.kf .bw-mark,
+.bw-row:hover .bw-ret, .bw-row.kf .bw-ret { visibility: hidden; }
+.bw-acts .ui-ibtn:hover { background: var(--layer-active); }
+.bw .ui-ibtn.copied { color: var(--support-ok, #24a148); }
+.bw .ui-ibtn.copy-failed { color: var(--support-error, #da1e28); }
+
+/* the mono ID copies on click (Shift: the RID); a quiet chip on hover */
+.bw-id[data-act] { cursor: copy; border-radius: var(--radius-1); }
+.bw-id[data-act]:hover { color: var(--text-primary); background: var(--layer-active); box-shadow: 0 0 0 2px var(--layer-active); }
+.bw-id.copied { color: var(--support-ok, #24a148); }
+.bw-id.copy-failed { color: var(--support-error, #da1e28); }
+
+/* search results: name + ID, then where it is (one line when nothing) */
+.bw-row.res { height: var(--bw-res-h); }
+.bw-row.res.one { height: var(--ui-row-h); }
+.bw-body { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
+.bw-row.res .bw-lbl { flex: none; width: 100%; height: 20px; }
+.bw-row.res .bw-nm, .bw-row.res .bw-id { line-height: 20px; }
+/* dir=rtl + an LTR <bdi>: an overlong path loses its start, never its
+   immediate parent, and the ellipsis sits at the left */
+.bw-path { height: 16px; font-size: 11px; line-height: 16px; color: var(--text-helper); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+.bw-row.res .bw-acts { top: 8px; }
+.bw-row.res.one .bw-acts { top: 2px; }
+.bw-ret { display: none; flex: none; place-items: center; width: 16px; height: 16px; color: var(--text-helper); }
+.bw-row.sel .bw-ret { display: grid; }
+
+.bw-row.code { margin-top: var(--space-3); color: var(--text-secondary); }
+.bw-row.code .bw-nm { font-size: 12px; }
+.bw-row.code q { color: var(--text-primary); quotes: "\201C" "\201D"; }
+
+.bw-more { display: flex; align-items: center; gap: var(--space-2); width: calc(100% - 2 * var(--ui-inset)); height: var(--ui-row-h); margin: var(--space-1) var(--ui-inset) 0; padding: 0 var(--space-2); border-radius: var(--radius-2); font-size: 12px; font-weight: 500; color: var(--text-brand); }
+.bw-more:hover { background: var(--brand-bg); }
+.bw-more.kb { box-shadow: inset 0 0 0 1px var(--brand); }
+.bw-more.busy, .bw-more.busy:hover { background: none; color: var(--text-helper); font-weight: 400; cursor: default; }
+
+.bw-status { display: flex; align-items: center; gap: var(--space-2); height: var(--ui-row-h); margin: 0 var(--ui-inset); padding: 0 var(--space-2); font-size: 12px; color: var(--text-helper); }
+.bw-spin { flex: none; width: 12px; height: 12px; border: 1.5px solid var(--border-subtle); border-top-color: var(--brand); border-radius: 50%; animation: bw-spin .8s linear infinite; }
+@keyframes bw-spin { to { transform: rotate(360deg); } }
+
+.bw-sk { display: flex; align-items: center; gap: var(--space-1); height: var(--ui-row-h); margin: 0 var(--ui-inset); padding: 0 var(--space-2) 0 calc(var(--space-2) + var(--d, 0) * var(--ui-indent)); }
+.bw-sk.res { height: var(--ui-row-h); }
+.bw-sk.crumb { margin: 0 var(--ui-inset); padding: 0 var(--space-2); }
+.bw-sk i { display: block; height: 8px; border-radius: var(--radius-2); background: var(--layer-hover); animation: bw-pulse 1.2s ease-in-out infinite; }
+/* placeholders as light as the glyphs they stand for: a 6 px chevron dot in
+   the 16 px chevron column, a 12 px icon mark in the 16 px icon column */
+.bw-sk i.c { flex: none; width: 6px; height: 6px; margin: 0 5px; border-radius: 1px; }
+.bw-sk i.i { flex: none; width: 12px; height: 12px; margin: 0 var(--space-0); border-radius: 3px; }
+.bw-sk .bw-sp { flex: 1; }
+@keyframes bw-pulse { 50% { opacity: .45; } }
+
+/* .bw-empty is the shared empty state (.ui-empty in src/styles/ui.css) */
+
+/* keyboard hints, only while typing */
+.bw-foot { flex: none; display: flex; align-items: center; gap: var(--space-3); height: 32px; padding: 0 var(--space-4); overflow: hidden; background: var(--layer-01); font-size: 11px; color: var(--text-helper); white-space: nowrap; }
+.bw-foot span { display: inline-flex; align-items: center; gap: var(--space-1); }
+.bw-foot .off { opacity: .45; }
+
+@media (prefers-reduced-motion: reduce) {
+  .bw-sk i, .bw-spin, .bw-row.flash { animation: none; }
+}

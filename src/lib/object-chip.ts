@@ -1,0 +1,281 @@
+/**
+ * Shared semantic representation of a BMP object.
+ *
+ * `typeBadge()` remains a passive visual primitive. An ObjectChip owns the
+ * object-level contract: a readable identity, keyboard activation, and the
+ * existing rich object preview. This keeps navigable rows free to use passive
+ * badges without creating nested click targets.
+ */
+import { matchesCombo } from './shortcuts';
+import { h } from './dom';
+import { sendFireForget, sendRequest } from './messaging';
+import { openObject } from './open-object';
+import { buildObjectCard } from './object-card';
+import { resolveDisplayIdentity } from './object-identity';
+import { typeBadge } from './type-badge';
+import { getTypeColor, type ObjectReference } from './types';
+import { accessDestinationForObject } from './access-workspace/entry';
+
+export interface ObjectChipOptions {
+  /** Connection that supplied this identity, captured when the chip is built.
+   * Required for contextual Access navigation; never infer it on activation. */
+  environment?: string;
+  /** Override the visible name while retaining the real identity in preview. */
+  label?: string;
+  /** Show the business ID (or RID fallback) after the label. */
+  showId?: boolean;
+  /** Quiet trailing context such as "via template". */
+  annotation?: string;
+  /** Extra surface-specific class; shared object-chip classes are always kept. */
+  className?: string;
+  size?: 'xs';
+  /** Primary activation. Omit for a display-only chip. */
+  onActivate?: () => void;
+  /** Preview-card expand action. Defaults to the full object view. */
+  onOpenFull?: () => void;
+  /** Disable the rich preview only for constrained/specialized hosts. */
+  preview?: boolean;
+}
+
+interface ResolvedPreview {
+  name?: string;
+  type?: string;
+  businessId?: string;
+  templateBusinessId?: string;
+  codePreview?: string;
+}
+
+const previewCache = new Map<string, ResolvedPreview>();
+let previewHost: HTMLElement | null = null;
+let activeAnchor: HTMLElement | null = null;
+let showTimer: ReturnType<typeof setTimeout> | null = null;
+let hideTimer: ReturnType<typeof setTimeout> | null = null;
+let requestSequence = 0;
+let viewportListenersWired = false;
+let warmUntil = 0;
+
+const INITIAL_DELAY = 450;
+const WARM_DELAY = 100;
+const WARM_WINDOW = 300;
+const LEAVE_DELAY = 220;
+
+function clearTimer(timer: ReturnType<typeof setTimeout> | null): void {
+  if (timer) clearTimeout(timer);
+}
+
+function ensurePreviewHost(): HTMLElement {
+  if (previewHost?.isConnected) return previewHost;
+  previewHost = h('div', { class: 'object-preview-host' });
+  previewHost.addEventListener('pointerenter', () => clearTimer(hideTimer));
+  previewHost.addEventListener('pointerleave', scheduleHide);
+  previewHost.addEventListener('keydown', escapePreview);
+  document.body.appendChild(previewHost);
+  if (!viewportListenersWired) {
+    viewportListenersWired = true;
+    window.addEventListener('resize', () => {
+      if (activeAnchor?.isConnected && previewHost?.classList.contains('object-preview-host--visible')) {
+        positionPreview(activeAnchor, previewHost);
+      }
+    });
+    // Nested panes can scroll without firing a window scroll. Capturing the
+    // event keeps the card attached to its object anywhere in the UI.
+    document.addEventListener('scroll', () => {
+      if (activeAnchor?.isConnected && previewHost?.classList.contains('object-preview-host--visible')) {
+        positionPreview(activeAnchor, previewHost);
+      }
+    }, true);
+  }
+  return previewHost;
+}
+
+function positionPreview(anchor: HTMLElement, host: HTMLElement): void {
+  const gap = 4;
+  const edge = 8;
+  const anchorRect = anchor.getBoundingClientRect();
+  const hostRect = host.getBoundingClientRect();
+  let top = anchorRect.bottom + gap;
+  let left = anchorRect.left;
+
+  if (top + hostRect.height > window.innerHeight - edge) {
+    top = anchorRect.top - hostRect.height - gap;
+  }
+  top = Math.max(edge, top);
+  left = Math.min(left, window.innerWidth - hostRect.width - edge);
+  left = Math.max(edge, left);
+
+  host.style.top = `${top}px`;
+  host.style.left = `${left}px`;
+}
+
+/** Escape closes an open preview card and keeps the key from closing the
+ *  window too (one layer at a time). */
+function escapePreview(event: KeyboardEvent): void {
+  if (!matchesCombo(event, 'Escape')) return;
+  const open = !!previewHost?.classList.contains('object-preview-host--visible');
+  hidePreview();
+  if (open) { event.preventDefault(); event.stopPropagation(); }
+}
+
+function hidePreview(): void {
+  clearTimer(showTimer);
+  clearTimer(hideTimer);
+  showTimer = null;
+  hideTimer = null;
+  activeAnchor = null;
+  requestSequence += 1;
+  previewHost?.classList.remove('object-preview-host--visible');
+  warmUntil = Date.now() + WARM_WINDOW;
+}
+
+function scheduleHide(): void {
+  clearTimer(hideTimer);
+  hideTimer = setTimeout(() => {
+    if (previewHost?.matches(':hover')) return;
+    hidePreview();
+  }, LEAVE_DELAY);
+}
+
+function mergedIdentity(identity: ObjectReference, resolved?: ResolvedPreview): ObjectReference {
+  return {
+    ...identity,
+    name: identity.name || resolved?.name,
+    type: identity.type || resolved?.type,
+    businessId: identity.businessId || resolved?.businessId,
+    templateBusinessId: identity.templateBusinessId || resolved?.templateBusinessId,
+  };
+}
+
+function renderPreview(
+  anchor: HTMLElement,
+  identity: ObjectReference,
+  options: ObjectChipOptions,
+  resolved?: ResolvedPreview,
+): void {
+  if (activeAnchor !== anchor || !anchor.isConnected) return;
+  const data = mergedIdentity(identity, resolved);
+  const host = ensurePreviewHost();
+  const openFull = options.onOpenFull
+    ?? (() => openObject(identity.rid));
+
+  host.replaceChildren(buildObjectCard({
+    name: data.name,
+    type: data.type,
+    businessId: data.businessId,
+    templateBusinessId: data.templateBusinessId,
+    rid: data.rid,
+    color: getTypeColor(data.type),
+    codePreview: resolved?.codePreview,
+  }, {
+    onOpenFull: openFull,
+    ...(options.environment && ['Role', 'AccessPolicy'].includes(data.type ?? '') ? {
+      onOpenAccess: () => { hidePreview(); sendFireForget({ type: 'OPEN_ACCESS_WORKSPACE', environment: options.environment, destination: accessDestinationForObject(data) }); },
+    } : {}),
+  }));
+  host.classList.add('object-preview-host--visible');
+  warmUntil = Date.now() + WARM_WINDOW;
+  positionPreview(anchor, host);
+}
+
+async function enrichPreview(
+  anchor: HTMLElement,
+  identity: ObjectReference,
+  options: ObjectChipOptions,
+): Promise<void> {
+  const cacheKey = JSON.stringify([options.environment ?? '', identity.rid]);
+  const cached = previewCache.get(cacheKey);
+  if (cached) {
+    renderPreview(anchor, identity, options, cached);
+    return;
+  }
+
+  // A complete identity renders without a round trip. The lazy lookup adds a
+  // code preview and fills sparse identities, then remains cached per window.
+  renderPreview(anchor, identity, options);
+  const sequence = ++requestSequence;
+  const response = await sendRequest({ type: 'HOVER_LOOKUP', rid: identity.rid,
+    ...(options.environment ? { environment: options.environment } : {}) });
+  if (sequence !== requestSequence || activeAnchor !== anchor) return;
+  if (response?.type !== 'HOVER_LOOKUP_RESULT') return;
+  const resolved: ResolvedPreview = {
+    name: response.name,
+    type: response.objectType,
+    businessId: response.businessId,
+    templateBusinessId: response.templateBusinessId,
+    codePreview: response.codePreview,
+  };
+  if (Object.values(resolved).some(value => value !== undefined)) previewCache.set(cacheKey, resolved);
+  renderPreview(anchor, identity, options, resolved);
+}
+
+function wirePreview(anchor: HTMLElement, identity: ObjectReference, options: ObjectChipOptions): void {
+  const scheduleShow = (delay: number) => {
+    clearTimer(hideTimer);
+    clearTimer(showTimer);
+    activeAnchor = anchor;
+    showTimer = setTimeout(() => {
+      showTimer = null;
+      void enrichPreview(anchor, identity, options);
+    }, delay);
+  };
+
+  anchor.addEventListener('pointerenter', () => {
+    const visible = previewHost?.classList.contains('object-preview-host--visible') ?? false;
+    scheduleShow(visible || Date.now() < warmUntil ? WARM_DELAY : INITIAL_DELAY);
+  });
+  anchor.addEventListener('pointerleave', scheduleHide);
+  anchor.addEventListener('focusin', () => scheduleShow(0));
+  anchor.addEventListener('focusout', (event) => {
+    if (previewHost?.contains(event.relatedTarget as Node | null)) return;
+    scheduleHide();
+  });
+  anchor.addEventListener('keydown', escapePreview);
+}
+
+export function objectChip(identity: ObjectReference, options: ObjectChipOptions = {}): HTMLElement {
+  const interactive = !!options.onActivate;
+  const display = resolveDisplayIdentity(identity);
+  const label = options.label ?? identity.name ?? display.primary;
+  const shownId = display.primary;
+  const className = [
+    'object-chip',
+    options.size === 'xs' ? 'object-chip--xs' : '',
+    interactive ? 'object-chip--interactive' : '',
+    options.preview !== false ? 'object-chip--preview' : '',
+    options.className ?? '',
+  ].filter(Boolean).join(' ');
+  const attrs = interactive
+    ? {
+        class: className,
+        type: 'button',
+        title: `Open ${identity.type || 'object'} ${label}`,
+        onClick: options.onActivate,
+      }
+    : {
+        class: className,
+        title: `${identity.type || 'Object'} · ${label}`,
+      };
+  const chip = h(interactive ? 'button' : 'span', attrs,
+    typeBadge(identity.type, options.size ? { size: options.size } : {}),
+    h('span', { class: 'object-chip-label' }, label),
+    options.showId && shownId !== label
+      ? h('span', { class: 'object-chip-id' }, shownId)
+      : null,
+    options.annotation
+      ? h('span', { class: 'object-chip-annotation' }, options.annotation)
+      : null,
+  );
+
+  // A caller may reuse its options object while changing selection/connection.
+  // The chip and its delayed preview retain the identity they were built for.
+  if (options.preview !== false) wirePreview(chip, { ...identity }, { ...options });
+  return chip;
+}
+
+/** Test/lifecycle hook: extension documents are normally destroyed wholesale. */
+export function resetObjectPreview(): void {
+  hidePreview();
+  warmUntil = 0;
+  previewCache.clear();
+  previewHost?.remove();
+  previewHost = null;
+}

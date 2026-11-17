@@ -1,0 +1,108 @@
+name: release
+
+# A tag such as v1.2.3 (base version equal to manifest.json) builds the
+# extension and publishes configuration-companion-<version>.zip as a release.
+# Tags with a suffix (v1.2.3-beta.1) are published as prereleases.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Verify tag matches manifest version
+        id: version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          BASE_VERSION="${TAG_VERSION%%-*}"
+          MANIFEST_VERSION=$(node -p "require('./manifest.json').version")
+          if [ "$BASE_VERSION" != "$MANIFEST_VERSION" ]; then
+            echo "::error::Tag base ($BASE_VERSION) does not match manifest.json version ($MANIFEST_VERSION). Bump one to match the other before tagging."
+            exit 1
+          fi
+          echo "VERSION=$TAG_VERSION" >> "$GITHUB_ENV"
+          echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+          if [ "$TAG_VERSION" != "$BASE_VERSION" ]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify
+        run: npm run verify
+
+      - name: Package
+        run: |
+          mkdir -p pkg
+          cp manifest.json pkg/
+          cp LICENSE PRIVACY.md THIRD-PARTY-NOTICES.md pkg/
+          cp -r dist/* pkg/
+          cp -r icons pkg/
+
+      - name: Package contract
+        run: node scripts/check-package-contract.mjs --dir pkg
+
+      - name: Zip
+        run: |
+          cd pkg
+          zip -r "../configuration-companion-${VERSION}.zip" .
+          cd ..
+          sha256sum "configuration-companion-${VERSION}.zip" > "configuration-companion-${VERSION}.zip.sha256"
+
+      - name: Upload release files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-files
+          path: |
+            configuration-companion-${{ env.VERSION }}.zip
+            configuration-companion-${{ env.VERSION }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - name: Download release files
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-files
+
+      - name: Create or update release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          files: |
+            configuration-companion-${{ env.VERSION }}.zip
+            configuration-companion-${{ env.VERSION }}.zip.sha256
+          generate_release_notes: false
+          draft: false
+          prerelease: ${{ needs.build.outputs.prerelease }}

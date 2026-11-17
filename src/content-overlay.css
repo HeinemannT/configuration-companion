@@ -1,0 +1,990 @@
+.crev-outline {
+  /* Positioning context for the badge and the frame. The host's own
+     outline, border and pseudo-elements are left alone: BMP renders some
+     hosts' content via their own ::after (tab labels are
+     `::after { content: "<label>" }`), so the outline is our own child
+     element, .crev-frame (content-outline.ts). */
+  position: relative !important;
+}
+/* The frame of a marked object: corner ticks at rest in a darker tone of
+   the type colour (--crev-tick, at least 4.8:1 on white), the full outline
+   (1.5px) and a 7% tint on hover or focus of the element or its badge.
+   position, z-index and pointer-events are inline (content-outline.ts).
+   Nesting (lib/badge-look.ts nestingLevel): containers dashed and 3px
+   outside, widgets solid ticks, parts short thin ticks at all four corners
+   (no dot: the badge is a part's one mark). */
+.crev-frame {
+  inset: 0;
+  box-sizing: border-box;
+  border: 1.5px solid transparent;
+  border-radius: 2px;
+  pointer-events: none;
+  --c: var(--crev-tick, #525252);
+  --l: 10px;
+  --w: 2px;
+  background:
+    linear-gradient(var(--c), var(--c)) left top / var(--l) var(--w) no-repeat,
+    linear-gradient(var(--c), var(--c)) left top / var(--w) var(--l) no-repeat,
+    linear-gradient(var(--c), var(--c)) right top / var(--l) var(--w) no-repeat,
+    linear-gradient(var(--c), var(--c)) right top / var(--w) var(--l) no-repeat,
+    linear-gradient(var(--c), var(--c)) left bottom / var(--l) var(--w) no-repeat,
+    linear-gradient(var(--c), var(--c)) left bottom / var(--w) var(--l) no-repeat,
+    linear-gradient(var(--c), var(--c)) right bottom / var(--l) var(--w) no-repeat,
+    linear-gradient(var(--c), var(--c)) right bottom / var(--w) var(--l) no-repeat;
+  background-origin: border-box;
+  background-clip: border-box;
+}
+.crev-frame.crev-frame--container {
+  inset: -3px;
+  --l: 16px;
+  --w: 1.5px;
+  background:
+    repeating-linear-gradient(90deg, var(--c) 0 4px, transparent 4px 7px) left top / var(--l) var(--w) no-repeat,
+    repeating-linear-gradient(180deg, var(--c) 0 4px, transparent 4px 7px) left top / var(--w) var(--l) no-repeat,
+    repeating-linear-gradient(270deg, var(--c) 0 4px, transparent 4px 7px) right top / var(--l) var(--w) no-repeat,
+    repeating-linear-gradient(180deg, var(--c) 0 4px, transparent 4px 7px) right top / var(--w) var(--l) no-repeat,
+    repeating-linear-gradient(90deg, var(--c) 0 4px, transparent 4px 7px) left bottom / var(--l) var(--w) no-repeat,
+    repeating-linear-gradient(0deg, var(--c) 0 4px, transparent 4px 7px) left bottom / var(--w) var(--l) no-repeat,
+    repeating-linear-gradient(270deg, var(--c) 0 4px, transparent 4px 7px) right bottom / var(--l) var(--w) no-repeat,
+    repeating-linear-gradient(0deg, var(--c) 0 4px, transparent 4px 7px) right bottom / var(--w) var(--l) no-repeat;
+  background-origin: border-box;
+  border-style: dashed;
+}
+.crev-frame.crev-frame--part {
+  --l: 5px;
+  --w: 1.5px;
+  background:
+    linear-gradient(var(--c), var(--c)) left top / var(--l) var(--w) no-repeat,
+    linear-gradient(var(--c), var(--c)) left top / var(--w) var(--l) no-repeat,
+    linear-gradient(var(--c), var(--c)) right top / var(--l) var(--w) no-repeat,
+    linear-gradient(var(--c), var(--c)) right top / var(--w) var(--l) no-repeat,
+    linear-gradient(var(--c), var(--c)) left bottom / var(--l) var(--w) no-repeat,
+    linear-gradient(var(--c), var(--c)) left bottom / var(--w) var(--l) no-repeat,
+    linear-gradient(var(--c), var(--c)) right bottom / var(--l) var(--w) no-repeat,
+    linear-gradient(var(--c), var(--c)) right bottom / var(--w) var(--l) no-repeat;
+  background-origin: border-box;
+}
+/* An ancestor of the hovered element: its ticks light up (longer, bolder). */
+.crev-outline:has(.crev-outline:hover) > .crev-frame { --l: 18px; --w: 2.5px; }
+.crev-outline:has(.crev-outline:hover) > .crev-frame.crev-frame--container { --l: 26px; --w: 2px; }
+.crev-outline:has(.crev-outline:hover) > .crev-frame.crev-frame--part { --l: 8px; --w: 2px; }
+/* Hovered or focused (the element, or its badge): the full line and a tint. */
+.crev-outline:hover:not(:has(.crev-outline:hover)) > .crev-frame,
+.crev-outline:has(> .crev-label:hover) > .crev-frame,
+.crev-outline:has(> .crev-label :focus-visible) > .crev-frame,
+.crev-outline:focus-visible > .crev-frame {
+  border-color: var(--c);
+  background-color: color-mix(in srgb, var(--crev-color, #707070) 7%, transparent);
+}
+/* Charts and pictures: only lines, never a fill. */
+.crev-outline:hover:not(:has(.crev-outline:hover)) > .crev-frame.crev-on-image,
+.crev-outline:has(> .crev-label:hover) > .crev-frame.crev-on-image { background-color: transparent; }
+/* Dark and image backgrounds (the portal's dark header, charts, pictures):
+   the bright type colour with a white keyline and a soft halo. */
+.crev-frame.crev-on-dark,
+.crev-frame.crev-on-image {
+  --c: var(--crev-color, #a8a8a8);
+  filter: drop-shadow(0 0 0.5px #ffffff) drop-shadow(0 0 1.5px rgba(255,255,255,0.85));
+}
+.crev-label.crev-on-dark .crev-stub,
+.crev-label.crev-on-image .crev-stub {
+  border-color: #ffffff;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.9), 0 0 6px 1px rgba(255,255,255,0.35), 0 2px 6px rgba(0,0,0,0.35);
+}
+.crev-label.crev-on-dark .crev-sub,
+.crev-label.crev-on-image .crev-sub,
+.crev-label.crev-on-dark .crev-cascade,
+.crev-label.crev-on-image .crev-cascade {
+  box-shadow: 0 0 0 1.5px rgba(255,255,255,0.95), 0 2px 6px rgba(0,0,0,0.35);
+}
+/* The current object: a calm violet double ring (violet, white gap) until
+   another object becomes current, and a violet mark in its badge. */
+.crev-outline.crev-current > .crev-frame {
+  outline: 2px solid #8a3ffc;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px #ffffff;
+}
+.crev-curmark {
+  flex: none;
+  align-self: center;
+  width: 8px;
+  height: 8px;
+  margin: 0 6px 0 -3px;
+  border-radius: 999px;
+  background: #8a3ffc;
+  box-shadow: 0 0 0 2px #ffffff, 0 0 0 3px #8a3ffc;
+}
+.crev-label--compact .crev-curmark,
+.crev-label--fit .crev-curmark,
+.crev-label--dot .crev-curmark { display: none; }
+.crev-label--current.crev-label--compact .crev-stub,
+.crev-label--current.crev-label--fit .crev-stub,
+.crev-label--current.crev-label--dot .crev-stub { box-shadow: 0 0 0 2px #ffffff, 0 0 0 4px #8a3ffc; }
+/* Edge label — the approved "STUB + SQUARES": a full-bleed type stub
+   (colour tile with the role glyph, welded to a light identity chip) on the
+   top-left edge of the outline, half above the line, and the squares beside
+   it on one rail — violet `</>` opens the editor / CVO studio, blue arrow
+   the flow, the linked property, and the cascade jump chip the chain target.
+   The widget's own controls at the top right stay free. Short hosts keep a
+   tile on the top-right corner (.crev-label--edge). Literal colours: this
+   file is injected into the BMP page and can't see the extension tokens. */
+.crev-label {
+  /* gap 4px: the rail's 24px targets reach 2px past the squares. */
+  /* position + z-index are !important so a host-page rule can never drop the badge
+     into document flow (the lower-left leak) or bury it. css-integrity.test.ts also
+     locks these against a stray comment swallowing the rule. */
+  position: absolute !important;
+  top: -10px; left: 12px;
+  z-index: 10000 !important;
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+  font: 600 11px/1 'Inter', system-ui, sans-serif;
+  pointer-events: auto;
+  user-select: none;
+  white-space: nowrap;
+}
+/* Normal BMP page titles have no RID-bearing element. Their Inspect identity
+   sits inline after the title rather than pretending the heading is a widget. */
+.crev-label.crev-page-label {
+  position: static !important;
+  display: inline-flex;
+  width: auto;
+  margin-inline-start: 8px;
+  vertical-align: middle;
+  transform: none;
+  font-size: 11px;
+  line-height: 1;
+}
+.crev-page-label .crev-stub { vertical-align: middle; }
+.crev-page-label .crev-meta { display: none; }
+/* Portal breadcrumbs and dropdown rows use a small leading role marker. It
+   participates in the link's text flow, so it never floats over the page name
+   or expands into the large identity pills shown on widget canvases. */
+.crev-label.crev-label--inline-start {
+  position: static !important;
+  display: inline-flex;
+  width: auto;
+  margin-inline-end: 4px;
+  vertical-align: -2px;
+  transform: none;
+}
+.crev-label--inline-start .crev-stub {
+  box-shadow: none;
+  border-color: rgba(0,0,0,0.18);
+}
+.crev-label--inline-start .crev-stub:hover { transform: none; }
+.crev-stub {
+  /* 20px visible; the ::after below makes the click target 24px tall
+     without painting over more of the page. No overflow clip, or the
+     target would be clipped with it: the tile rounds its own corners. */
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+  height: 20px;
+  box-sizing: border-box;
+  border-radius: 4px;
+  color: #161616;
+  background: #ffffff;
+  border: 1px solid rgba(22,22,22,0.16);
+  box-shadow: 0 1px 2px rgba(22,22,22,0.16), 0 2px 6px rgba(22,22,22,0.10);
+  cursor: pointer;
+  transition: box-shadow 120ms ease, border-color 120ms ease;
+}
+.crev-stub::after {
+  /* Measured from the padding box: 18px + 2 x 3px = 24px tall. */
+  content: '';
+  position: absolute;
+  inset: -3px;
+}
+.crev-stub:focus-visible {
+  outline: 2px solid #8a3ffc;
+  outline-offset: 2px;
+}
+.crev-stub:hover {
+  border-color: rgba(138,63,252,0.55);
+  box-shadow: 0 1px 2px rgba(22,22,22,0.16), 0 4px 12px rgba(22,22,22,0.16);
+}
+.crev-tile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  flex: none;
+  border-radius: 3px 0 0 3px;
+  background: var(--crev-color, #707070);
+  color: #fff;
+}
+.crev-tile svg { width: 12px; height: 12px; display: block; }
+.crev-stub--property {
+  border-radius: 999px;
+}
+.crev-stub--property .crev-tile {
+  position: relative;
+  border-radius: 999px 0 0 999px;
+}
+.crev-history-indicator {
+  position: absolute;
+  z-index: 2;
+  right: -4px;
+  bottom: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 9px;
+  height: 9px;
+  color: #fff;
+  filter: drop-shadow(0 0 1px rgba(22,22,22,0.72));
+}
+.crev-tile .crev-history-indicator svg {
+  display: block;
+  width: 9px;
+  height: 9px;
+}
+/* Meta row — the squares under the stub. */
+.crev-meta {
+  display: inline-flex;
+  gap: 4px;
+}
+.crev-sub {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 2px;
+  color: #fff;
+  box-shadow: 0 1px 2px rgba(22,22,22,0.2);
+}
+/* 24px click target around the 20x18 square, painting nothing. On the rail
+   it reaches 2px sideways into the 4px gaps. */
+.crev-sub::after {
+  content: '';
+  position: absolute;
+  inset: -3px -2px;
+}
+.crev-sub svg { width: 10px; height: 10px; display: block; }
+.crev-sub--flow { background: #0f62fe; }
+.crev-sub--code { background: #8a3ffc; cursor: pointer; }
+.crev-sub--code:hover { background: #7c3aed; }
+.crev-sub--property {
+  width: 20px;
+  border-radius: 999px;
+  background: var(--crev-property-color, #525252);
+  cursor: pointer;
+}
+.crev-sub--property:hover {
+  filter: brightness(0.88);
+}
+.crev-cascade {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 2px;
+  font: 600 9.5px/1 'Inter', system-ui, sans-serif;
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+  opacity: 0.92;
+}
+.crev-cascade::before { content: '↓'; opacity: 0.75; margin-right: 3px; font-weight: 700; }
+.crev-cascade:hover { opacity: 1; }
+/* Compact form — tiny hosts (tab links, breadcrumb chips) get the tile only;
+   the identity text + meta row would overlap neighbours or clip. Applied by
+   applyCompactMode() when the stub outgrows its host. */
+.crev-label--compact .crev-label-text,
+.crev-label--compact .crev-meta { display: none; }
+.crev-label--compact .crev-tile { padding: 0 4px; border-radius: 3px; }
+.crev-label--compact .crev-tile svg { width: 12px; height: 12px; }
+/* Short / inline targets (tabs, menu buttons, breadcrumbs, nav links): a
+   tile on the top-right corner, half outside, so it badges the element
+   instead of sitting on its text. */
+.crev-label--edge { top: -10px; right: 0; left: auto; }
+/* Fallback when an upward overhang would be clipped (host flush against a
+   clipping ancestor / viewport top — tabs, header, breadcrumb): tuck the
+   stub just inside the top-right corner so it stays fully visible. */
+.crev-label--edge-inside { top: 1px; right: 1px; left: auto; }
+/* A copy landed: a brief violet ring. The toast says what was copied. */
+.crev-label--copied .crev-stub {
+  border-color: #8a3ffc;
+  box-shadow: 0 0 0 2px rgba(138,63,252,0.35);
+}
+
+/* Brief ring on the element a right-click promotes to context. Box-shadow only
+ * (no outline / layout reflow) and self-fading, so it confirms WHERE the pick
+ * landed without leaving a persistent mark like .crev-graph-highlight does. */
+.crev-context-flash { animation: crev-context-flash 1.3s ease-out 1; }
+@keyframes crev-context-flash {
+  0%   { box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.9), 0 0 0 6px rgba(139, 92, 246, 0.35); }
+  100% { box-shadow: 0 0 0 2px rgba(139, 92, 246, 0), 0 0 0 14px rgba(139, 92, 246, 0); }
+}
+.crev-label-text {
+  display: block;
+  padding: 0 8px;
+  line-height: 18px;
+  cursor: pointer;
+  /* --crev-name-max: set by content-badge-layout.ts to shorten the name. */
+  max-width: var(--crev-name-max, 160px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@keyframes crev-shimmer {
+  0%, 100% { opacity: 0.93; }
+  50% { opacity: 0.5; }
+}
+.crev-label-loading {
+  animation: crev-shimmer 1.5s ease-in-out infinite;
+}
+/* Target-widget highlight. Pulses an accent ring around the BMP widget a
+ * BMP_GOTO navigation lands on (e.g. the Extended Code editor's "go to this
+ * object" action), so the eye finds it after the page scrolls. */
+.crev-graph-highlight {
+  outline: 3px solid rgba(139, 92, 246, 0.85) !important;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 6px rgba(139, 92, 246, 0.25) !important;
+  animation: crev-graph-pulse 1.2s ease-in-out 2;
+  transition: outline-color 200ms ease-out;
+}
+@keyframes crev-graph-pulse {
+  0%, 100% { box-shadow: 0 0 0 6px rgba(139, 92, 246, 0.25); }
+  50%      { box-shadow: 0 0 0 12px rgba(139, 92, 246, 0.05); }
+}
+
+/* Invisible bridge across the 4px gap between the badge and the card, on
+ * the side the card opens to (data-side, set by content-tooltip.ts). Sized
+ * to the gap only: a wider strip stole clicks from the badge's edge. */
+#crev-tooltip::before {
+  content: '';
+  position: absolute;
+  top: -4px;
+  left: 0;
+  right: 0;
+  height: 4px;
+}
+#crev-tooltip[data-side="above"]::before { top: auto; bottom: -4px; }
+#crev-tooltip[data-side="right"]::before { top: 0; bottom: 0; left: -4px; right: auto; width: 4px; height: auto; }
+#crev-tooltip[data-side="left"]::before { top: 0; bottom: 0; right: -4px; left: auto; width: 4px; height: auto; }
+#crev-tooltip {
+  position: fixed;
+  /* Layer ordering across Companion overlays (BMP's own tooltips top out
+   * around 9999, so anything above 1M wins against the page itself):
+   *
+   *   2147483647  crev-toast-container (must stay visible always)
+   *   2147483646  crev-eo-host (editor / diff / objectview / codesearch surfaces)
+   *   2147483644  crev-tooltip (hover card — above outlines/badges, below task surfaces)
+   * position and z-index are also set inline by content.ts.
+   * NOTE: keep this closing marker — an unclosed table here once swallowed the
+   * z-index/background/shadow below and the card rendered under the badges. */
+  z-index: 2147483644;
+  width: 300px;
+  color: #161616;
+  font: 12px/1.4 'Inter', system-ui, sans-serif;
+  /* Interactive card: copy rows + the open button need real pointer events.
+   * Kept alive on hover via the enter/leave wiring in content-tooltip.ts.
+   * The visual shell (bg/border/shadow) lives on `.crev-tt-card` so the card
+   * is self-contained and identical in the editor iframe (object-card.ts). */
+  pointer-events: auto;
+  display: none;
+}
+#crev-tooltip.crev-visible {
+  display: block;
+  animation: crev-tooltip-in 110ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes crev-tooltip-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #crev-tooltip.crev-visible { animation: none; }
+}
+/* Self-contained card shell — the same in the content page and the editor
+   iframe (styled identically in editor.css). Sizes on the 4px scale. */
+.crev-tt-card {
+  background: #ffffff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(22,22,22,.05), 0 4px 12px rgba(22,22,22,.10), 0 16px 40px rgba(22,22,22,.14);
+  overflow: hidden;
+}
+/* Header — name + type line on a faint type tint, actions top right. */
+.crev-tt-band {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 8px 8px 12px;
+  background: color-mix(in srgb, var(--tt-color, #8d8d8d) 6%, #fff);
+}
+.crev-tt-hd { flex: 1; min-width: 0; padding-top: 2px; }
+.crev-tt-actions { display: inline-flex; align-items: center; gap: 0; flex: none; }
+.crev-tt-nm {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 20px;
+  color: #161616;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.crev-tt-ty { display: flex; align-items: center; gap: 4px; font-size: 11px; line-height: 16px; color: #525252; }
+.crev-tt-tydot { width: 8px; height: 8px; border-radius: 2px; background: var(--tt-color, #8d8d8d); flex: none; }
+/* Small muted icon buttons, no box until hovered. */
+.crev-tt-open {
+  width: 24px; height: 24px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: 4px; background: none;
+  color: #6f6f6f; cursor: pointer; flex: none;
+}
+.crev-tt-open:hover { background: rgba(22,22,22,.06); color: #8a3ffc; }
+.crev-tt-open:focus-visible { outline: 2px solid #8a3ffc; outline-offset: -2px; }
+.crev-tt-open:disabled { cursor: default; opacity: .45; }
+.crev-tt-open svg { width: 14px; height: 14px; }
+/* Body — copy-on-click rows, one line each, no rules between them. */
+.crev-tt-body { padding: 4px 4px 8px; }
+.crev-tt-cprow {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; min-height: 24px; padding: 0 8px; border: 0; border-radius: 4px;
+  box-sizing: border-box;
+  background: transparent; color: inherit; cursor: pointer; min-width: 0;
+  font: inherit; text-align: left;
+}
+.crev-tt-cprow:hover { background: #f4f4f4; }
+.crev-tt-cprow:focus-visible { outline: 2px solid #8a3ffc; outline-offset: -2px; }
+.crev-tt-cprow--ok, .crev-tt-cprow--ok:hover { background: #f4efff; }
+.crev-tt-k { width: 76px; flex: none; font-size: 11px; color: #6f6f6f; white-space: nowrap; }
+.crev-tt-v {
+  flex: 1; min-width: 0;
+  font-family: 'JetBrains Mono', 'SF Mono', 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  font-size: 11px; line-height: 16px; color: #525252;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.crev-tt-v--dim { color: #6f6f6f; }
+.crev-tt-v--ok { color: #198038 !important; font-weight: 600; }
+.crev-tt-v--fail { color: #da1e28 !important; font-weight: 600; }
+/* Legend — what each badge click copies. */
+.crev-tt-legend {
+  display: flex; flex-wrap: nowrap; gap: 8px; overflow: hidden; min-width: 0;
+  margin-top: 4px; padding: 4px 8px 0;
+  font-size: 10.5px; line-height: 16px; color: #6f6f6f;
+  white-space: nowrap;
+}
+.crev-tt-lg { white-space: nowrap; }
+.crev-tt-legend kbd {
+  margin-right: 3px; padding: 0 3px; border-radius: 2px;
+  background: #f4f4f4; color: #525252;
+  font: 500 10px/16px 'Inter', system-ui, sans-serif;
+}
+.crev-tt-card--editing .crev-tt-band {
+  background: color-mix(in srgb, var(--tt-color, #8d8d8d) 4%, #fff);
+}
+.crev-tt-edit-save { color: #198038; }
+.crev-tt-edit-save:hover { background: #eaf7ee; color: #0e6027; }
+.crev-tt-edit-discard:hover { background: #f4f4f4; color: #161616; }
+.crev-tt-edit-input {
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid #c6c6c6;
+  border-radius: 4px;
+  outline: none;
+  background: #fff;
+  color: #161616;
+}
+.crev-tt-edit-name {
+  display: block;
+  width: 100%;
+  height: 24px;
+  padding: 2px 8px;
+  font: 600 13px/1.3 'Inter', system-ui, sans-serif;
+}
+.crev-tt-edit-idrow {
+  align-items: center;
+  cursor: default;
+}
+.crev-tt-edit-idrow:hover { background: transparent; }
+.crev-tt-edit-id {
+  flex: 1;
+  width: 100%;
+  height: 24px;
+  padding: 4px 8px;
+  font: 11px/1.3 'JetBrains Mono', 'SF Mono', 'Cascadia Mono', Consolas, ui-monospace, monospace;
+}
+.crev-tt-edit-input:focus { border-color: #8a3ffc; box-shadow: 0 0 0 1px #8a3ffc; }
+.crev-tt-edit-input:disabled { background: #f4f4f4; color: #6f6f6f; }
+.crev-tt-edit-status {
+  min-height: 16px;
+  padding: 4px 8px 0 92px;
+  color: #6f6f6f;
+  font-size: 11px;
+}
+.crev-tt-edit-status:empty { min-height: 0; }
+.crev-tt-edit-status--saving { color: #525252; }
+.crev-tt-edit-status--success {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #198038;
+  font-weight: 600;
+}
+.crev-tt-edit-status--success svg { width: 12px; height: 12px; }
+.crev-tt-edit-status--error { color: #da1e28; }
+.crev-tt-edit-status--warn { color: #c2410c; }
+/* Optional source excerpt under the facts (EC / html / js). */
+.crev-tt-code {
+  margin: 0; padding: 8px 12px;
+  background: #f4f4f4;
+  font: 11px/1.5 'JetBrains Mono', 'SF Mono', 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  color: #525252; max-height: 96px; overflow: hidden;
+  white-space: pre-wrap; word-break: break-word;
+}
+
+
+/* ── Toasts ─────────────────────────────────────────────── */
+
+#crev-toast-container {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  /* Top of the Companion layer stack — "saved" / "failed" toasts must
+   * remain visible even with a task surface open. Also set inline. */
+  z-index: 2147483647;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: none;
+}
+/* Literal colours: this file is injected into the BMP page and cannot see
+ * the extension tokens. Values are the light theme's (tokens.css crev-light).
+ * The toast is the hover card's surface: white, hairline border, soft
+ * shadow, a small coloured dot, the value in muted monospace. An error toast
+ * is the same surface with a red dot and red text (#da1e28 on white, 5.0:1).
+ * A toast without an action takes no pointer events, so it never blocks the
+ * page control under it (the portal's avatar sits there). */
+.crev-toast {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  max-width: 360px;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  font: 500 12px/16px 'Inter', system-ui, sans-serif;
+  color: #161616;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(22,22,22,.05), 0 4px 12px rgba(22,22,22,.10), 0 16px 40px rgba(22,22,22,.14);
+  pointer-events: none;
+  animation: crev-toast-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: opacity 200ms ease;
+}
+.crev-toast--with-action { pointer-events: auto; padding-right: 4px; }
+.crev-toast::before {
+  content: '';
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #8d8d8d;
+}
+.crev-toast--success::before { background: #24a148; }
+.crev-toast--info::before { background: #8a3ffc; }
+.crev-toast--error { color: #da1e28; }
+.crev-toast--error::before { background: #da1e28; }
+.crev-toast--replaced { animation: none; }
+.crev-toast--exit { opacity: 0; }
+@keyframes crev-toast-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .crev-toast { animation: none; transition: none; }
+}
+.crev-toast__text { flex: 0 1 auto; min-width: 0; }
+.crev-toast__detail {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 400 12px/16px 'JetBrains Mono', 'SF Mono', 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  color: #525252;
+}
+.crev-toast__action {
+  flex: none;
+  min-height: 24px;
+  border: 1px solid #c6c6c6;
+  background: #ffffff;
+  color: #161616;
+  font: 600 12px/1 'Inter', system-ui, sans-serif;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.crev-toast__action:hover { background: #f4f4f4; }
+.crev-toast__action:focus-visible { outline: 2px solid #8a3ffc; outline-offset: 1px; }
+.crev-toast__close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.crev-toast__close:hover { background: #f4f4f4; }
+.crev-toast__close:focus-visible { outline: 2px solid #8a3ffc; outline-offset: 1px; }
+
+/* ── Focus States (content overlay can't use base.css) ── */
+
+.crev-sub--code:focus-visible,
+.crev-sub--flow:focus-visible,
+.crev-sub--property:focus-visible,
+.crev-label-text:focus-visible {
+  outline: 2px solid #8a3ffc;
+  outline-offset: 1px;
+}
+
+/* ── Frame Overlay (in-page floating iframes — editor/diff/objectview/codesearch) ─── */
+
+/* Hide widget labels while a task surface is open. BMP wraps each
+ * widget in a stacking context (via transform / will-change on parent
+ * containers), so even with z-index 10000 the labels can float above
+ * the editor frame's z-index 2147483646 — they're trapped in a
+ * different rendering layer. Hiding them entirely is cleaner than
+ * an arms race with whatever new stacking context BMP adds next. */
+/* Overlay-overlap gate (paired with `updateOverlayBlockState()` in
+ * content-frame-overlay.ts).
+ *
+ * `crev-overlay-blocked` is set on a Companion element whenever its
+ * bounding rect intersects an open frame overlay's bounding rect.
+ * Each affected element type responds differently:
+ *
+ *   .crev-label                  pills → click-through (overlay catches the click)
+ *   #crev-tooltip                hover info → hide (visual collision; pointer-events
+ *                                already none so click isn't an issue) */
+body.crev-task-open .crev-label.crev-overlay-blocked {
+  pointer-events: none;
+}
+body.crev-task-open #crev-tooltip.crev-overlay-blocked {
+  opacity: 0;
+  pointer-events: none;
+}
+.crev-eo-host {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  border: 1px solid #d0d0d5;
+  border-radius: 8px;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.04),
+    0 12px 32px rgba(0, 0, 0, 0.45),
+    0 24px 80px rgba(0, 0, 0, 0.35);
+  /* No overflow clip: the resize handles reach 3 px past the edge, and a
+   * clip cut each edge strip in half; on the right edge its centre line
+   * then hit the host's border instead of the handle. The title bar and the
+   * iframe round their own corners (inner radius 7 px = 8 px minus the border). */
+  overflow: visible;
+  /* Just below toasts: a "saved" notification must remain visible
+   * while a task surface is open, but everything else (tooltip and
+   * inspector card) sits beneath. See
+   * #crev-tooltip in this file for the full layer table. */
+  z-index: 2147483646;
+  contain: layout style;
+  transition: box-shadow 200ms cubic-bezier(0.16, 1, 0.3, 1),
+              transform 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  animation: crev-eo-host-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes crev-eo-host-in {
+  from { opacity: 0; transform: scale(0.985); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.crev-eo-host.crev-eo--dragging,
+.crev-eo-host.crev-eo--resizing {
+  box-shadow:
+    0 0 0 1px rgba(139, 92, 246, 0.45),
+    0 32px 80px rgba(0, 0, 0, 0.55);
+  transition: none;
+  user-select: none;
+}
+
+.crev-eo-titlebar {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 6px;
+  background: #f4f4f4;
+  border-bottom: 1px solid #e0e0e0;
+  border-radius: 7px 7px 0 0;
+  min-width: 0;
+  overflow: hidden;
+  cursor: grab;
+  flex-shrink: 0;
+  user-select: none;
+  -webkit-user-select: none;
+  gap: 8px;
+}
+
+.crev-eo-host.crev-eo--dragging .crev-eo-titlebar {
+  cursor: grabbing;
+}
+
+.crev-eo-grip {
+  width: 24px;
+  height: 4px;
+  border-radius: 999px;
+  background: #d0d0d5;
+  margin: 0 4px 0 6px;
+  flex-shrink: 0;
+}
+
+.crev-eo-titlebar-label {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  color: #525252;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* The server, user and session kind the window works on, after the title:
+ * the server name in the normal ink, the user and the session kind muted.
+ * The parts wrap: one that does not fit falls onto a second line, which the
+ * fixed height hides. So a narrow title bar drops the session kind first,
+ * then the user; the server name, alone on the first line, truncates last. */
+.crev-eo-titlebar-server {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  height: 16px;
+  overflow: hidden;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 11px;
+  line-height: 16px;
+  color: #8d8d8d;
+  margin-left: 8px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+.crev-eo-titlebar-server > span {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.crev-eo-srv-name { color: #525252; }
+.crev-eo-srv-user::before,
+.crev-eo-srv-kind::before { content: "·"; padding: 0 5px; }
+
+.crev-eo-titlebar-spacer { flex: 1; }
+
+.crev-eo-btn svg { width: 12px; height: 12px; }
+.crev-eo-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 18px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: #6f6f6f;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 100ms ease, color 100ms ease;
+}
+
+.crev-eo-btn:hover {
+  background: #e0e0e0;
+  color: #161616;
+}
+
+/* Only the Close button gets the destructive red hover — Maximize and any
+   other titlebar control share the neutral hover above. */
+.crev-eo-close:hover {
+  background: #fa4d56;
+  color: #fff;
+}
+
+.crev-eo-iframe {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  /* Neutral while loading; every surface inside is light. */
+  background: #f4f4f4;
+  border-radius: 0 0 7px 7px;
+  display: block;
+  min-height: 0;
+}
+
+/* Eight-way resize handles. Edges are thin strips along each side;
+ * corners are 14×14 squares with higher z-index so they win the
+ * hit-test where they overlap an edge. Cursors switch to the matching
+ * resize chevron so the affordance is obvious. */
+.crev-eo-resize {
+  position: absolute;
+  z-index: 1;
+}
+.crev-eo-resize--n { top: -3px; left: 14px; right: 14px; height: 6px; cursor: ns-resize; }
+.crev-eo-resize--s { bottom: -3px; left: 14px; right: 14px; height: 6px; cursor: ns-resize; }
+.crev-eo-resize--e { right: -3px; top: 14px; bottom: 14px; width: 6px; cursor: ew-resize; }
+.crev-eo-resize--w { left: -3px; top: 14px; bottom: 14px; width: 6px; cursor: ew-resize; }
+.crev-eo-resize--ne { top: -3px; right: -3px; width: 14px; height: 14px; cursor: nesw-resize; z-index: 2; }
+.crev-eo-resize--nw { top: -3px; left: -3px; width: 14px; height: 14px; cursor: nwse-resize; z-index: 2; }
+.crev-eo-resize--se {
+  bottom: -3px; right: -3px; width: 16px; height: 16px;
+  cursor: nwse-resize;
+  z-index: 2;
+  /* Keep the visible grip texture on the canonical bottom-right
+   * corner so the resize affordance is still obvious. */
+  background:
+    linear-gradient(135deg, transparent 50%, #c6c6c6 50%, #c6c6c6 55%, transparent 55%, transparent 65%, #c6c6c6 65%, #c6c6c6 70%, transparent 70%);
+  background-size: 100% 100%;
+  opacity: 0.6;
+  transition: opacity 100ms ease;
+}
+.crev-eo-resize--se:hover { opacity: 1; }
+.crev-eo-resize--sw { bottom: -3px; left: -3px; width: 14px; height: 14px; cursor: nesw-resize; z-index: 2; }
+
+/* Snap-to-half ghost — appears during a drag when the pointer enters
+ * a snap zone (24px from a viewport edge). Shows the rectangle the
+ * frame will land in on release. Subtle accent fill + dashed border
+ * so the user knows it's a preview, not the live host. */
+.crev-eo-snap-ghost {
+  position: fixed;
+  pointer-events: none;
+  border: 2px dashed rgba(139, 92, 246, 0.6);
+  background: rgba(139, 92, 246, 0.08);
+  border-radius: 8px;
+  z-index: 2147483645;
+  transition: left 80ms ease, top 80ms ease, width 80ms ease, height 80ms ease;
+}
+
+/* A small element whose badge cannot sit next to its text without being
+   clipped (content-badge-layout.ts): the badge shrinks to a dot in the
+   corner. Hovering or focusing it still opens the card; the dot keeps a
+   24px click target. */
+.crev-label.crev-label--dot .crev-stub {
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  border-radius: 999px;
+  background: var(--crev-color, #707070);
+  border-color: #ffffff;
+}
+.crev-label--dot .crev-tile,
+.crev-label--dot .crev-label-text,
+.crev-label--dot .crev-meta { display: none; }
+.crev-label--dot .crev-stub::after { inset: -7px; }
+/* A badge moved off a small element's text shows its type tile only. */
+.crev-label--fit .crev-label-text,
+.crev-label--fit .crev-meta { display: none; }
+.crev-label--fit .crev-tile { padding: 0 4px; border-radius: 3px; }
+.crev-label--fit .crev-tile svg { width: 12px; height: 12px; }
+
+/* Pressed at once on pointer down (a plain copy waits 200 ms for a possible
+   double-click). */
+.crev-label--pressed .crev-stub {
+  border-color: #8a3ffc;
+  background: #f4efff;
+}
+
+/* Focus rings: violet, and they win over the portal's own :focus-visible
+   rule (black outline with a grey halo, selector specificity 0,3,1): the
+   doubled class lifts these to 0,4,0. A white inner ring keeps the violet
+   visible on a coloured badge fill. */
+.crev-label.crev-label .crev-stub:focus-visible,
+.crev-label.crev-label .crev-sub:focus-visible,
+.crev-label.crev-label .crev-cascade:focus-visible {
+  outline: 2px solid #8a3ffc !important;
+  outline-offset: 1px !important;
+  box-shadow: 0 0 0 1px #ffffff !important;
+}
+#crev-tooltip .crev-tt-cprow:focus-visible,
+#crev-tooltip .crev-tt-open:focus-visible {
+  outline: 2px solid #8a3ffc !important;
+  outline-offset: -2px !important;
+  box-shadow: none !important;
+}
+#crev-toast-container .crev-toast__action:focus-visible,
+#crev-toast-container .crev-toast__close:focus-visible {
+  outline: 2px solid #8a3ffc !important;
+  outline-offset: 1px !important;
+  box-shadow: none !important;
+}
+/* The marked element is scrolled under a sticky header: no badge paints
+   over the header. */
+.crev-label.crev-label--covered { visibility: hidden; }
+/* A new badge waits hidden for its first layout pass (content-badge-layout.ts)
+   and appears once, at its final place: no transition on the way there. */
+.crev-label.crev-label--placing { visibility: hidden; transition: none; }
+
+/* "Locate on page" (content-current.ts): the page dims by 14% around a
+   ringed cut-out for 1.5 s; the ring pulses twice unless motion is reduced.
+   position, z-index and pointer-events are inline. */
+#crev-locate-spot {
+  box-sizing: border-box;
+  border-radius: 4px;
+  outline: 2px solid #8a3ffc;
+  outline-offset: 0;
+  box-shadow: 0 0 0 100vmax rgba(22,22,22,0.14);
+  pointer-events: none;
+}
+#crev-locate-spot.crev-locate-spot--pulse { animation: crev-locate-pulse 700ms ease-out 2; }
+@keyframes crev-locate-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(138,63,252,0.45), 0 0 0 100vmax rgba(22,22,22,0.14); }
+  100% { box-shadow: 0 0 0 14px rgba(138,63,252,0), 0 0 0 100vmax rgba(22,22,22,0.14); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #crev-locate-spot { animation: none !important; }
+}
+/* A located object off screen: a flag on the viewport edge names it and
+   points to it; a click scrolls there. */
+#crev-locate-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  max-width: 320px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  background: #ffffff;
+  border: 1px solid rgba(22,22,22,0.16);
+  color: #161616;
+  font: 600 11px/1 'Inter', system-ui, sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(22,22,22,0.16);
+}
+#crev-locate-flag span { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+#crev-locate-flag i { flex: none; width: 8px; height: 8px; border-radius: 2px; }
+#crev-locate-flag b { flex: none; color: #8a3ffc; font-weight: 700; }
+#crev-locate-flag:focus-visible { outline: 2px solid #8a3ffc; outline-offset: 1px; }
+#crev-locate-flag.crev-locate-flag--top { transform: translateX(-50%); border-top: none; border-radius: 0 0 12px 12px; }
+#crev-locate-flag.crev-locate-flag--bottom { transform: translateX(-50%); border-bottom: none; border-radius: 12px 12px 0 0; }
+#crev-locate-flag.crev-locate-flag--left { transform: translateY(-50%); border-left: none; border-radius: 0 12px 12px 0; }
+#crev-locate-flag.crev-locate-flag--right { transform: translateY(-50%); border-right: none; border-radius: 12px 0 0 12px; }
+
+/* Failed read in the hover card (lib/failure-form.ts unreadValue): quiet, never a type-like "Unknown". */
+.crev-tt-unread .ui-unread { display: inline-flex; align-items: baseline; gap: 4px; color: #c2410c; font-style: italic; }
+.crev-tt-unread .ui-unread-t { text-decoration: underline dashed; text-underline-offset: 2px; }
+.crev-tt-unread .ui-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.crev-tt-unread .ui-failed-retry { font: inherit; font-style: normal; padding: 0 6px; border: 1px solid #8d8d8d; border-radius: 4px; background: #fff; color: #161616; cursor: pointer; line-height: 18px; }

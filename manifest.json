@@ -1,0 +1,102 @@
+{
+  "manifest_version": 3,
+  "name": "Configuration Companion",
+  "version": "0.16.0",
+  "minimum_chrome_version": "116",
+  "description": "Inspect, compare, and safely edit configuration in user-authorized Corporater BMP workspaces",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "permissions": [
+    "storage",
+    "alarms",
+    "scripting",
+    "tabs",
+    "sidePanel",
+    "cookies",
+    "contextMenus",
+    "webRequest",
+    "declarativeNetRequestWithHostAccess"
+  ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png"
+    },
+    "default_title": "Configuration Companion"
+  },
+  "side_panel": {
+    "default_path": "sidepanel/sidepanel.html"
+  },
+  "commands": {
+    "open-side-panel": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Y",
+        "mac": "Command+Shift+Y"
+      },
+      "description": "Open the Configuration Companion side panel"
+    },
+    "toggle-inspect": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+X",
+        "mac": "Command+Shift+X"
+      },
+      "description": "Toggle inspect mode"
+    },
+    "open-extended": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+E",
+        "mac": "Command+Shift+E"
+      },
+      "description": "Open Extended Code window"
+    },
+    "toggle-blueprint": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+H",
+        "mac": "Command+Shift+K"
+      },
+      "description": "Toggle blueprint layout editor"
+    },
+    "open-search": {
+      "description": "Search the configuration"
+    }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "editor/*",
+        "diff/*",
+        "objectview/*",
+        "codesearch/*",
+        "transport/*",
+        "studio/*",
+        "assets/*",
+        "chunks/*"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ],
+  "sandbox": {
+    "pages": [
+      "studio/sandbox.html"
+    ]
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; frame-ancestors 'self' https: http:",
+    "sandbox": "sandbox allow-scripts; default-src 'none'; script-src 'self' 'unsafe-inline' blob:; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data: blob:; connect-src 'none'; worker-src blob:; frame-src blob: data:; form-action 'none'; base-uri 'none'; object-src 'none';"
+  }
+}

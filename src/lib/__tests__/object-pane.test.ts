@@ -1,0 +1,833 @@
+/**
+ * Tests for fetchObjectPane (reference-edge parsing) and applyObjectChanges
+ * (PANE_PROPS_SET allowlist + EC literal escaping). Both paths are
+ * security-relevant — the allowlist prevents EC injection via crafted
+ * property names; the escaping prevents string-literal escapes from breaking
+ * out of their EC string context.
+ */
+import { describe, it, expect, vi } from 'vitest';
+import { BmpClient, PANE_PROPS } from '../bmp-client';
+import {
+  PROPERTY_APPLICATION_END,
+  PROPERTY_APPLICATION_FIELD,
+  PROPERTY_APPLICATION_MARK,
+} from '../ec-codegen';
+import './chrome-mock';
+import { fromSepLog, OLD_FRAME } from './ec-frame-fixtures';
+
+const SEP = '~CREV_SEP~';
+
+function makeClient(log: string) {
+  const c = new BmpClient('http://localhost/Steadfast/', 'admin', 'pw');
+  c.supportsLookup = true;
+  const exec = vi.fn(async () => ({ ok: true, log: fromSepLog(log), hasError: false, hasWarning: false }));
+  (c as unknown as { executeEc: typeof exec }).executeEc = exec;
+  return { c, exec };
+}
+
+function buildPaneLog(opts: {
+  instRid: string;
+  instId: string;
+  instName: string;
+  instType: string;
+  refs?: Partial<Record<string, { rid: string; id: string; name: string; type: string }>>;
+  code?: Partial<Record<string, string>>;
+  card?: { rid: string; id: string; name: string; type: string };
+  instCardRid?: string;
+  /** Raw sibling rows (`rid|id|name|className|cur`). */
+  siblingRows?: Array<string | string[]>;
+  /** Emitted `sibTotal` value; omit to simulate an EC without the block. */
+  sibTotal?: number;
+  /** Comma-delimited owning CreateObjectView class names for EditField. */
+  editFieldTypes?: string;
+  template?: { rid: string; id: string; name: string; type: string };
+  instanceProps?: Partial<Record<(typeof PANE_PROPS)[number], string>>;
+  templateProps?: Partial<Record<(typeof PANE_PROPS)[number], string>>;
+  propertyApplications?: string;
+}) {
+  const props: string[] = [
+    `${SEP}instRid${SEP}${opts.instRid}`,
+    `${SEP}instId${SEP}${opts.instId}`,
+    `${SEP}instName${SEP}${opts.instName}`,
+    `${SEP}instType${SEP}${opts.instType}`,
+    `${SEP}parRid${SEP}MISSING`,
+    `${SEP}parId${SEP}`,
+    `${SEP}parName${SEP}`,
+    `${SEP}parType${SEP}`,
+    `${SEP}tmplRid${SEP}${opts.template?.rid ?? 'MISSING'}`,
+    `${SEP}tmplId${SEP}${opts.template?.id ?? ''}`,
+    `${SEP}tmplName${SEP}${opts.template?.name ?? ''}`,
+    `${SEP}tmplType${SEP}${opts.template?.type ?? ''}`,
+    `${SEP}cardRid${SEP}${opts.card?.rid ?? 'MISSING'}`,
+    `${SEP}cardId${SEP}${opts.card?.id ?? ''}`,
+    `${SEP}cardName${SEP}${opts.card?.name ?? ''}`,
+    `${SEP}cardType${SEP}${opts.card?.type ?? ''}`,
+    `${SEP}instCardRid${SEP}${opts.instCardRid ?? ''}`,
+  ];
+  for (const p of PANE_PROPS) {
+    props.push(`${SEP}inst_${p}${SEP}${opts.instanceProps?.[p] ?? ''}`);
+    props.push(`${SEP}tmpl_${p}${SEP}${opts.templateProps?.[p] ?? ''}`);
+  }
+  if (opts.editFieldTypes) props.push(`${SEP}editFieldTypes${SEP}${opts.editFieldTypes}`);
+  if (opts.propertyApplications) {
+    props.push(`${SEP}isPropertyDefinition${SEP}true`);
+    props.push(`${SEP}propertyApplications${SEP}${opts.propertyApplications}`);
+  }
+  // Code fields the panel may surface
+  const codeFields = ['expression', 'afterExpression', 'defaultExpression', 'html', 'javascript', 'css'];
+  for (const cf of codeFields) {
+    props.push(`${SEP}code_${cf}${SEP}${opts.code?.[cf] ?? ''}`);
+  }
+  // Reference edges
+  const refFields = ['editPage', 'destination', 'defaultObject', 'inputSet', 'actionObject', 'customvisualizationdata', 'property'];
+  for (const rf of refFields) {
+    const r = opts.refs?.[rf];
+    props.push(`${SEP}ref_${rf}_rid${SEP}${r?.rid ?? ''}`);
+    props.push(`${SEP}ref_${rf}_id${SEP}${r?.id ?? ''}`);
+    props.push(`${SEP}ref_${rf}_name${SEP}${r?.name ?? ''}`);
+    props.push(`${SEP}ref_${rf}_type${SEP}${r?.type ?? ''}`);
+  }
+  // Sibling rows are framed (EcFrame); tests write them as `a|b|c|d|e`, or
+  // as field arrays when a field itself contains `|`.
+  const sibRows = (opts.siblingRows ?? []).map(row => typeof row === 'string' ? row.split('|') : row);
+  props.push(`${SEP}siblings${SEP}\n${sibRows.map(f => OLD_FRAME.row + f.join(OLD_FRAME.field)).join('\n')}`);
+  if (opts.sibTotal != null) props.push(`${SEP}sibTotal${SEP}${opts.sibTotal}`);
+  props.push(`${SEP}DONE`);
+  return props.join('\n');
+}
+
+function buildEditFieldPropertyLog(opts: {
+  accessor: string;
+  property: { rid: string; id: string; name: string; type: string };
+  application: { rid: string; id: string; name: string; type: string };
+  ownerClassName: string;
+  systemobject: boolean;
+}) {
+  return fromSepLog([
+    `${SEP}accessor${SEP}${opts.accessor}`,
+    `${SEP}propertyRid${SEP}${opts.property.rid}`,
+    `${SEP}propertyId${SEP}${opts.property.id}`,
+    `${SEP}propertyName${SEP}${opts.property.name}`,
+    `${SEP}propertyType${SEP}${opts.property.type}`,
+    `${SEP}applicationRid${SEP}${opts.application.rid}`,
+    `${SEP}applicationId${SEP}${opts.application.id}`,
+    `${SEP}applicationName${SEP}${opts.application.name}`,
+    `${SEP}applicationType${SEP}${opts.application.type}`,
+    `${SEP}systemobject${SEP}${opts.systemobject}`,
+    `${SEP}ownerClassName${SEP}${opts.ownerClassName}`,
+    `${SEP}DONE`,
+    'Message : Duration : 7ms',
+  ].join('\n')) + '\nMessage : Duration : 7ms';
+}
+
+describe('object override metadata', () => {
+  it('reads overrides from the binary object read, and keeps a failed read distinct from none', async () => {
+    const log = buildPaneLog({
+      instRid: '100', instId: 'text_instance', instName: 'Text instance', instType: 'TextElement',
+      template: { rid: '101', id: 'text_template', name: 'Text template', type: 'TextElement' },
+      instanceProps: { disableSearch: 'true' }, templateProps: { disableSearch: 'false' },
+    });
+    const { c } = makeClient(log);
+    const read = vi.fn()
+      .mockResolvedValueOnce({ objects: { '100': { overridden: [] } }, errors: {} })
+      .mockResolvedValueOnce({ objects: {}, errors: { '100': 'cannot be cast' } });
+    (c as unknown as { readFullObjects: typeof read }).readFullObjects = read;
+    expect((await c.fetchObjectPane('100'))?.instanceOverrideProps).toEqual([]);
+    // Failed read: value comparison instead of "no overrides".
+    expect((await c.fetchObjectPane('100'))?.instanceOverrideProps).toContain('disableSearch');
+    expect(read).toHaveBeenCalledWith(['100'], undefined);
+  });
+
+  it('skips the override read without a template or when the caller does not need it', async () => {
+    const plain = makeClient(buildPaneLog({ instRid: '100', instId: 'plain', instName: 'Plain', instType: 'TextElement' }));
+    const read = vi.fn();
+    (plain.c as unknown as { readFullObjects: typeof read }).readFullObjects = read;
+    expect((await plain.c.fetchObjectPane('100'))?.instanceOverrideProps).toEqual([]);
+
+    const linked = makeClient(buildPaneLog({
+      instRid: '100', instId: 'text_instance', instName: 'Text instance', instType: 'TextElement',
+      template: { rid: '101', id: 'text_template', name: 'Text template', type: 'TextElement' },
+    }));
+    (linked.c as unknown as { readFullObjects: typeof read }).readFullObjects = read;
+    expect((await linked.c.fetchObjectPane('100', undefined, { overrides: false }))?.instanceOverrideProps).toEqual([]);
+    expect(read).not.toHaveBeenCalled();
+    expect(linked.exec).toHaveBeenCalledTimes(1);
+  });
+
+  it('infers differing values only when authoritative metadata is unavailable', async () => {
+    const log = buildPaneLog({
+      instRid: '100',
+      instId: 'text_instance',
+      instName: 'Text instance',
+      instType: 'TextElement',
+      template: { rid: '101', id: 'text_template', name: 'Text template', type: 'TextElement' },
+      instanceProps: { disableSearch: 'true' },
+      templateProps: { disableSearch: 'false' },
+    });
+    const { c } = makeClient(log);
+    (c as unknown as { fetchOverriddenProps: () => Promise<null> }).fetchOverriddenProps =
+      vi.fn(async () => null);
+
+    const data = await c.fetchObjectPane('100');
+    expect(data?.instance).toMatchObject({
+      businessId: 'text_instance',
+      templateBusinessId: 'text_template',
+    });
+    expect(data?.instanceOverrideProps).toContain('disableSearch');
+  });
+
+  it('trusts valid metadata, including empty and same-value explicit overrides', async () => {
+    const log = buildPaneLog({
+      instRid: '100',
+      instId: 'text_instance',
+      instName: 'Text instance',
+      instType: 'TextElement',
+      template: { rid: '101', id: 'text_template', name: 'Text template', type: 'TextElement' },
+      instanceProps: { disableSearch: 'false' },
+      templateProps: { disableSearch: 'false' },
+    });
+    const { c } = makeClient(log);
+    const fetchOverrides = vi.fn<() => Promise<string[] | null>>();
+    (c as unknown as { fetchOverriddenProps: typeof fetchOverrides }).fetchOverriddenProps = fetchOverrides;
+
+    fetchOverrides.mockResolvedValueOnce([]);
+    expect((await c.fetchObjectPane('100'))?.instanceOverrideProps).toEqual([]);
+
+    fetchOverrides.mockResolvedValueOnce(['disableSearch']);
+    expect((await c.fetchObjectPane('100'))?.instanceOverrideProps).toEqual(['disableSearch']);
+  });
+});
+
+describe('fetchObjectPane — reference parsing', () => {
+  it('resolves a single populated reference edge to its identity', async () => {
+    const log = buildPaneLog({
+      instRid: '100', instId: 'iv_create', instName: 'Create Risk', instType: 'InputView',
+      refs: { inputSet: { rid: '101', id: 'is_create_risk', name: 'is_create_risk', type: 'InputSet' } },
+    });
+    const { c } = makeClient(log);
+    const data = await c.fetchObjectPane('100');
+    expect(data).not.toBeNull();
+    expect(data!.references.inputSet).toEqual({
+      rid: '101', businessId: 'is_create_risk', name: 'is_create_risk', type: 'InputSet',
+    });
+    expect(data!.references.editPage).toBeUndefined();
+  });
+
+  it('resolves the effective card and flags it as inherited from the template', async () => {
+    // Enterprise object: its own card is empty; the effective card came from
+    // its EnterpriseTemplate (instCardRid empty → viaTemplate true).
+    const log = buildPaneLog({
+      instRid: '500', instId: 'risk_x', instName: 'FX Risk', instType: 'CeRiskAssessment',
+      card: { rid: '900', id: 'card_test', name: 'test', type: 'Card' },
+      instCardRid: '',
+    });
+    const { c } = makeClient(log);
+    const data = await c.fetchObjectPane('500');
+    expect(data!.card).toEqual({
+      rid: '900', businessId: 'card_test', name: 'test', type: 'Card', viaTemplate: true,
+    });
+  });
+
+  it('flags a card as owned (not via template) when the instance has its own', async () => {
+    const log = buildPaneLog({
+      instRid: '600', instId: 'sc_main', instName: 'Main', instType: 'Scorecard',
+      card: { rid: '901', id: 'card_default', name: 'Default card', type: 'Card' },
+      instCardRid: '901',
+    });
+    const { c } = makeClient(log);
+    const data = await c.fetchObjectPane('600');
+    expect(data!.card!.viaTemplate).toBe(false);
+    expect(data!.card!.name).toBe('Default card');
+  });
+
+  it('emits no card when none resolves', async () => {
+    const log = buildPaneLog({ instRid: '700', instId: 'x', instName: 'X', instType: 'TextElement' });
+    const { c } = makeClient(log);
+    const data = await c.fetchObjectPane('700');
+    expect(data!.card).toBeNull();
+  });
+
+  it('emits all populated refs and omits unset ones', async () => {
+    const log = buildPaneLog({
+      instRid: '200', instId: 'cov_risk', instName: 'Create Risk Form', instType: 'CreateObjectView',
+      refs: {
+        editPage: { rid: '201', id: 'ep_risk_edit', name: 'Risk Edit', type: 'EditPage' },
+        destination: { rid: '202', id: 'org_risks', name: 'Risks', type: 'Organisation' },
+        defaultObject: { rid: '203', id: 'risk_master', name: 'Risk Master', type: 'Risk' },
+      },
+    });
+    const { c } = makeClient(log);
+    const data = await c.fetchObjectPane('200');
+    expect(data!.references.editPage?.businessId).toBe('ep_risk_edit');
+    expect(data!.references.destination?.type).toBe('Organisation');
+    expect(data!.references.defaultObject?.name).toBe('Risk Master');
+    expect(data!.references.inputSet).toBeUndefined();
+    expect(data!.references.actionObject).toBeUndefined();
+  });
+
+  it('surfaces non-empty code fields and skips empty ones', async () => {
+    const log = buildPaneLog({
+      instRid: '300', instId: 'cvo_chart', instName: 'My Chart', instType: 'CustomVisualization',
+      code: { html: '<div>chart</div>', javascript: 'console.log(1)' },
+    });
+    const { c } = makeClient(log);
+    const data = await c.fetchObjectPane('300');
+    expect(data!.codeFields.html).toBe('<div>chart</div>');
+    expect(data!.codeFields.javascript).toBe('console.log(1)');
+    expect(data!.codeFields.css).toBeUndefined();
+    expect(data!.codeFields.expression).toBeUndefined();
+  });
+
+  it('deduplicates owning object types for EditField property mapping', async () => {
+    const log = buildPaneLog({
+      instRid: '5611', instId: 'service_name', instName: 'Name', instType: 'EditField',
+      editFieldTypes: 'CeService,CeService,CeAsset,',
+    });
+    const { c } = makeClient(log);
+    const data = await c.fetchObjectPane('5611');
+    expect(data!.editFieldClassNames).toEqual(['CeService', 'CeAsset']);
+  });
+
+  it('resolves a custom EditField accessor to its master property configuration', async () => {
+    const paneLog = buildPaneLog({
+      instRid: '5611',
+      instId: 'service_bucket_max',
+      instName: 'Bucket max',
+      instType: 'EditField',
+      editFieldTypes: 'CeService,',
+      instanceProps: { propertyMapping: 'bucket_1_max' },
+    });
+    const { c, exec } = makeClient(paneLog);
+    exec
+      .mockResolvedValueOnce({ ok: true, log: fromSepLog(paneLog), hasError: false, hasWarning: false })
+      .mockResolvedValueOnce({
+        ok: true,
+        log: buildEditFieldPropertyLog({
+          accessor: 'bucket_1_max',
+          property: {
+            rid: '5716686349908164657',
+            id: 'bucket_1_max',
+            name: 'Bucket 1 Max',
+            type: 'HistoricalNumberMethodConfig',
+          },
+          application: {
+            rid: '8758002416307610306',
+            id: 'com.corporater.bmp.model.model.enterprise.CeService.bucket_1_max',
+            name: 'Bucket 1 Max',
+            type: 'HistoricalNumberMethodConfig',
+          },
+          ownerClassName: 'CeService',
+          systemobject: false,
+        }),
+        hasError: false,
+        hasWarning: false,
+      });
+
+    const data = await c.fetchObjectPane('5611');
+
+    expect(data?.editFieldProperty).toEqual({
+      accessor: 'bucket_1_max',
+      property: {
+        rid: '5716686349908164657',
+        businessId: 'bucket_1_max',
+        name: 'Bucket 1 Max',
+        type: 'HistoricalNumberMethodConfig',
+      },
+    });
+  });
+
+  it('propagates cancellation from an EditField property follow-up', async () => {
+    const paneLog = buildPaneLog({
+      instRid: '5611',
+      instId: 'service_bucket_max',
+      instName: 'Bucket max',
+      instType: 'EditField',
+      editFieldTypes: 'CeService,',
+      instanceProps: { propertyMapping: 'bucket_1_max' },
+    });
+    const controller = new AbortController();
+    const { c, exec } = makeClient(paneLog);
+    exec
+      .mockResolvedValueOnce({ ok: true, log: fromSepLog(paneLog), hasError: false, hasWarning: false })
+      .mockImplementationOnce(async () => {
+        controller.abort();
+        return {
+          ok: false,
+          error: 'EC execution timed out (30s)',
+          log: '',
+          hasError: true,
+          hasWarning: false,
+        };
+      });
+
+    await expect(c.fetchObjectPane('5611', controller.signal)).rejects.toMatchObject({
+      name: 'AbortError',
+    });
+  });
+
+  it('keeps a system property distinct while preserving its mapping accessor', async () => {
+    const paneLog = buildPaneLog({
+      instRid: '9001',
+      instId: 'risk_name',
+      instName: 'Name',
+      instType: 'EditField',
+      editFieldTypes: 'CeRiskAssessment,',
+      instanceProps: { propertyMapping: 'name' },
+    });
+    const { c, exec } = makeClient(paneLog);
+    exec
+      .mockResolvedValueOnce({ ok: true, log: fromSepLog(paneLog), hasError: false, hasWarning: false })
+      .mockResolvedValueOnce({
+        ok: true,
+        log: buildEditFieldPropertyLog({
+          accessor: 'name',
+          property: {
+            rid: '6885080872209683609',
+            id: 'name',
+            name: 'name',
+            type: 'SystemMethodConfig',
+          },
+          application: {
+            rid: '2982463971745981146',
+            id: 'com.corporater.bmp.model.model.enterprise.CeRiskAssessment.name',
+            name: 'name',
+            type: 'SystemMethodConfig',
+          },
+          ownerClassName: 'CeRiskAssessment',
+          systemobject: true,
+        }),
+        hasError: false,
+        hasWarning: false,
+      });
+
+    const data = await c.fetchObjectPane('9001');
+
+    expect(data?.editFieldProperty?.accessor).toBe('name');
+    expect(data?.editFieldProperty?.property.type).toBe('SystemMethodConfig');
+  });
+
+  it('loads every ClassConfig application for a master property definition', async () => {
+    const applicationsLog = [
+      PROPERTY_APPLICATION_MARK,
+      'CeService',
+      PROPERTY_APPLICATION_FIELD,
+      '701',
+      PROPERTY_APPLICATION_FIELD,
+      'bucket_1_max',
+      PROPERTY_APPLICATION_FIELD,
+      'HistoricalNumberMethod',
+      PROPERTY_APPLICATION_FIELD,
+      "k.CeService.bucket_1_max.change(id := 'bucket_1_max')",
+      PROPERTY_APPLICATION_MARK,
+      'CeRiskAssessment',
+      PROPERTY_APPLICATION_FIELD,
+      '702',
+      PROPERTY_APPLICATION_FIELD,
+      'bucket_1_max',
+      PROPERTY_APPLICATION_FIELD,
+      'HistoricalNumberMethod',
+      PROPERTY_APPLICATION_FIELD,
+      "k.CeRiskAssessment.bucket_1_max.change(id := 'bucket_1_max', category := 'Risk')",
+      PROPERTY_APPLICATION_END,
+    ].join('');
+    const paneLog = buildPaneLog({
+      instRid: '700',
+      instId: 'bucket_1_max',
+      instName: 'Bucket 1 Max',
+      instType: 'HistoricalNumberMethodConfig',
+      instanceProps: { category: 'Boundaries' },
+      propertyApplications: applicationsLog,
+    });
+    const { c, exec } = makeClient(paneLog);
+
+    const data = await c.fetchObjectPane('700');
+
+    expect(data?.isPropertyDefinition).toBe(true);
+    expect(data?.propertyApplications).toHaveLength(2);
+    expect(data?.propertyApplications?.[0]?.overrides).toEqual({});
+    expect(data?.propertyApplications?.[1]?.overrides).toEqual({ category: "'Risk'" });
+    expect(exec).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not publish warning-bearing Property application results as complete', async () => {
+    const applicationsLog = recordPropertyApplicationForTest() + PROPERTY_APPLICATION_END;
+    const paneLog = buildPaneLog({
+      instRid: '700',
+      instId: 'bucket_1_max',
+      instName: 'Bucket 1 Max',
+      instType: 'HistoricalNumberMethodConfig',
+      propertyApplications: applicationsLog,
+    });
+    const { c, exec } = makeClient(paneLog);
+    exec.mockResolvedValueOnce({
+      ok: true,
+      log: fromSepLog(paneLog),
+      hasError: false,
+      hasWarning: true,
+    });
+
+    const data = await c.fetchObjectPane('700');
+
+    expect(data?.propertyApplications).toBeUndefined();
+    expect(data?.propertyApplicationsError).toContain('warnings');
+  });
+
+  it('propagates cancellation from the compact Property query', async () => {
+    const paneLog = buildPaneLog({
+      instRid: '700',
+      instId: 'bucket_1_max',
+      instName: 'Bucket 1 Max',
+      instType: 'HistoricalNumberMethodConfig',
+      propertyApplications: recordPropertyApplicationForTest() + PROPERTY_APPLICATION_END,
+    });
+    const controller = new AbortController();
+    const { c, exec } = makeClient(paneLog);
+    exec.mockImplementationOnce(async () => {
+      controller.abort();
+      return {
+        ok: true,
+        log: fromSepLog(paneLog),
+        hasError: false,
+        hasWarning: false,
+      };
+    });
+
+    await expect(c.fetchObjectPane('700', controller.signal)).rejects.toMatchObject({
+      name: 'AbortError',
+    });
+  });
+
+  it('does not treat a linked ClassConfig application as a master Property', async () => {
+    const paneLog = buildPaneLog({
+      instRid: '701',
+      instId: 'com.corporater.bmp.model.model.enterprise.CeService.bucket_1_max',
+      instName: 'Bucket 1 Max',
+      instType: 'HistoricalNumberMethodConfig',
+      template: {
+        rid: '700',
+        id: 'bucket_1_max',
+        name: 'Bucket 1 Max',
+        type: 'HistoricalNumberMethodConfig',
+      },
+    });
+    const { c, exec } = makeClient(paneLog);
+    // A linked object also asks for its overrides (a binary post): no answer.
+    const overrides = vi.spyOn(c as unknown as { fetchOverriddenProps: () => Promise<null> }, 'fetchOverriddenProps').mockResolvedValue(null);
+
+    const data = await c.fetchObjectPane('701');
+
+    expect(overrides).toHaveBeenCalledTimes(1);
+    expect(data?.isPropertyDefinition).toBe(false);
+    expect(data?.propertyApplications).toBeUndefined();
+    expect(exec).toHaveBeenCalledTimes(1);
+  });
+});
+
+function recordPropertyApplicationForTest(): string {
+  return [
+    PROPERTY_APPLICATION_MARK,
+    'CeService',
+    PROPERTY_APPLICATION_FIELD,
+    '701',
+    PROPERTY_APPLICATION_FIELD,
+    'bucket_1_max',
+    PROPERTY_APPLICATION_FIELD,
+    'HistoricalNumberMethod',
+    PROPERTY_APPLICATION_FIELD,
+    "k.CeService.bucket_1_max.change(id := 'bucket_1_max')",
+  ].join('');
+}
+
+describe('fetchObjectPane — free-text sibling names', () => {
+  it('keeps sibling names with |, ||| and line breaks intact', async () => {
+    const log = buildPaneLog({
+      instRid: '100', instId: 'b0', instName: 'Sib 0', instType: 'ExtendedTable',
+      siblingRows: [['100', 'b0', 'A | B', 'ExtendedTable', '1'], ['101', 'b1', 'x|||y\nz', 'Scorecard', '0']],
+    });
+    const { c } = makeClient(log);
+    const data = await c.fetchObjectPane('100');
+    expect(data!.siblings).toEqual([
+      { rid: '100', businessId: 'b0', name: 'A | B', type: 'ExtendedTable', isCurrent: true },
+      { rid: '101', businessId: 'b1', name: 'x|||y\nz', type: 'Scorecard', isCurrent: false },
+    ]);
+  });
+
+  it('rejects a pane answer without the completion marker', async () => {
+    const log = buildPaneLog({ instRid: '100', instId: 'b0', instName: 'Sib 0', instType: 'ExtendedTable' });
+    const { c } = makeClient(log.slice(0, log.lastIndexOf('~CREV_SEP~DONE')));
+    await expect(c.fetchObjectPane('100')).rejects.toThrow(/incomplete/i);
+  });
+});
+
+describe('fetchObjectPane — sibling cap', () => {
+  it('reports the true total from sibTotal when the list is capped', async () => {
+    const rows = Array.from({ length: 50 }, (_, i) =>
+      `${100 + i}|b${i}|Sib ${i}|ExtendedTable|${i === 0 ? '1' : '0'}`);
+    const log = buildPaneLog({
+      instRid: '100', instId: 'b0', instName: 'Sib 0', instType: 'ExtendedTable',
+      siblingRows: rows, sibTotal: 312,
+    });
+    const { c } = makeClient(log);
+    const data = await c.fetchObjectPane('100');
+    expect(data!.siblings).toHaveLength(50);   // capped slice
+    expect(data!.siblingTotal).toBe(312);      // true count for "showing 50 of 312"
+  });
+
+  it('falls back to the row count when sibTotal is absent or smaller', async () => {
+    const rows = ['100|b0|Sib 0|ExtendedTable|1', '101|b1|Sib 1|ExtendedTable|0'];
+    const log = buildPaneLog({
+      instRid: '100', instId: 'b0', instName: 'Sib 0', instType: 'ExtendedTable',
+      siblingRows: rows, // no sibTotal
+    });
+    const { c } = makeClient(log);
+    const data = await c.fetchObjectPane('100');
+    expect(data!.siblingTotal).toBe(2);
+  });
+});
+
+describe('buildObjectPaneEc — sibling cap', () => {
+  it('emits a counted, capped sibling loop plus the true total', async () => {
+    const { buildObjectPaneEc, SIBLING_CAP } = await import('../ec-codegen');
+    const ec = buildObjectPaneEc('lookup(100)', PANE_PROPS);
+    expect(ec).toContain('_sibN := _sibN + 1');
+    expect(ec).toContain(`IF _sibN <= ${SIBLING_CAP} THEN`);
+    expect(ec).toContain('"~CREV_R~8:sibTotal"');
+  });
+
+  it('discovers EditField owner types through the parent EditPage', async () => {
+    const { buildObjectPaneEc } = await import('../ec-codegen');
+    const ec = buildObjectPaneEc('lookup(5611)', PANE_PROPS);
+    expect(ec).toContain('_o.parent.rref(editPage).forEach(_view:');
+    expect(ec).toContain('_view.objectType.className.whenMissing("")');
+    expect(ec).toContain('IF _editFieldTypes = "" THEN');
+    expect(ec).toContain('_o.parent.types.forEach(_type:');
+    expect(ec).toContain('_editFieldTypes := _editFieldTypes + output(_type) + ","');
+    expect(ec).toContain('"~CREV_R~14:editFieldTypes"');
+    expect(PANE_PROPS).toContain('propertyMapping');
+  });
+});
+
+describe('applyObjectChanges — PANE_PROPS_SET allowlist', () => {
+  it('rejects unknown property names without sending EC', async () => {
+    const { c, exec } = makeClient('');
+    const result = await c.applyObjectChanges('100', 'instance', {
+      headerColor: '#fff',
+      arbitrary_prop_attacker_chose: 'pwned',
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/not allowed/);
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it('accepts whitelisted props; colours link by bid, values stay literal', async () => {
+    const { c, exec } = makeClient('Result : 0');
+    const result = await c.applyObjectChanges('100', 'instance', {
+      headerColor: 'df12 Clear orange', // "<bid> <name>" from the picker
+      width: 200,
+      shadow: true,
+    });
+    expect(result.ok).toBe(true);
+    expect(exec).toHaveBeenCalledTimes(1);
+    const ec = (exec.mock.calls[0] as unknown as [string])[0];
+    expect(ec).toContain('headerColor := t.df12'); // linked, not "df12 Clear orange"
+    expect(ec).toMatch(/width\s*:=\s*200/);
+  });
+
+  it('accepts name and business ID identity changes without broadening the pane query', async () => {
+    const { c, exec } = makeClient('Result : 0');
+    const result = await c.applyObjectChanges('100', 'instance', {
+      name: 'Renamed "object"',
+      id: 'renamed_object_2',
+    });
+    expect(result.ok).toBe(true);
+    const ec = (exec.mock.calls[0] as unknown as [string])[0];
+    expect(ec).toContain('name := "Renamed \\"object\\""');
+    expect(ec).toContain('id := "renamed_object_2"');
+    expect(PANE_PROPS).not.toContain('name');
+    expect(PANE_PROPS).not.toContain('id');
+  });
+
+  it('saves EditField propertyMapping as an escaped string literal', async () => {
+    const { c, exec } = makeClient('Result : 0');
+    const result = await c.applyObjectChanges('5611', 'instance', {
+      propertyMapping: 'domain_owner',
+    });
+    expect(result.ok).toBe(true);
+    const ec = (exec.mock.calls[0] as unknown as [string])[0];
+    expect(ec).toContain('propertyMapping := "domain_owner"');
+  });
+
+  it('allows the essential EditField settings', async () => {
+    const { c, exec } = makeClient('Result : 0');
+    const result = await c.applyObjectChanges('5611', 'instance', {
+      required: 'true',
+      placeholder: 'Enter process code',
+      propertyHint: 'Use the controlled identifier',
+    });
+    expect(result.ok).toBe(true);
+    const ec = (exec.mock.calls[0] as unknown as [string])[0];
+    expect(ec).toContain('required := TRUE');
+    expect(ec).toContain('placeholder := "Enter process code"');
+    expect(ec).toContain('propertyHint := "Use the controlled identifier"');
+  });
+
+  it('writes Label default configuration atomically with typed literals', async () => {
+    const { c, exec } = makeClient('Result : 0');
+    const result = await c.applyObjectChanges('4000', 'instance', {
+      textInputType: 'RICH',
+      advancedDefault: true,
+    });
+    expect(result.ok).toBe(true);
+    const ec = (exec.mock.calls[0] as unknown as [string])[0];
+    expect(ec).toContain('_o.change(textInputType := "RICH", advancedDefault := TRUE)');
+  });
+
+  it('rejects a malformed colour id (no EC sent)', async () => {
+    const { c, exec } = makeClient('');
+    const result = await c.applyObjectChanges('100', 'instance', { headerColor: '#fff' });
+    expect(result.ok).toBe(false);
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it('returns ok=true with no EC call when changes is empty', async () => {
+    const { c, exec } = makeClient('');
+    const result = await c.applyObjectChanges('100', 'instance', {});
+    expect(result.ok).toBe(true);
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it('stages true BMP resets alongside ordinary instance changes', async () => {
+    const { c, exec } = makeClient('Result : 0');
+    const result = await c.applyObjectChanges(
+      '100',
+      'instance',
+      { shadow: true },
+      ['disableSearch', 'showToolMenu'],
+    );
+    expect(result.ok).toBe(true);
+    const ec = (exec.mock.calls[0] as unknown as [string])[0];
+    expect(ec).toContain('_o.change(shadow := TRUE)');
+    expect(ec).toContain('_o.reset(disableSearch)');
+    expect(ec).toContain('_o.reset(showToolMenu)');
+  });
+
+  it('rejects reset requests for template targets and change/reset collisions', async () => {
+    const { c, exec } = makeClient('');
+    expect((await c.applyObjectChanges('100', 'template', {}, ['shadow'])).ok).toBe(false);
+    expect((await c.applyObjectChanges('100', 'instance', { shadow: true }, ['shadow'])).ok).toBe(false);
+    expect(exec).not.toHaveBeenCalled();
+  });
+});
+
+describe('applyObjectChanges — EC literal escaping', () => {
+  it('escapes backslashes, double quotes, CR, LF in string values', async () => {
+    const { c, exec } = makeClient('Result : 0');
+    await c.applyObjectChanges('100', 'instance', {
+      headerStyle: 'foo\\bar"baz\nqux\rend',
+    });
+    const ec = (exec.mock.calls[0] as unknown as [string])[0];
+    // The EC should contain the escaped form, not raw quote/newline that would
+    // break out of the string literal.
+    expect(ec).toContain('foo\\\\bar\\"baz\\nqux\\rend');
+    expect(ec).not.toContain('foo\\bar"baz\nqux\rend');
+  });
+
+  it('emits TRUE/FALSE for booleans, not quoted strings', async () => {
+    const { c, exec } = makeClient('Result : 0');
+    // `hidden` was removed from PANE_PROPS in 0.18.1 (BMP uses `visible`
+    // boolean instead); test the visibility prop that actually exists.
+    await c.applyObjectChanges('100', 'instance', { shadow: true, visible: false });
+    const ec = (exec.mock.calls[0] as unknown as [string])[0];
+    expect(ec).toMatch(/shadow\s*:=\s*TRUE/);
+    expect(ec).toMatch(/visible\s*:=\s*FALSE/);
+  });
+
+  it('emits numeric literals without quotes', async () => {
+    const { c, exec } = makeClient('Result : 0');
+    await c.applyObjectChanges('100', 'instance', { width: 200, transparency: 0.4 });
+    const ec = (exec.mock.calls[0] as unknown as [string])[0];
+    expect(ec).toMatch(/width\s*:=\s*200(\b|$)/);
+    expect(ec).toMatch(/transparency\s*:=\s*0\.4(\b|$)/);
+  });
+});
+
+describe('applyObjectChanges — template target', () => {
+  it('routes through _o.linkedTo for template target', async () => {
+    const { c, exec } = makeClient('Result : 0');
+    await c.applyObjectChanges('100', 'template', { width: 200 });
+    const ec = (exec.mock.calls[0] as unknown as [string])[0];
+    expect(ec).toContain('_o.linkedTo');
+    expect(ec).toContain('_o.template');
+  });
+
+  it('emits instance change without touching linkedTo for instance target', async () => {
+    const { c, exec } = makeClient('Result : 0');
+    await c.applyObjectChanges('100', 'instance', { width: 200 });
+    const ec = (exec.mock.calls[0] as unknown as [string])[0];
+    expect(ec).not.toContain('_o.linkedTo');
+    expect(ec).toContain('_o.change(');
+  });
+});
+
+describe('applyIdentityChanges', () => {
+  it('previews the exact script before one write and orders the instance before the template', async () => {
+    const { c, exec } = makeClient('Result : 0');
+    const result = await c.applyIdentityChanges('100', {
+      businessId: 'renamed_instance',
+      name: 'Renamed "instance"',
+      templateBusinessId: 'renamed_template',
+    });
+
+    expect(result).toEqual({ ok: true, writeAttempted: true });
+    expect(exec).toHaveBeenCalledTimes(2);
+    const [ec, objectRid, previewWrite] = exec.mock.calls[0] as unknown as [string, string | undefined, boolean];
+    const [writeEc, writeObjectRid, writeMode] = exec.mock.calls[1] as unknown as [string, string | undefined, boolean];
+    expect(ec).toContain('_t.change(id := "renamed_template")');
+    expect(ec).toContain('_o.change(id := "renamed_instance", name := "Renamed \\"instance\\"")');
+    expect(ec.indexOf('_o.change')).toBeLessThan(ec.indexOf('_t.change'));
+    expect(objectRid).toBeUndefined();
+    expect(previewWrite).toBe(false);
+    expect(writeEc).toBe(ec);
+    expect(writeObjectRid).toBeUndefined();
+    expect(writeMode).toBe(true);
+  });
+
+  it('keeps both changes inside the resolved-template branch and does not write when preview cannot resolve it', async () => {
+    const { c, exec } = makeClient('Result : no template');
+    const result = await c.applyIdentityChanges('100', {
+      businessId: 'renamed_instance',
+      name: 'Renamed instance',
+      templateBusinessId: 'renamed_template',
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      writeAttempted: false,
+      error: 'Could not resolve the linked template.',
+    });
+    expect(exec).toHaveBeenCalledOnce();
+    const ec = (exec.mock.calls[0] as unknown as [string])[0];
+    expect(ec).toMatch(/IF _t = MISSING THEN[\s\S]*ELSE[\s\S]*_o\.change[\s\S]*_t\.change[\s\S]*ENDIF/);
+  });
+
+  it('rejects preview warnings before a write is attempted', async () => {
+    const { c, exec } = makeClient('Duplicate business ID');
+    exec.mockResolvedValueOnce({
+      ok: true,
+      log: 'Duplicate business ID',
+      hasError: false,
+      hasWarning: true,
+    });
+
+    const result = await c.applyIdentityChanges('100', {
+      businessId: 'duplicate_id',
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      writeAttempted: false,
+      error: 'BMP reported a warning during identity validation: Duplicate business ID',
+    });
+    expect(exec).toHaveBeenCalledOnce();
+  });
+});

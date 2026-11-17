@@ -1,0 +1,1442 @@
+/**
+ * sync.ts — the imperative shell's pure orchestration layer (load + apply).
+ *
+ * The functional core (model/edit/diff/ec) never talks to BMP. This module is the seam:
+ * it builds the EC that FETCHES a page's layout and the EC that APPLIES an edit, but it
+ * does the actual I/O through an injected `LayoutIO`, so it stays unit-testable and host
+ * agnostic (same code path in the service worker and in tests).
+ *
+ * The two-model split is handled in ONE fetch round trip:
+ *   - grid   (Tab + Container tree)  ← every TabSet reached from the page's placed widgets
+ *   - widgets + composites           ← page children/composites (org model)
+ * Both are emitted into a single pipe-delimited list in the exact 9-field wire shape that
+ * `reconstruct` already consumes (rid|bid|name|type|parentRid|containerRid|L|M|S).
+ *
+ * Both projections start at direct page children and descend only through objects that can own
+ * layout (Container plus the known composite classes). Content below leaf widgets therefore never
+ * enters the server-side working set. A widget's phantom RESULT placement is mapped to an empty
+ * containerRid so it falls through to its org parent.
+ *
+ * Apply is diff → compile → exec → RE-FETCH. We never map temp ids to real rids: the
+ * re-fetch is the new source of truth, which also makes apply idempotent (a second apply of
+ * an already-applied model diffs to an empty plan).
+ */
+import { reconstruct, walk, RESULT_TAB_ID, stripWidgetContent } from './model';
+import type { ReconstructCtx, TabMetadata } from './model';
+import { diff } from './diff';
+import { flowDiff, flowSignature } from './flow';
+import { compile } from './ec';
+import { occupiedPortableIdPlan, type PortableIdPlan } from './portable-ids';
+import { validateBusinessId, validateRid } from '../ec-guards';
+import { LAYOUT_SEP, PAGE_MARKER, CTX_MARKER, OVER_MARKER, LINK_MARKER, STYLE_MARKER, TAB_META_MARKER,
+  FLOW_REF_MARKER, FLOW_META_MARKER, FLOW_CHILD_MARKER, FLOW_CPROP_MARKER, FLOW_TR_MARKER,
+  FLOW_LIST_MARKER, DESCRIPTION_VIEW_TYPES_MARKER, DESCRIPTION_VIEW_PROPERTIES_MARKER,
+  markerLines, parseLayoutNodes, safeWireTextEc } from '../layout-wire';
+import { enumMember } from '../color-util';
+import { normalizeBmpEnum, FLOW_DOT_SLOTS, FLOW_DOT_PROPS } from '../widget-metadata';
+import { ecResolveEnterpriseTemplate } from '../template-link';
+import type { LayoutNode as WireNode } from '../types';
+import { OVERRIDABLE_PROPS } from './types';
+import type { LModel, LNode, PlanNote, PlanStep, NodeStyle, FlowProjection, FlowNode, FlowKind } from './types';
+import { COMPOSITE_TYPES } from './constraints';
+import { constantScript, scriptOn, varyingScript } from '../script-kinds';
+import { resolveRefRids } from '../ref-rid';
+
+/** The command's context object in a Blueprint read (ec-parser CONTEXT_OBJECT). */
+const CONTEXT_REF = 'this.object';
+
+/** The single I/O capability sync needs: run an EC program, get its log back. Injected so the
+ *  service worker can wire it to `bmp-client.executeEc` while tests pass a fake. `commit` selects
+ *  a transactional (writing) run — the fetch/probe paths leave it false (read-only), apply sets it
+ *  true. The adapter is also where silent-rollback detection lives (see layout-service). */
+export interface LayoutIO {
+  exec(code: string, commit?: boolean): Promise<{ ok: boolean; log?: string; error?: string; hasWarning?: boolean }>;
+  /** A read-only run of a CONSTANT script with `objectRid` as the command's
+   *  context (`this.object`) and `itemRid` as its item (`this.item`). The
+   *  page's reads go this way, so their text is the same for every page
+   *  (script-kinds.ts). Without it the reads write the page into the text. */
+  execOn?(code: string, objectRid: string, itemRid?: string): Promise<{ ok: boolean; log?: string; error?: string; hasWarning?: boolean }>;
+}
+
+/** What `loadModel`/`applyModel` need beyond the reconstruct ctx: the scorecard rid (for the
+ *  `lookup()` of the org-model root) on top of the business ids reconstruct already uses. */
+export interface BlueprintCtx extends ReconstructCtx {
+  /** org-model root rid — resolved with `lookup(rid)` (always present from page context). */
+  pageRid: string;
+  /** A standalone EditPage uses its ordered child stream, not the WebParent tab/container model. */
+  surface?: 'edit-page';
+  /** The tabset's RID, from the context probe: the item of the constant
+   *  fetch (its fallback when no direct child names a tabset). */
+  tabsetRid?: string;
+}
+
+export interface LoadResult {
+  model: LModel;
+  /** A second, independent clone to diff against — editing mutates `model`, never `baseline`. */
+  baseline: LModel;
+  /** Widgets whose `.container` is missing — BMP would render them on the phantom RESULT tab.
+   *  Surfaced (not dropped) so the UI can warn instead of silently hiding objects. */
+  orphans: WireNode[];
+}
+
+export interface StructureLoadResult {
+  model: LModel;
+  orphans: WireNode[];
+  /** True when the read-only AI projection stopped at its source-node safety ceiling. */
+  truncated: boolean;
+}
+
+export interface ApplyResult {
+  ok: boolean;
+  /** True when the desired model equalled the baseline — nothing was executed. */
+  noop: boolean;
+  /** True when the live page drifted from the baseline since load (someone else edited it). Nothing
+   *  was committed; `model`/`baseline` carry the FRESH live state so the UI can rebase the edits. */
+  stale?: boolean;
+  /** True when the commit landed only PARTIALLY — BMP EC is not atomic (see memory/bmp-ec-nonatomic),
+   *  so a mid-script error or a WARNING-level soft failure can leave some steps applied and others not.
+   *  `model`/`baseline` carry the re-fetched real state; the UI should rebase and ask the user to verify
+   *  rather than report full success. Can accompany `ok:false` (hard error partway) or `ok:true` (warnings). */
+  partial?: boolean;
+  /** The commit ran, but the post-commit re-fetch (the reconcile source-of-truth) threw, so we can't
+   *  hand back a model or confirm exactly what landed. NOT a failure — the write most likely took. The
+   *  UI should reload the page to re-discover the real state rather than report "apply failed". `ok`
+   *  reflects the commit's own result (true = commit reported success; false = it errored partway). */
+  unverified?: boolean;
+  plan: PlanStep[];
+  notes: PlanNote[];
+  /** The compiled EC (empty string on no-op) — handy for a dry-run preview and for logs. */
+  script: string;
+  /** Actual BMP log from the committing EC call. Guard and reconciliation reads are excluded. */
+  executionLog?: string;
+  /** Re-fetched model + fresh baseline after a successful apply (or the fresh live state on stale). */
+  model?: LModel;
+  baseline?: LModel;
+  error?: string;
+}
+
+const SEP = LAYOUT_SEP;   // layout wire marker
+const PAGE = PAGE_MARKER; // page-name marker (support-Category naming)
+const CTX = CTX_MARKER;   // page-context probe marker
+const OVER = OVER_MARKER; // F2 per-widget override channel marker
+const LINK = LINK_MARKER; // inherited instance widget -> shared template widget identity
+const STYLE = STYLE_MARKER; // G3 per-widget style channel marker
+const DVT = DESCRIPTION_VIEW_TYPES_MARKER; // DescriptionView enterprise property-source classes
+const DVP = DESCRIPTION_VIEW_PROPERTIES_MARKER; // DescriptionView ordered visible property accessors
+const TAB = TAB_META_MARKER; // tab RID → real TabSet + sortIndex
+const STRUCTURE_LIMIT = '<<<CREV_LAYOUT_LIMIT>>>';
+const EDIT_PAGE_TITLE = '<<<CREV_EDIT_PAGE_TITLE>>>';
+const EDIT_PAGE_TYPE = '<<<CREV_EDIT_PAGE_TYPE>>>';
+export const STRUCTURE_FETCH_NODE_CAP = 600;
+/** Structural nesting is shallow in BMP (the deepest verified page is three levels).
+ * Twelve bounded passes leave generous headroom without ever entering leaf-widget content. */
+export const ORG_LAYOUT_MAX_DEPTH = 12;
+// Shared EC id/rid sanitisation (the same guards the other EC generators use).
+const ecBid = validateBusinessId;
+const ecRid = validateRid;
+
+/** The shared, system-wide tabset that enterprise-object pages render their template into.
+ *  (Verified live: an EnterpriseTemplate's widgets bind to Tabs/Containers under `default_tabset`,
+ *  not a dedicated per-page tabset.) */
+export const DEFAULT_TABSET = 'default_tabset';
+
+/** Flow projection (blueprint flow editing): the EC that emits one flow child row. Operates on loop var
+ *  `v` (`_c` for a direct child, `_cc` for a ButtonGroup grandchild), owned by widget-id expr `owner`,
+ *  nested under `parentBid` ("" for a direct child). Code-presence is read through `output(...)` so a
+ *  code-bearing prop is NEVER evaluated (bare `.expression` would RUN it) — only its raw text is
+ *  inspected for emptiness. Every free-text field (name, caption) is emitted LAST on its line. */
+function flowChildEmit(v: string, owner: string, parentBid: string): string[] {
+  return [
+    `          _ck := ${v}.className.whenMissing("")`,
+    `          _cbrk := "0"`,
+    `          IF _ck = "EditPageBreak" THEN _cbrk := "1" ELSE _cbrk := _cbrk ENDIF`,
+    `          IF _ck = "EditPageColumnBreak" THEN _cbrk := "1" ELSE _cbrk := _cbrk ENDIF`,
+    `          _creq := "0"`,
+    `          IF output(${v}.required.whenMissing("")) = "true" THEN _creq := "1" ELSE _creq := _creq ENDIF`,
+    `          _dots := ""`,
+    ...FLOW_DOT_SLOTS.map(s => `          IF output(${v}.${s}.whenMissing("")) <> "" THEN _dots := _dots + "1," ELSE _dots := _dots + "0," ENDIF`),
+    `          _l := _l + "${FLOW_CHILD_MARKER}" + ${owner} + "|" + ${parentBid} + "|" + ${v}.id.whenMissing("") + "|" + ${v}.rid + "|" + _ck + "|" + _creq + "|" + _cbrk + "|" + _dots + "|" + ${safeWireTextEc(`${v}.name.whenMissing("")`)} + "\\n"`,
+    `          _cap := ""`,
+    `          IF _ck = "EditField" THEN _cap := ${v}.propertyMapping.whenMissing("") ELSE _cap := _cap ENDIF`,
+    `          IF _ck = "Label" THEN IF ${v}.textInputType.whenMissing("") = "RICH" THEN _cap := "rich" ELSE _cap := _cap ENDIF ELSE _cap := _cap ENDIF`,
+    `          IF _cap <> "" THEN _l := _l + "${FLOW_CPROP_MARKER}" + ${owner} + "|" + ${v}.id.whenMissing("") + "|" + ${safeWireTextEc('_cap')} + "\\n" ELSE _l := _l ENDIF`,
+  ];
+}
+
+/** Flow projection EC for the current org-loop widget `_w` (already known to be a flow-bearing type).
+ *  Resolves its reference (InputSet/EditPage), verb (createMode/actionType), the reference's ordered
+ *  children (one level of ButtonGroup nesting), and — for an ACTION button — its transports. Appends
+ *  everything to the small per-node accumulator `_l` (chunked flush handles the perf invariant). */
+function buildFlowEmit(): string[] {
+  const owner = '_w.id.whenMissing("")';
+  return [
+    `     _fkind := "plain"`,
+    `     _fref := MISSING`,
+    `     IF _cn = "InputView" THEN`,
+    `          _fref := _w.inputSet`,
+    `          _fkind := "inputset"`,
+    `     ELSE`,
+    `          _fref := _fref`,
+    `     ENDIF`,
+    `     IF _cn = "CreateObjectView" THEN`,
+    `          _fref := _w.editPage`,
+    `          _fkind := "editpage"`,
+    `     ELSE`,
+    `          _fref := _fref`,
+    `     ENDIF`,
+    // BMP validates an ActionType comparison string against the bare member (ACTION/ADD/EDIT/NAVIGATE),
+    // NOT the stringified "ActionType.add" — so compare on the bare member here. (The emitted value below
+    // still stringifies to "ActionType.add"; the parser normalizes it.)
+    `     _atype := _w.actionType.whenMissing("")`,
+    `     IF _cn = "ActionButton" THEN`,
+    `          IF _atype = "ADD" THEN _fkind := "add" ELSE _fkind := _fkind ENDIF`,
+    `          IF _atype = "NAVIGATE" THEN _fkind := "navigate" ELSE _fkind := _fkind ENDIF`,
+    `          IF _atype = "ACTION" THEN _fkind := "action" ELSE _fkind := _fkind ENDIF`,
+    `     ELSE`,
+    `          _fkind := _fkind`,
+    `     ENDIF`,
+    `     _frefId := _fref.id.whenMissing("")`,
+    `     _l := _l + "${FLOW_REF_MARKER}" + ${owner} + "|" + _w.rid + "|" + _cn + "|" + _fkind + "|" + _frefId + "|" + _fref.rid.whenMissing("") + "|" + _fref.className.whenMissing("") + "|" + _w.createMode.whenMissing("") + "|" + _atype + "|" + _w.displayOnActionMenu.whenMissing("") + "|" + _w.displayOnAllTabs.whenMissing("") + "|" + _w.container.id.whenMissing("") + "|" + _fref.parent.className.whenMissing("") + "|" + _fref.parent.id.whenMissing("") + "|" + ${safeWireTextEc('_fref.name.whenMissing("")')} + "\\n"`,
+    // The reference's parent Category NAME — the honest "lands in …" label when a new set/page
+    // co-locates there. Rides FLOW_META (owner|refParentName|<name>, free-text last).
+    `     IF _frefId <> "" THEN`,
+    `          _l := _l + "${FLOW_META_MARKER}" + ${owner} + "|refParentName|" + ${safeWireTextEc('_fref.parent.name.whenMissing("")')} + "\\n"`,
+    `     ELSE`,
+    `          _l := _l`,
+    `     ENDIF`,
+    `     IF _cn = "CreateObjectView" THEN`,
+    `          _l := _l + "${FLOW_META_MARKER}" + ${owner} + "|objectType|" + ${safeWireTextEc('_w.objectType.whenMissing("")')} + "\\n"`,
+    `          _l := _l + "${FLOW_META_MARKER}" + ${owner} + "|objectTypeClass|" + ${safeWireTextEc('_w.objectType.className.whenMissing("")')} + "\\n"`,
+    `          _l := _l + "${FLOW_META_MARKER}" + ${owner} + "|destExpr|" + ${safeWireTextEc('output(_w.parentDestinationExpression.whenMissing(""))')} + "\\n"`,
+    `     ELSE`,
+    `          _l := _l`,
+    `     ENDIF`,
+    `     IF _fkind = "navigate" THEN`,
+    `          _l := _l + "${FLOW_META_MARKER}" + ${owner} + "|navExpr|" + ${safeWireTextEc('output(_w.expression.whenMissing(""))')} + "\\n"`,
+    `     ELSE`,
+    `          _l := _l`,
+    `     ENDIF`,
+    `     IF _fkind = "add" THEN`,
+    `          _ai := ""`,
+    `          _w.addableItems.forEach(_a:`,
+    `               IF _ai = "" THEN _ai := _a.name.whenMissing("") ELSE _ai := _ai ENDIF`,
+    `          )`,
+    `          _l := _l + "${FLOW_META_MARKER}" + ${owner} + "|addItem|" + ${safeWireTextEc('_ai')} + "\\n"`,
+    `          _l := _l + "${FLOW_META_MARKER}" + ${owner} + "|destExpr|" + ${safeWireTextEc('output(_w.parentDestinationExpression.whenMissing(""))')} + "\\n"`,
+    `     ELSE`,
+    `          _l := _l`,
+    `     ENDIF`,
+    // The button's own name — a MENU button has no layout node (no SEP line), so the tray card's
+    // title must come from the projection.
+    `     IF _cn = "ActionButton" THEN`,
+    `          _l := _l + "${FLOW_META_MARKER}" + ${owner} + "|ownerName|" + ${safeWireTextEc('_w.name.whenMissing("")')} + "\\n"`,
+    `     ELSE`,
+    `          _l := _l`,
+    `     ENDIF`,
+    `     IF _fkind = "action" THEN`,
+    `          _l := _l + "${FLOW_META_MARKER}" + ${owner} + "|actionGroup|" + ${safeWireTextEc('_w.actionObject.name.whenMissing("")')} + "\\n"`,
+    `          _w.actionObject.children().forEach(_tr:`,
+    `               _tset := "0"`,
+    `               IF output(_tr.expression.whenMissing("")) <> "" THEN _tset := "1" ELSE _tset := _tset ENDIF`,
+    `               _l := _l + "${FLOW_TR_MARKER}" + ${owner} + "|" + _tset + "|" + _tr.className.whenMissing("") + "|" + ${safeWireTextEc('_tr.name.whenMissing("")')} + "\\n"`,
+    `          )`,
+    `     ELSE`,
+    `          _l := _l`,
+    `     ENDIF`,
+    // NOTE the loop var is `_fc` / `_fcc` — NOT `_c`, which is the org loop's chunk accumulator. A
+    // collision there silently clobbered every prior widget's output (caught live 2026-07-11).
+    `     IF _frefId <> "" THEN`,
+    `          _fref.children().forEach(_fc:`,
+    ...flowChildEmit('_fc', owner, '""'),
+    `               IF _fc.className.whenMissing("") = "ButtonGroup" THEN`,
+    `                    _fc.children().forEach(_fcc:`,
+    ...flowChildEmit('_fcc', owner, '_fc.id.whenMissing("")'),
+    `                    )`,
+    `               ELSE`,
+    `                    _l := _l`,
+    `               ENDIF`,
+    `          )`,
+    `     ELSE`,
+    `          _l := _l`,
+    `     ENDIF`,
+  ];
+}
+
+/**
+ * Build the merged-fetch EC. Emits, one per line after a `SEP` marker, every layout node in
+ * the 9-field wire shape. Grid nodes carry `parentRid`; widget nodes carry `containerRid`; the
+ * tabset root is emitted explicitly (descendants() excludes the root) so reconstruct can anchor
+ * the tab list to it. Widgets with no container binding are emitted with an empty containerRid —
+ * `parseFetchLog` routes those to `orphans`.
+ */
+export interface LayoutFetchOptions {
+  /** `full` powers Blueprint editing; `structure` omits edit-only style,
+   * override, and flow channels for read-only consumers such as AI. */
+  projection?: 'full' | 'structure';
+  /** Number of node rows accumulated before touching the large output string. */
+  chunkSize?: number;
+  /** Chart height is authoring metadata and can be omitted by structural readers. */
+  includeHeight?: boolean;
+  /** The page is the command's context (`this.object`) and the tabset its
+   *  item (`this.item`): a CONSTANT script (LayoutIO.execOn). */
+  onContext?: boolean;
+}
+
+export function buildFetchEc(ctx: BlueprintCtx, options: LayoutFetchOptions = {}): string {
+  const projection = options.projection ?? 'full';
+  const chunkSize = Math.max(1, Math.trunc(options.chunkSize ?? 16));
+  const flushAfter = chunkSize - 1;
+  const includeHeight = options.includeHeight ?? true;
+  const ts = options.onContext ? 'this.item' : `t.${ecBid(ctx.tabsetId)}`;
+  const sc = options.onContext ? 'this.object' : `lookup(${ecRid(ctx.pageRid)})`;
+  // Constant on the context (one text per projection, target and shape),
+  // varying with the page in the text.
+  const mark = (text: string) => (options.onContext ? constantScript('buildFetchEc', text) : varyingScript('buildFetchEc', text));
+  const cols = (v: string) => `${v}.columnsLargeScreen.whenMissing("") + "|" + ${v}.columnsMediumScreen.whenMissing("") + "|" + ${v}.columnsSmallScreen.whenMissing("")`;
+  const height = includeHeight ? '_w.chartHeight.whenMissing("")' : '""';
+  // Field order (see layout-wire.ts): rid|bid|type|parent|container|L|M|S|height|name. `name` is LAST
+  // and free-text, so a `|` in a name can't shift the structural fields. EVERY emit line ends with the
+  // raw name as the final field.
+  // org model: widgets + composites (recursive). Emit BOTH parent (composite nesting) and container
+  // (portal placement). A widget bound to the Result tab keeps that binding so it attaches to the Result
+  // tab node. Skip ActionButtons flagged displayOnActionMenu — BMP renders those in the page's action
+  // MENU, not the grid, so they're not part of the editable layout. Shared by both fetch shapes.
+  // PERFORMANCE INVARIANT (live-measured 2026-07-02, tightened 2026-07-06): every `+` whose operand
+  // chain includes the big accumulator `_r` re-copies AND HTML-sniffs (DetectHtml regex) the whole
+  // string — so a multi-term `_r := _r + a + b + …` costs one full-accumulator pass PER TERM, and the
+  // fetch goes quadratic with a huge constant (a ~2000-line build measured 52s; small-first, ~8s).
+  // Rules: (1) build each node's lines in the SMALL local `_l`; (2) append `_l` to the mid-size chunk
+  // `_c` and flush `_c` into `_r` only every 16 nodes — touching `_r` once per node cost 5.6s on a
+  // 258-node scorecard (each touch copies+sniffs the whole ~37KB accumulator); chunked flushing
+  // processes ~8x fewer accumulator bytes. Measured 2026-07-06: sc_cvo_demo fetch 5561ms before.
+  //
+  // F2 override channel: for an inherited widget (linkedTo a template counterpart), emit a separate
+  // `<OVER>bid|prop,...` line listing the props whose value differs from the template — the parser picks
+  // these up independently of the layout wire (they sit on a different marker, so parseLayoutNodes skips
+  // them). Empty for local widgets and for template-mode loads (the template's widgets have no linkedTo).
+  const overEmit = [
+    `          _lt := _w.linkedTo`,
+    `          IF _lt.rid.whenMissing("") <> "" THEN`,
+    `               _ovr := ""`,
+    ...OVERRIDABLE_PROPS.map(p =>
+      `               IF _w.${p}.whenMissing("") <> _lt.${p}.whenMissing("") THEN _ovr := _ovr + "${p}," ELSE _ovr := _ovr ENDIF`),
+    `               IF _ovr <> "" THEN _l := _l + "${OVER}" + _w.id.whenMissing("") + "|" + _ovr + "\\n" ELSE _l := _l ENDIF`,
+    `          ELSE`,
+    `               _l := _l`,
+    `          ENDIF`,
+  ];
+  // Exact widget-level routing for the lean AI projection. This prevents a correctly chosen template
+  // page scope from still mutating the copied instance widget.
+  const linkEmit = [
+    `          _lt := _w.linkedTo`,
+    `          IF _lt.rid.whenMissing("") <> "" THEN`,
+    `               _l := _l + "${LINK}" + _w.id.whenMissing("") + "|" + _lt.rid + "|" + _lt.id.whenMissing("") + "|" + _lt.className.whenMissing("") + "|" + ${safeWireTextEc('_lt.name.whenMissing("")')} + "\\n"`,
+    `          ELSE`,
+    `               _l := _l`,
+    `          ENDIF`,
+  ];
+  // G3 style channel: per widget, emit its current appearance on a distinct marker (parsed by
+  // parseStyles, independent of the layout wire). Colours are CorpoColor LINKS, so we emit the colour's
+  // businessId (`.id`) — resolved to rgb client-side via the colour-set cache — not a value. `.id` on a
+  // MISSING colour chains to MISSING → whenMissing("") → "" (same safe pattern as the override channel).
+  const styleEmit = [
+    `          _l := _l + "${STYLE}" + _w.id.whenMissing("") + "|" + _w.headerColor.id.whenMissing("") + "|" + _w.fontColor.id.whenMissing("") + "|" + _w.shadow.whenMissing("") + "|" + _w.headerStyle.whenMissing("") + "|" + _w.borderStyle.whenMissing("") + "|" + _w.transparency.whenMissing("") + "|" + _w.visibility.whenMissing("") + "|" + _w.showToolMenu.whenMissing("") + "|" + _w.disableSearch.whenMissing("") + "|" + _w.shownOnLargeDisplay.whenMissing("") + "|" + _w.shownOnMediumDisplay.whenMissing("") + "|" + _w.shownOnSmallDisplay.whenMissing("") + "\\n"`,
+  ];
+  const structuralOwnerClasses = ['Container', ...COMPOSITE_TYPES];
+  const structuralOwnerCondition = structuralOwnerClasses
+    .map(className => `_layoutClass = "${className}"`)
+    .join(' OR ');
+  const targetedOrgCollection = [
+    `_layoutNodes := _sc.children()`,
+    `_layoutLevel := _layoutNodes`,
+    `_layoutPasses := LIST(${Array.from({ length: ORG_LAYOUT_MAX_DEPTH }, (_, index) => index + 1).join(',')})`,
+    `_layoutPasses.forEach(_layoutPass:`,
+    `     _layoutNext := LIST()`,
+    `     _layoutLevel.forEach(_layoutParent:`,
+    `          _layoutClass := _layoutParent.className.whenMissing("")`,
+    `          IF ${structuralOwnerCondition} THEN`,
+    `               _layoutNext := _layoutNext.union(_layoutParent.children())`,
+    `          ELSE`,
+    `               _layoutNext := _layoutNext`,
+    `          ENDIF`,
+    `     )`,
+    `     _layoutNodes := _layoutNodes.union(_layoutNext)`,
+    `     _layoutLevel := _layoutNext`,
+    `)`,
+  ];
+  const orgLoop = [
+    `_c := ""`,
+    `_i := 0`,
+    // Start with page-owned objects, then traverse only structural owners.
+    // A list/table/chart is a leaf here: its members and detail portals are
+    // content, not Blueprint cells, and are never visited.
+    ...targetedOrgCollection,
+    `_layoutNodes.forEach(_w:`,
+    `     _l := ""`,
+    ...(projection === 'structure' ? [
+      `     _layoutNode := "1"`,
+      `     IF _structureEmitted > ${STRUCTURE_FETCH_NODE_CAP - 1} THEN`,
+      `          _layoutNode := "0"`,
+      `          _structureLimitHit := "1"`,
+      `     ELSE`,
+      `          _structureEmitted := _structureEmitted + 1`,
+      `     ENDIF`,
+    ] : []),
+    `     _cn := _w.className.whenMissing("")`,
+    // An action-menu ActionButton (displayOnActionMenu) is NOT part of the editable GRID — BMP renders it
+    // in the page's action MENU, not a cell — so it gets no SEP widget line (it stays out of the layout
+    // model, like a ghost). But we DO still project its flow below (the tray reads that). Every other
+    // widget (incl. an in-grid ActionButton) emits its normal grid line.
+    `     _isMenuAB := "0"`,
+    `     IF _cn = "ActionButton" THEN`,
+    `          IF _w.displayOnActionMenu.whenMissing(false) = true THEN _isMenuAB := "1" ELSE _isMenuAB := _isMenuAB ENDIF`,
+    `     ELSE`,
+    `          _isMenuAB := _isMenuAB`,
+    `     ENDIF`,
+    `     IF _isMenuAB = "0"${projection === 'structure' ? ' AND _layoutNode = "1"' : ''} THEN`,
+    `          _l := "${SEP}" + _w.rid + "|" + _w.id.whenMissing("") + "|" + _cn + "|" + _w.parent.rid.whenMissing("") + "|" + _w.container.rid.whenMissing("") + "|" + ${cols('_w')} + "|" + ${height} + "|" + ${safeWireTextEc('_w.name.whenMissing("")')} + "\\n"`,
+    // The override channel only means anything for INSTANCE loads (a template's widgets have no
+    // linkedTo, so every check would compare a widget against MISSING and emit nothing). Skipping it
+    // for template-target loads drops ~2·|OVERRIDABLE_PROPS| property reads per widget — a real win
+    // on heavy pages, where the fetch EC is the slow half of opening the blueprint.
+    ...(projection === 'full' && ctx.target !== 'template' ? overEmit : []),
+    ...(projection === 'structure' && ctx.target !== 'template' ? linkEmit : []),
+    ...(projection === 'full' ? styleEmit : []),
+    ...(projection === 'full' ? [
+      // sortVisibility accepts LIST("accessor") on write, but its getter is an opaque Java array.
+      // genedit() is the only authoritative readable representation exposed to EC.
+      `          IF _cn = "DescriptionView" THEN _l := _l + "${DVT}" + _w.id.whenMissing("") + "|" + _w.viewTypes.whenMissing(LIST()) + "\\n" + "${DVP}" + _w.id.whenMissing("") + "|\\n" + _w.genedit() + "\\n" ELSE _l := _l ENDIF`,
+    ] : []),
+    `     ELSE`,
+    `          _l := _l`,
+    `     ENDIF`,
+    // Flow projection for a flow-bearing widget (both in-grid and action-menu). Rides the same _l.
+    ...(projection === 'full' ? [
+      `     IF _cn = "InputView" OR _cn = "CreateObjectView" OR _cn = "ActionButton" THEN`,
+      ...buildFlowEmit(),
+      `     ELSE`,
+      `          _l := _l`,
+      `     ENDIF`,
+    ] : []),
+    `     _c := _c + _l`,
+    `     IF _l <> "" THEN _i := _i + 1 ELSE _i := _i ENDIF`,
+    `     IF _i > ${flushAfter} THEN`,
+    `          _r := _r + _c`,
+    `          _c := ""`,
+    `          _i := 0`,
+    `     ELSE`,
+    `          _r := _r`,
+    `     ENDIF`,
+    `)`,
+    `_r := _r + _c`,
+  ];
+  // RESULT-only page (no dedicated tabset): emit ONLY the Result tab node (NOT default_tabset's shared
+  // Row/Column scaffold — that belongs to every scorecard) plus the page's own org widgets, which bind to
+  // it. Crucially we do NOT walk default_tabset.descendants() here, or the shared scaffold would leak in
+  // and the page's widgets would render under empty generic Rows. (Verified live: scorecard 462.)
+  if (ctx.resultOnly) {
+    return mark([
+      `_sc := ${sc}`,
+      `_r := ""`,
+      ...(projection === 'structure' ? [
+        `_structureEmitted := 0`,
+        `_structureLimitHit := "0"`,
+      ] : []),
+      `_r := _r + "${PAGE}" + ${safeWireTextEc('_sc.name.whenMissing("")')} + "\\n"`,
+      `_res := t.${RESULT_TAB_ID}`,
+      `_r := _r + "${SEP}" + _res.rid + "|${RESULT_TAB_ID}|Tab|" + _res.parent.rid.whenMissing("") + "||||||" + ${safeWireTextEc('_res.name.whenMissing("Result")')} + "\\n"`,
+      `_r := _r + "${TAB}" + _res.rid + "|${DEFAULT_TABSET}|" + _res.sortIndex.whenMissing("0") + "\\n"`,
+      ...orgLoop,
+      ...(projection === 'structure' ? [
+        `IF _structureLimitHit = "1" THEN _r := _r + "${STRUCTURE_LIMIT}${STRUCTURE_FETCH_NODE_CAP}\\n" ELSE _r := _r ENDIF`,
+      ] : []),
+      `_r`,
+    ].join('\n'));
+  }
+  return mark([
+    `_sc := ${sc}`,
+    `_r := ""`,
+    ...(projection === 'structure' ? [
+      `_structureEmitted := 0`,
+      `_structureLimitHit := "0"`,
+    ] : []),
+    `_r := _r + "${PAGE}" + ${safeWireTextEc('_sc.name.whenMissing("")')} + "\\n"`,
+    // A page has no single TabSet reference. Resolve each direct page child's inferred Tab, then
+    // collect its real parent TabSet. LIST/CONTAINS/union was preview-verified on pro-demo SC 98357.
+    `_tabsets := LIST()`,
+    `_defaultHasOrdinaryTab := "0"`,
+    `_sc.children().forEach(_w:`,
+    `     _candidateTs := _w.tab.parent`,
+    `     IF _candidateTs.className.whenMissing("") = "TabSet" THEN`,
+    `          IF _candidateTs.id.whenMissing("") = "${DEFAULT_TABSET}" AND _w.tab.id.whenMissing("") <> "${RESULT_TAB_ID}" THEN`,
+    `               _defaultHasOrdinaryTab := "1"`,
+    `          ELSE`,
+    `               _defaultHasOrdinaryTab := _defaultHasOrdinaryTab`,
+    `          ENDIF`,
+    `          IF _tabsets NOT CONTAINS _candidateTs THEN`,
+    `               _tabsets := _tabsets.union(LIST(_candidateTs))`,
+    `          ELSE`,
+    `               _tabsets := _tabsets`,
+    `          ENDIF`,
+    `     ELSE`,
+    `          _tabsets := _tabsets`,
+    `     ENDIF`,
+    `)`,
+    // Defensive compatibility fallback for an unusual host whose direct children do not expose .tab.
+    `IF _tabsets.count() = 0 THEN _tabsets := LIST(${ts}) ELSE _tabsets := _tabsets ENDIF`,
+    `_tabsets.forEach(_ts:`,
+    // TabSet root: no parent/container/columns/height. Emitting every contributing root lets
+    // reconstruction recover names and real ownership without changing the shared layout row.
+    `     _r := _r + "${SEP}" + _ts.rid + "|" + _ts.id.whenMissing("") + "|TabSet|||||||" + ${safeWireTextEc('_ts.name.whenMissing("")')} + "\\n"`,
+    // Result is the only page-specific contribution from default_tabset in the common case. Do not
+    // pull its global tabs/containers into Blueprint's hidden-tab panel unless this page genuinely
+    // places a widget on an ordinary default tab.
+    `     IF _ts.id.whenMissing("") = "${DEFAULT_TABSET}" AND _defaultHasOrdinaryTab = "0" THEN`,
+    `          _res := t.${RESULT_TAB_ID}`,
+    `          _r := _r + "${SEP}" + _res.rid + "|${RESULT_TAB_ID}|Tab|" + _res.parent.rid.whenMissing("") + "||||||" + ${safeWireTextEc('_res.name.whenMissing("Result")')} + "\\n"`,
+    `          _r := _r + "${TAB}" + _res.rid + "|${DEFAULT_TABSET}|" + _res.sortIndex.whenMissing("0") + "\\n"`,
+    `     ELSE`,
+    // grid: tabs + containers — parentRid set, containerRid always empty, no chartHeight.
+    // Same small-first rule as the org loop: line into `_l`, ONE `_r` touch per node.
+    `          _c := ""`,
+    `          _i := 0`,
+    `     _ts.descendants().forEach(_n:`,
+    ...(projection === 'structure' ? [
+      `          _l := ""`,
+      `          IF _structureEmitted > ${STRUCTURE_FETCH_NODE_CAP - 1} THEN`,
+      `               _structureLimitHit := "1"`,
+      `          ELSE`,
+      `               _l := "${SEP}" + _n.rid + "|" + _n.id.whenMissing("") + "|" + _n.className.whenMissing("") + "|" + _n.parent.rid.whenMissing("") + "||" + ${cols('_n')} + "|" + "|" + ${safeWireTextEc('_n.name.whenMissing("")')} + "\\n"`,
+      `               _structureEmitted := _structureEmitted + 1`,
+      `          ENDIF`,
+    ] : [
+      `          _l := "${SEP}" + _n.rid + "|" + _n.id.whenMissing("") + "|" + _n.className.whenMissing("") + "|" + _n.parent.rid.whenMissing("") + "||" + ${cols('_n')} + "|" + "|" + ${safeWireTextEc('_n.name.whenMissing("")')} + "\\n"`,
+    ]),
+    `          IF _n.className.whenMissing("") = "Tab" THEN`,
+    `               _l := _l + "${TAB}" + _n.rid + "|" + _ts.id.whenMissing("") + "|" + _n.sortIndex.whenMissing("") + "\\n"`,
+    `          ELSE`,
+    `               _l := _l`,
+    `          ENDIF`,
+    `          _c := _c + _l`,
+    `          IF _l <> "" THEN _i := _i + 1 ELSE _i := _i ENDIF`,
+    `          IF _i > ${flushAfter} THEN`,
+    `               _r := _r + _c`,
+    `               _c := ""`,
+    `               _i := 0`,
+    `          ELSE`,
+    `               _r := _r`,
+    `          ENDIF`,
+    `     )`,
+    `     _r := _r + _c`,
+    `     ENDIF`,
+    `)`,
+    ...orgLoop,
+    ...(projection === 'structure' ? [
+      `IF _structureLimitHit = "1" THEN _r := _r + "${STRUCTURE_LIMIT}${STRUCTURE_FETCH_NODE_CAP}\\n" ELSE _r := _r ENDIF`,
+    ] : []),
+    `_r`,
+  ].join('\n'));
+}
+
+/** Parse the merged-fetch log into wire nodes — the shared layout wire parser (see layout-wire.ts). */
+export const parseFetchLog = parseLayoutNodes;
+
+/** Parse the page display name (one `<PAGE>` line, free-text). Names the ONE support Category new
+ *  InputSets/EditPages + a virtual tabset land in. Empty/absent → undefined (compile falls back to the
+ *  pageId). Rides the fetch log on its own marker (every other parser ignores it). */
+export function parsePageName(log: string): string | undefined {
+  const name = markerLines(log, PAGE_MARKER)[0] ?? '';
+  return name || undefined;
+}
+
+/** Parse tab provenance/order records. Keyed by tab RID because every layout row has one even when a
+ *  legacy/shared Tab has no business ID. Marker order is the stable tie fallback. */
+export function parseTabMetadata(log: string): Map<string, TabMetadata> {
+  const map = new Map<string, TabMetadata>();
+  let sourceIndex = 0;
+  for (const line of markerLines(log, TAB)) {
+    const [tabRid, tabsetId, rawSort] = line.split('|');
+    if (!tabRid || !tabsetId || map.has(tabRid)) continue;
+    const sortIndex = /^-?\d+$/.test(rawSort ?? '') ? parseInt(rawSort, 10) : undefined;
+    map.set(tabRid, { tabsetId, ...(sortIndex !== undefined ? { sortIndex } : {}), sourceIndex: sourceIndex++ });
+  }
+  return map;
+}
+
+/** Parse the F2 override channel (`<OVER>bid|prop,prop` lines) into a businessId → prop-names map. It
+ *  rides the same log as the layout wire but on a distinct marker, so the two parsers read it
+ *  independently (parseLayoutNodes only looks at SEP blocks). */
+export function parseOverrides(log: string): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  for (const line of markerLines(log, OVER)) {
+    const [bid, props] = line.split('|');
+    const list = (props ?? '').split(',').filter(Boolean);
+    if (bid && list.length) map.set(bid, list);
+  }
+  return map;
+}
+
+/** Decode instance-widget to shared-template-widget identities from the lean structure fetch. */
+export function parseLinkedTemplates(log: string): Map<string, NonNullable<LNode['linkedTemplate']>> {
+  const map = new Map<string, NonNullable<LNode['linkedTemplate']>>();
+  for (const line of markerLines(log, LINK)) {
+    const parts = line.split('|');
+    if (parts.length < 5) continue;
+    const [instanceId, rid, id, className] = parts;
+    if (!instanceId || !/^-?\d+$/.test(rid ?? '') || !id || !className) continue;
+    map.set(instanceId, { rid, id, className, name: parts.slice(4).join('|') || id });
+  }
+  return map;
+}
+
+function applyLinkedTemplates(
+  nodes: LNode[],
+  links: ReadonlyMap<string, NonNullable<LNode['linkedTemplate']>>,
+): void {
+  for (const node of nodes) {
+    const linked = links.get(node.id);
+    if (linked) node.linkedTemplate = linked;
+    applyLinkedTemplates(node.children, links);
+  }
+}
+
+/** Parse the G3 style channel (`<STYLE>bid|hcBid|fcBid|shadow|headerStyle|borderStyle|transparency|
+ *  visibility|showToolMenu|disableSearch|shownL|shownM|shownS`) into a businessId → NodeStyle map. Rides
+ *  the same log on its own marker (parseLayoutNodes/parseOverrides ignore it). Only non-empty fields are
+ *  kept — for the flag props an EMPTY field means the type lacks the trait, so absence doubles as the
+ *  UI gate. `visibility` is an enum (BMP stringifies "Visibillity.novisible" → enumMember → NOVISIBLE). */
+export function parseStyles(log: string): Map<string, NodeStyle> {
+  const map = new Map<string, NodeStyle>();
+  const bool = (v: string | undefined): boolean | undefined =>
+    v === 'true' || v === 'TRUE' ? true : v === 'false' || v === 'FALSE' ? false : undefined;
+  for (const line of markerLines(log, STYLE)) {
+    const [bid, hc, fc, shadow, headerStyle, borderStyle, transp, vis, tools, dSearch, shL, shM, shS] = line.split('|');
+    if (!bid) continue;
+    const s: NodeStyle = {};
+    if (hc) s.headerColorBid = hc;
+    if (fc) s.fontColorBid = fc;
+    if (shadow === 'true' || shadow === 'TRUE') s.shadow = true;
+    else if (shadow === 'false' || shadow === 'FALSE') s.shadow = false;
+    // BMP stringifies enums prefixed + lowercased ("HeaderStyle.inside", "BorderStyle.line"); enumMember
+    // reduces to the bare uppercase member → "INSIDE" / "LINE" / "NONE" (a bare value passes through).
+    if (headerStyle) s.headerStyle = enumMember(headerStyle);
+    if (borderStyle) s.borderStyle = enumMember(borderStyle);
+    if (transp && /^-?\d+$/.test(transp)) s.transparency = parseInt(transp, 10);
+    if (vis) s.visibility = enumMember(vis);
+    const t = bool(tools); if (t !== undefined) s.showToolMenu = t;
+    const d = bool(dSearch); if (d !== undefined) s.disableSearch = d;
+    const l = bool(shL); if (l !== undefined) s.shownOnLargeDisplay = l;
+    const m2 = bool(shM); if (m2 !== undefined) s.shownOnMediumDisplay = m2;
+    const s3 = bool(shS); if (s3 !== undefined) s.shownOnSmallDisplay = s3;
+    if (Object.keys(s).length) map.set(bid, s);
+  }
+  return map;
+}
+
+/** Parse DescriptionView.viewTypes stringification (`[CeIssue, CeTask]`) into widget id → classes.
+ *  The UI intentionally edits one source, but preserving the fetched list here keeps load/diff honest. */
+export function parseDescriptionViewTypes(log: string): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  for (const line of markerLines(log, DVT)) {
+    const split = line.indexOf('|');
+    if (split < 1) continue;
+    const id = line.slice(0, split);
+    const raw = line.slice(split + 1).trim();
+    const inner = raw.startsWith('[') && raw.endsWith(']') ? raw.slice(1, -1) : raw;
+    const types = inner.split(',').map(value => value.trim()).filter(value => /^Ce[A-Za-z0-9_]+$/.test(value));
+    map.set(id, types);
+  }
+  return map;
+}
+
+function parseQuotedListAssignment(source: string, field: string): string[] {
+  const match = new RegExp(`\\b${field}\\s*:=\\s*list\\s*\\(`, 'i').exec(source);
+  if (!match) return [];
+  const values: string[] = [];
+  let index = match.index + match[0].length;
+  while (index < source.length) {
+    const char = source[index++];
+    if (char === ')') break;
+    if (char !== '"' && char !== "'") continue;
+    const quote = char;
+    let value = '';
+    while (index < source.length) {
+      const next = source[index++];
+      if (next === '\\' && index < source.length) {
+        const escaped = source[index++];
+        value += escaped === 'n' ? '\n' : escaped === 'r' ? '\r' : escaped === 't' ? '\t' : escaped;
+      } else if (next === quote) {
+        break;
+      } else {
+        value += next;
+      }
+    }
+    if (value.trim()) values.push(value.trim());
+  }
+  return values;
+}
+
+function firstGeneditChange(source: string): { statement: string; end: number } | null {
+  const startMatch = /^\s*(?:(?:Message\s*:\s*)?Result\s*:\s*)?t\./.exec(source);
+  if (!startMatch) return null;
+  const callAt = source.indexOf('.change(', startMatch.index + startMatch[0].length);
+  if (callAt < 0) return null;
+  let index = callAt + '.change('.length;
+  let depth = 1;
+  let quote = '';
+  while (index < source.length && depth > 0) {
+    const char = source[index++];
+    if (quote) {
+      if (char === '\\' && index < source.length) index++;
+      else if (char === quote) quote = '';
+    } else if (char === '"' || char === "'") {
+      quote = char;
+    } else if (char === '(') {
+      depth++;
+    } else if (char === ')') {
+      depth--;
+    }
+  }
+  if (depth !== 0) return null;
+  return { statement: source.slice(0, index), end: index };
+}
+
+/** Parse DescriptionView.sortVisibility from the genedit statement following each DVP marker.
+ *  The direct getter is a Java array, not an EC List, so it cannot be enumerated in the fetch script. */
+export function parseDescriptionViewProperties(log: string): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  let cursor = 0;
+  while (cursor < log.length) {
+    const markerAt = log.indexOf(DVP, cursor);
+    if (markerAt < 0) break;
+    const payloadStart = markerAt + DVP.length;
+    const lineEnd = log.indexOf('\n', payloadStart);
+    const headerEnd = lineEnd < 0 ? log.length : lineEnd;
+    const id = log.slice(payloadStart, headerEnd).replace(/\r$/, '').split('|', 1)[0]?.trim();
+    const statementStart = lineEnd < 0 ? headerEnd : lineEnd + 1;
+    const change = firstGeneditChange(log.slice(statementStart));
+    if (id) map.set(id, change ? parseQuotedListAssignment(change.statement, 'sortVisibility') : []);
+    // Skip the entire quote-aware change call. A user-authored name/description containing a reserved
+    // marker can therefore never be mistaken for another wire record.
+    cursor = change ? statementStart + change.end : headerEnd + 1;
+  }
+  return map;
+}
+
+/** Decode ONE FLOW_CHILD record: owner|parentChildBid|childBid|childRid|childClass|required|isBreak|
+ *  dotsCsv|<childName> (name last, free text). Returns the owner + nesting parent + a bare FlowNode
+ *  (no children/caption yet — those are stitched by the caller). Null for a malformed / empty row.
+ *  Shared by `parseFlows` (per-widget projection) and `parseFlowRefChildren` (on-demand ref fetch). */
+type FlowChildRec = NonNullable<ReturnType<typeof flowChildNodeFrom>>;
+
+/** Stitch FLOW_CHILD + FLOW_CPROP marker blocks into ordered FlowNode trees. `rootFor(rec)` returns the
+ *  list a top-level (no parentBid) child belongs to — the owner projection's `children` for the page fetch,
+ *  or the single roots list for a ref-children fetch — or null to skip a record whose owner is unknown.
+ *  Nested records (non-empty parentBid) attach under their ButtonGroup, which BMP always emits before its
+ *  grandchildren. bids are page-unique, so one `byChildBid` map spans all owners. Shared by parseFlows and
+ *  parseFlowRefChildren so their nesting + caption logic can't drift. */
+function stitchFlowChildren(log: string, rootFor: (rec: FlowChildRec) => FlowNode[] | null): void {
+  const byChildBid = new Map<string, FlowNode>();
+  for (const line of markerLines(log, FLOW_CHILD_MARKER)) {
+    const rec = flowChildNodeFrom(line.split('|'));
+    if (!rec) continue;
+    const root = rootFor(rec);
+    if (!root) continue;
+    byChildBid.set(rec.node.id, rec.node);
+    const parent = rec.parentBid ? byChildBid.get(rec.parentBid) : undefined;
+    (parent ? (parent.children ??= []) : root).push(rec.node);
+  }
+  // FLOW_CPROP — owner|childBid|<caption> (caption last).
+  for (const line of markerLines(log, FLOW_CPROP_MARKER)) {
+    const parts = line.split('|');
+    if (parts.length < 3) continue;
+    const node = byChildBid.get(parts[1]);
+    const caption = parts.slice(2).join('|');
+    if (node && caption) node.prop = caption;
+  }
+}
+
+function flowChildNodeFrom(parts: string[]): { owner: string; parentBid: string; node: FlowNode } | null {
+  if (parts.length < 9) return null;
+  const [owner, parentBid, childBid, childRid, childClass, req, brk, dotsCsv] = parts;
+  if (!childBid) return null;
+  const name = parts.slice(8).join('|');
+  const slotBits = (dotsCsv || '').split(',');
+  const dots = (FLOW_DOT_PROPS[childClass] ?? []).map(prop => ({
+    prop, set: slotBits[FLOW_DOT_SLOTS.indexOf(prop)] === '1',
+  }));
+  return {
+    owner, parentBid,
+    node: {
+      id: childBid, className: childClass || '', name: name || childBid,
+      ...(childRid ? { rid: childRid } : {}),
+      ...(req === '1' ? { required: true } : {}),
+      ...(brk === '1' ? { isBreak: true } : {}),
+      ...(dots.length ? { dots } : {}),
+    },
+  };
+}
+
+/** Parse the flow channels (FLOW_REF / FLOW_META / FLOW_CHILD / FLOW_CPROP / FLOW_TR) into a
+ *  businessId → FlowProjection map, keyed by the flow WIDGET's businessId. Each channel rides the same
+ *  fetch log on its own marker (the layout / override / style parsers ignore these lines). */
+export function parseFlows(log: string): Map<string, FlowProjection> {
+  const map = new Map<string, FlowProjection>();
+  // FLOW_REF — one per flow widget. Fields: owner|ownerRid|ownerClass|kind|refId|refRid|refClass|
+  // createMode|actionType|dOAM|dOAT|container|refParentClass|refParentId|<refName> (refName last, free
+  // text). refParent* = the reference's parent, feeding the support-Category co-location rule.
+  for (const line of markerLines(log, FLOW_REF_MARKER)) {
+    const parts = line.split('|');
+    if (parts.length < 14) continue;
+    const [owner, ownerRid, ownerClass, kind, refId, refRid, refClass, createMode, actionType, dOAM, dOAT, container, refParentClass, refParentId] = parts;
+    if (!owner) continue;
+    const refName = parts.length > 14 ? parts.slice(14).join('|') : '';
+    const proj: FlowProjection = {
+      ownerId: owner, ownerClass: ownerClass || '', kind: (kind || 'plain') as FlowKind,
+      ...(ownerRid ? { ownerRid } : {}),
+      ...(refId ? { refId } : {}), ...(refRid ? { refRid } : {}), ...(refClass ? { refClass } : {}),
+      ...(refName ? { refName } : {}),
+      ...(refParentClass ? { refParentClass } : {}), ...(refParentId ? { refParentId } : {}),
+      ...(createMode ? { createMode: normalizeBmpEnum(createMode) } : {}),
+      ...(actionType ? { actionType: normalizeBmpEnum(actionType) } : {}),
+      ...(dOAM ? { displayOnActionMenu: dOAM === 'true' } : {}),
+      ...(dOAT ? { displayOnAllTabs: dOAT === 'true' } : {}),
+      ...(container ? { container } : {}),
+      children: [],
+    };
+    map.set(owner, proj);
+  }
+  // FLOW_META — owner|field|<value> (value last). Fills the free-text config fields.
+  for (const line of markerLines(log, FLOW_META_MARKER)) {
+    const parts = line.split('|');
+    if (parts.length < 3) continue;
+    const [owner, field] = parts;
+    const value = parts.slice(2).join('|');
+    const p = map.get(owner);
+    if (!p || !value) continue;
+    if (field === 'objectType') p.objectType = value;
+    else if (field === 'objectTypeClass') p.objectTypeClass = value;
+    else if (field === 'destExpr') p.destExpr = value;
+    else if (field === 'addItem') p.addItem = value;
+    else if (field === 'navExpr') p.navExpr = value;
+    else if (field === 'actionGroup') p.actionGroup = value;
+    else if (field === 'ownerName') p.ownerName = value;
+    else if (field === 'refParentName') p.refParentName = value;
+  }
+  // FLOW_CHILD — owner|parentChildBid|childBid|childRid|childClass|required|isBreak|dotsCsv|<name>. A
+  // record with a non-empty parentChildBid nests under that ButtonGroup; top-level children attach to the
+  // owner projection's list (skipping any FLOW_CHILD whose owner has no FLOW_REF projection).
+  stitchFlowChildren(log, rec => map.get(rec.owner)?.children ?? null);
+  // FLOW_TR — owner|codeSet|trClass|<transportName>. Read-only transport rows for an ACTION card.
+  for (const line of markerLines(log, FLOW_TR_MARKER)) {
+    const parts = line.split('|');
+    if (parts.length < 4) continue;
+    const [owner, codeSet, trClass] = parts;
+    const trName = parts.slice(3).join('|');
+    const p = map.get(owner);
+    if (!p) continue;
+    (p.transports ??= []).push({ className: trClass || '', name: trName || trClass || '', codeSet: codeSet === '1' });
+  }
+  return map;
+}
+
+// ── flow "wire to existing" list (picker-open fetch, never in the main layout fetch) ─────────────
+
+/** One row of the workspace reference list the wire-to-existing picker shows. */
+export interface FlowRefListItem { id: string; rid: string; className: string; category?: string; name: string; }
+
+/** EC listing every InputSet OR EditPage under root.portal — bid/rid/class/categoryName/name only
+ *  (SELECT verified live 2026-07-12: 63 refs in ~450ms on the dev workspace — lean enough for
+ *  picker-open). `refClass` is a closed union, so it's injection-safe in the SELECT. */
+export function buildFlowRefListEc(refClass: 'InputSet' | 'EditPage'): string {
+  return constantScript('buildFlowRefListEc', [
+    `_r := ""`,
+    `_list := SELECT ${refClass} FROM root.portal`,
+    `_list.forEach(_x:`,
+    `     _r := _r + "${FLOW_LIST_MARKER}" + _x.id.whenMissing("") + "|" + _x.rid + "|" + _x.className.whenMissing("") + "|" + ${safeWireTextEc('_x.parent.name.whenMissing("")')} + "|" + ${safeWireTextEc('_x.name.whenMissing("")')} + "\\n"`,
+    `)`,
+    `_r`,
+  ].join('\n'));
+}
+
+/** Parse the FLOW_LIST channel: bid|rid|class|catName|<name> (name last, free text). */
+export function parseFlowRefList(log: string): FlowRefListItem[] {
+  const out: FlowRefListItem[] = [];
+  for (const line of markerLines(log, FLOW_LIST_MARKER)) {
+    const parts = line.split('|');
+    if (parts.length < 5) continue;
+    const [id, rid, className, category] = parts;
+    const name = parts.slice(4).join('|');
+    if (!id || !rid) continue;
+    out.push({ id, rid, className: className || '', ...(category ? { category } : {}), name: name || id });
+  }
+  return out;
+}
+
+/** Fetch the wire-to-existing list (SW-side; the content script reaches it via LAYOUT_FLOW_REFS). */
+export async function loadFlowRefList(io: LayoutIO, refClass: 'InputSet' | 'EditPage'): Promise<FlowRefListItem[]> {
+  const res = await io.exec(buildFlowRefListEc(refClass));
+  if (!res.ok) throw new Error(res.error || 'flow ref list fetch failed');
+  return parseFlowRefList(res.log ?? '');
+}
+
+/** EC for the on-demand children of ONE existing InputSet/EditPage (the "wire to existing" cell, when
+ *  the wired reference isn't on this page so the main fetch never projected it). Emits the SAME
+ *  FLOW_CHILD/FLOW_CPROP shape the main fetch uses (one level of ButtonGroup nesting), keyed by the
+ *  ref's own id as `owner`. Code-presence read via `output(...)` — never evaluated (pitfall #3). */
+export function buildFlowRefChildrenEc(refId: string): string {
+  // `this.object`: the reference is the command's context (constant).
+  const ref = refId === CONTEXT_REF ? CONTEXT_REF : `t.${ecBid(refId)}`;
+  return scriptOn('buildFlowRefChildrenEc', ref, [
+    `_ref := ${ref}`,
+    `_owner := _ref.id.whenMissing("")`,
+    `_r := ""`,
+    `_l := ""`,
+    `_ref.children().forEach(_fc:`,
+    ...flowChildEmit('_fc', '_owner', '""'),
+    `     IF _fc.className.whenMissing("") = "ButtonGroup" THEN`,
+    `          _fc.children().forEach(_fcc:`,
+    ...flowChildEmit('_fcc', '_owner', '_fc.id.whenMissing("")'),
+    `          )`,
+    `     ELSE`,
+    `          _l := _l`,
+    `     ENDIF`,
+    `)`,
+    `_r := _r + _l`,
+    `_r`,
+  ].join('\n'));
+}
+
+/** One bounded read for a standalone EditPage: its two headings and flat ordered child stream.
+ * PageBreak/ColumnBreak remain siblings here; the view projects them into pages and columns. */
+export function buildEditPageFetchEc(refId: string): string {
+  // `this.object`: the edit page is the command's context (constant).
+  const ref = refId === CONTEXT_REF ? CONTEXT_REF : `t.${ecBid(refId)}`;
+  return scriptOn('buildEditPageFetchEc', ref, [
+    `_ref := ${ref}`,
+    `_owner := _ref.id.whenMissing("")`,
+    `_r := "${PAGE}" + ${safeWireTextEc('_ref.name.whenMissing("")')} + "\\n"`,
+    `_r := _r + "${EDIT_PAGE_TITLE}" + ${safeWireTextEc('_ref.pageTitle.whenMissing("")')} + "\\n"`,
+    `_ref.types.forEach(_type:`,
+    `  _r := _r + "${EDIT_PAGE_TYPE}" + ${safeWireTextEc('output(_type)')} + "\\n"`,
+    `)`,
+    `_l := ""`,
+    `_ref.children().forEach(_fc:`,
+    ...flowChildEmit('_fc', '_owner', '""'),
+    `)`,
+    `_r := _r + _l`,
+    `_r`,
+  ].join('\n'));
+}
+
+/** Parse a `buildFlowRefChildrenEc` log into the ref's ordered children (nesting + captions stitched),
+ *  reusing the shared `flowChildNodeFrom` record decoder. Owner-agnostic — every FLOW_CHILD row here
+ *  belongs to the one fetched reference. */
+export function parseFlowRefChildren(log: string): FlowNode[] {
+  const roots: FlowNode[] = [];
+  stitchFlowChildren(log, () => roots); // owner-agnostic: every FLOW_CHILD here belongs to the one reference
+  return roots;
+}
+
+/** Fetch an existing reference's current children on demand (SW-side; the content script reaches it via
+ *  LAYOUT_FLOW_REF_CHILDREN when the user wires to an off-page InputSet/EditPage). */
+export async function loadFlowRefChildren(io: LayoutIO, refId: string): Promise<FlowNode[]> {
+  let res: { ok: boolean; log?: string; error?: string };
+  if (io.execOn) {
+    // The ID is text: a small varying script finds the RID (ref-rid); the
+    // children are read by the constant script on that object.
+    const expr = `t.${ecBid(refId)}`;
+    const rid = (await resolveRefRids([expr], code => io.exec(code))).get(expr);
+    if (rid instanceof Error) throw new Error(rid.message || 'flow ref children fetch failed');
+    if (!rid) return [];
+    res = await io.execOn(buildFlowRefChildrenEc(CONTEXT_REF), rid);
+  } else res = await io.exec(buildFlowRefChildrenEc(refId));
+  if (!res.ok) throw new Error(res.error || 'flow ref children fetch failed');
+  return parseFlowRefChildren(res.log ?? '');
+}
+
+/** Orphans = widget-ish nodes the reconstruct couldn't place (their owner wasn't a layout node
+ *  — typically the scorecard itself, i.e. a widget left on the phantom RESULT tab). Found by
+ *  connectivity, AFTER reconstruct, so composite children (placed under their ButtonContainer)
+ *  are correctly NOT counted. The tabset root and the grid types are never orphans. */
+function findOrphans(nodes: readonly WireNode[], model: LModel): WireNode[] {
+  const placed = new Set<string>();
+  walk(model, n => { if (n.rid) placed.add(n.rid); });
+  return nodes.filter(n =>
+    n.type !== 'TabSet' && n.type !== 'Tab' && n.type !== 'Container' && n.type !== 'Spacer' && !placed.has(n.rid));
+}
+
+/**
+ * Build the context probe. Classifies a viewed object into the blueprint root + tabset:
+ *  - ENTERPRISE: the object resolves an EnterpriseTemplate through `.template` (simple mode) or
+ *    `.templateExpression` (advanced mode). The instance owns no widgets (layout is
+ *    `resolveTemplate().getCard()`), so the page root is the TEMPLATE. Its
+ *    tabset is discovered from a placed template widget, with `default_tabset` as a fallback. We key
+ *    on the effective enterprise template ONLY — a Scorecard *instance* has a `.linkedTo` template
+ *    too (SharedWebItems reuse) but still owns its own widgets, so `.linkedTo` must NOT trigger the
+ *    enterprise path.
+ *  - DIRECT: a WebParent that owns its widgets (Scorecard/ModelPage/GRC object). The page root is the
+ *    object itself; its tabset is DISCOVERED by walking a widget's cell up to the first TabSet
+ *    ancestor (the page exposes no direct `.tabSet`).
+ * Emits one line: `<CTX>enterprise|<rid>|<id>|<class>|<tabsetId>`  OR
+ *                 `<CTX>direct|<rid>|<id>|<class>|<tabsetId>`.  (Validated live 2026-06-26.)
+ */
+/** EC that walks `_a` up its parent chain looking for the first TabSet (recording its id in `_tsid`).
+ *  Depth 6 covers a tab + ~5 levels of nested containers — generous vs. real pages (demo's deepest is 3). */
+function buildTabsetWalkEc(): string[] {
+  const lines: string[] = [];
+  for (let i = 0; i < 6; i++) {
+    lines.push(`     IF _a.className.whenMissing("") = "TabSet" THEN _tsid := _a.id ELSE _tsid := _tsid ENDIF`);
+    lines.push(`     IF _a.className.whenMissing("") = "TabSet" THEN _tsrid := str(_a.rid) ELSE _tsrid := _tsrid ENDIF`);
+    lines.push(`     _a := _a.parent`);
+  }
+  return lines;
+}
+
+export function buildContextEc(rid: string): string {
+  // Direct branch: find the first child that is actually PLACED (a real, non-RESULT container),
+  // then walk that cell up to the first TabSet ancestor. Both guard against the cheap failure
+  // modes — an unplaced first child, or deep container nesting.
+  // `this.object`: the viewed object is the command's context (constant).
+  const probe = rid === CONTEXT_REF ? CONTEXT_REF : `lookup(${ecRid(rid)})`;
+  return scriptOn('buildContextEc', probe, [
+    `_probe := ${probe}`,
+    // Org redirect: on an Organisation rid, BMP renders its linked enterprise template (caught by the
+    // effective-template resolver below, via the enterprise branch) or, failing that, its first
+    // Scorecard/ModelPage
+    // child. Resolve that landing page here so Blueprint targets what's actually on screen, not the org
+    // container (loading which would walk the whole subtree). First-match pattern mirrors `_cellFound`.
+    `IF _probe.className.whenMissing("") = "Organisation" THEN`,
+    ...ecResolveEnterpriseTemplate('_probe', '_orgTmpl', '     '),
+    `     IF _orgTmpl.rid.whenMissing("") = "" THEN`,
+    `          _found := "no"`,
+    `          _probe.children().forEach(_c:`,
+    `               IF _found = "no" THEN`,
+    `                    _cn := _c.className.whenMissing("")`,
+    `                    _isPage := "no"`,
+    `                    IF _cn = "Scorecard" THEN _isPage := "yes" ELSE _isPage := _isPage ENDIF`,
+    `                    IF _cn = "ModelPage" THEN _isPage := "yes" ELSE _isPage := _isPage ENDIF`,
+    `                    IF _isPage = "yes" THEN`,
+    `                         _probe := _c`,
+    `                         _found := "yes"`,
+    `                    ELSE`,
+    `                         _found := _found`,
+    `                    ENDIF`,
+    `               ELSE`,
+    `                    _found := _found`,
+    `               ENDIF`,
+    `          )`,
+    `     ELSE`,
+    `          _probe := _probe`,
+    `     ENDIF`,
+    `ENDIF`,
+    `_viewedClass := _probe.className.whenMissing("")`,
+    ...ecResolveEnterpriseTemplate('_probe', '_tmpl'),
+    `_tr := _tmpl.rid.whenMissing("")`,
+    `_out := "${CTX}"`,
+    `IF _tr <> "" THEN`,
+    // Enterprise templates commonly use the shared default_tabset, but may own widgets placed in a
+    // dedicated TabSet. Discover the real scaffold from the template's own placed children so the
+    // Blueprint mirrors what BMP renders for the enterprise instance.
+    `     _cellFound := "no"`,
+    `     _cell := _tmpl`,
+    `     _tmpl.children().forEach(_ch:`,
+    `          IF _cellFound = "no" THEN`,
+    `               _cc := _ch.container.id.whenMissing("")`,
+    `               IF _cc <> "" THEN`,
+    `                    IF _cc <> "RESULT" THEN`,
+    `                         _cell := _ch.container`,
+    `                         _cellFound := "yes"`,
+    `                    ELSE`,
+    `                         _cellFound := _cellFound`,
+    `                    ENDIF`,
+    `               ELSE`,
+    `                    _cellFound := _cellFound`,
+    `               ENDIF`,
+    `          ELSE`,
+    `               _cellFound := _cellFound`,
+    `          ENDIF`,
+    `     )`,
+    `     _tsid := ""`,
+    `     _tsrid := ""`,
+    `     _a := _cell`,
+    ...buildTabsetWalkEc(),
+    `     IF _tsid = "" THEN _tsid := "${DEFAULT_TABSET}" ELSE _tsid := _tsid ENDIF`,
+    `     _out := _out + "enterprise|" + _tmpl.rid + "|" + _tmpl.id.whenMissing("") + "|" + _tmpl.className.whenMissing("") + "|" + _tsid + "|" + _viewedClass + "|" + _tsrid`,
+    `ELSE`,
+    `     _cellFound := "no"`,
+    `     _cell := _probe`,
+    `     _probe.children().forEach(_ch:`,
+    `          IF _cellFound = "no" THEN`,
+    `               _cc := _ch.container.id.whenMissing("")`,
+    `               IF _cc <> "" THEN`,
+    `                    IF _cc <> "RESULT" THEN`,
+    `                         _cell := _ch.container`,
+    `                         _cellFound := "yes"`,
+    `                    ELSE`,
+    `                         _cellFound := _cellFound`,
+    `                    ENDIF`,
+    `               ELSE`,
+    `                    _cellFound := _cellFound`,
+    `               ENDIF`,
+    `          ELSE`,
+    `               _cellFound := _cellFound`,
+    `          ENDIF`,
+    `     )`,
+    `     _tsid := ""`,
+    `     _tsrid := ""`,
+    `     _a := _cell`,
+    ...buildTabsetWalkEc(),
+    // linkedTo: this instance reuses a template (SharedWebItems). Surface the template's rid + id so the
+    // UI can toggle to (and default to) editing the shared template. hasLink drives whether the toggle
+    // shows at all.
+    `     _link := _probe.linkedTo.rid.whenMissing("")`,
+    `     _ltid := _probe.linkedTo.id.whenMissing("")`,
+    `     _hasLink := "n"`,
+    `     IF _link <> "" THEN _hasLink := "y" ELSE _hasLink := _hasLink ENDIF`,
+    // widget count: when no tabset was discovered, this separates an empty/non-page object (0 → not
+    // loadable) from a page whose widgets sit on the phantom RESULT tab with no tabset (>0 → we can
+    // offer to create one). Without a tabset the object's children are exactly those RESULT widgets.
+    `     _wn := 0`,
+    `     _probe.children().forEach(_ch:`,
+    `          _wn := _wn + 1`,
+    `     )`,
+    // A truly empty WebParent is still an editable page. `card` is the structural marker that avoids
+    // confusing an arbitrary childless object with an empty page host (verified on an empty Scorecard).
+    `     _hasCard := "n"`,
+    `     IF _probe.card.rid.whenMissing("") <> "" THEN _hasCard := "y" ELSE _hasCard := _hasCard ENDIF`,
+    `     _out := _out + "direct|" + _probe.rid + "|" + _probe.id.whenMissing("") + "|" + _probe.className.whenMissing("") + "|" + _tsid + "|" + _hasLink + "|" + output(_wn) + "|" + _link + "|" + _ltid + "|" + _hasCard + "|" + _tsrid`,
+    `ENDIF`,
+    `_out`,
+  ].join('\n'));
+}
+
+/** The decoded context-probe line. Keyed by NAME so the emit order in `buildContextEc` and the read here
+ *  can't silently drift (the old positional destructure broke whenever a field was inserted/appended). */
+interface ContextProbe {
+  kind: 'enterprise' | 'direct';
+  pageRid: string; pageId: string; pageClass: string; tabsetId: string;
+  hasLink: boolean; widgetCount: number; isPageHost: boolean;
+  templateRid?: string; templateId?: string; // linked template (SharedWebItems), direct branch only
+  enterpriseObjectType?: string;
+  /** The discovered tabset's RID (appended last to both variants). */
+  tabsetRid?: string;
+}
+
+/** Decode the single `<CTX>` probe line. The two variants deliberately decode separately after their
+ * shared identity prefix: field six is an enterprise object class in one variant and a link flag in
+ * the other, so treating them as one positional record makes future additions dangerously ambiguous. */
+function parseContextProbe(line: string): ContextProbe | null {
+  const fields = line.split('|');
+  const [kind, pRid, pId, pClass, tabsetId] = fields;
+  if ((kind !== 'enterprise' && kind !== 'direct') || !pRid || !pId) return null;
+  if (kind === 'enterprise') {
+    const enterpriseObjectType = /^Ce[A-Za-z0-9_]+$/.test(fields[5] ?? '') ? fields[5] : undefined;
+    const tsRid = /^-?\d{1,20}$/.test(fields[6] ?? '') ? fields[6] : undefined;
+    return {
+      kind, pageRid: pRid, pageId: pId, pageClass: pClass || '', tabsetId: tabsetId || '',
+      hasLink: false, widgetCount: 0, isPageHost: false,
+      ...(enterpriseObjectType ? { enterpriseObjectType } : {}),
+      ...(tsRid ? { tabsetRid: tsRid } : {}),
+    };
+  }
+  const [, , , , , hasLink, wcount, tplRid, tplId, pageHost, tsRidRaw] = fields;
+  const tsRid = /^-?\d{1,20}$/.test(tsRidRaw ?? '') ? tsRidRaw : undefined;
+  return {
+    kind, pageRid: pRid, pageId: pId, pageClass: pClass || '', tabsetId: tabsetId || '',
+    hasLink: hasLink === 'y', widgetCount: Number(wcount ?? '0'), isPageHost: pageHost === 'y',
+    ...(tplRid ? { templateRid: tplRid } : {}), ...(tplId ? { templateId: tplId } : {}),
+    ...(tsRid ? { tabsetRid: tsRid } : {}),
+  };
+}
+
+/** Resolve the blueprint context for a viewed object — see `buildContextEc`. Returns:
+ *   - a BlueprintCtx with a discovered tabset (a normal page), or
+ *   - a BlueprintCtx flagged `resultOnly` for a direct page that owns widgets but has no dedicated
+ *     tabset (loaded through default_tabset + withContent — its widgets sit on the shared Result tab),
+ *   - null when it's not an editable page (no tabset, widgets, or page-host Card; or the probe failed).
+ *  The template/instance blast-radius distinction (`.linkedTo`) is recorded via hasTemplate. */
+export async function resolvePageContext(io: LayoutIO, rid: string): Promise<BlueprintCtx | null> {
+  const res = io.execOn ? await io.execOn(buildContextEc(CONTEXT_REF), ecRid(rid)) : await io.exec(buildContextEc(rid));
+  if (!res.ok || !res.log) return null;
+  const line = markerLines(res.log, CTX)[0];
+  const p = line ? parseContextProbe(line) : null;
+  if (!p) return null;
+  // An Organisation only reaches here when it has NO landing page: buildContextEc redirects an org rid
+  // to its linked template or first Scorecard/ModelPage child (what BMP actually renders), but an org
+  // with neither stays an Organisation. It's not a Blueprint target (loading it would walk the whole
+  // subtree), so refuse it — a harmless no-op rather than an org-wide read/edit.
+  if (p.pageClass === 'Organisation') return null;
+  if (p.kind === 'enterprise') {
+    if (!p.tabsetId) return null;
+    // The page root IS the shared template; every edit hits all linked instances → high blast radius.
+    return {
+      pageId: p.pageId, pageRid: p.pageRid, pageClass: (p.pageClass || 'EnterpriseTemplate') as BlueprintCtx['pageClass'],
+      tabsetId: p.tabsetId, target: 'template', hasTemplate: true, tabScope: 'all',
+      ...(p.enterpriseObjectType ? { enterpriseObjectType: p.enterpriseObjectType } : {}),
+      ...(p.tabsetRid ? { tabsetRid: p.tabsetRid } : {}),
+    };
+  }
+  if (p.pageClass === 'EditPage') {
+    return {
+      pageId: p.pageId, pageRid: p.pageRid, pageClass: 'EditPage',
+      tabsetId: '', target: 'instance', hasTemplate: false, tabScope: 'all',
+      surface: 'edit-page',
+    };
+  }
+  // direct: an object that owns its own widgets. Linked template (if any) surfaced so the UI can toggle.
+  const tpl = p.hasLink && p.templateRid ? { templateRid: p.templateRid, templateId: p.templateId ?? '' } : {};
+  if (!p.tabsetId) {
+    // No dedicated tabset. If the object still owns widgets (they sit on the shared Result tab), load it
+    // through default_tabset — withContent keeps only the Result tab — and flag it `resultOnly` so the UI
+    // offers a "+ Create tabset" affordance (which stages a virtual tabset — see edit.createTabset).
+    // A Card marks a real page host even when it is completely empty; it must still reach the existing
+    // "+ Create tabset" flow. Objects with neither widgets nor a Card are not Blueprint targets.
+    return p.widgetCount > 0 || p.isPageHost
+      ? {
+          pageId: p.pageId, pageRid: p.pageRid, pageClass: (p.pageClass || 'Scorecard') as BlueprintCtx['pageClass'],
+          tabsetId: DEFAULT_TABSET, target: 'instance', hasTemplate: p.hasLink,
+          // ...tpl carries templateRid/templateId. Without it a result-only INSTANCE lost its
+          // template link, so loadPage's `prefer:'template'` redirect never fired and the toggle
+          // silently stayed on the instance — every created tab then landed on the instance.
+          tabScope: 'withContent', resultOnly: true, ...tpl,
+        }
+      : null;
+  }
+  // Owns its widgets → editing is INSTANCE-scoped (low blast radius). hasTemplate records that a linked
+  // template exists (the instance reuses it); the default edit target is chosen by the caller's `prefer`.
+  return {
+    pageId: p.pageId, pageRid: p.pageRid, pageClass: (p.pageClass || 'Scorecard') as BlueprintCtx['pageClass'],
+    tabsetId: p.tabsetId, target: 'instance', hasTemplate: p.hasLink, tabScope: 'all', ...tpl,
+    ...(p.tabsetRid ? { tabsetRid: p.tabsetRid } : {}),
+  };
+}
+
+/** Run the page fetch: a constant script with the page as the command's
+ *  context and the tabset as its item when the I/O can (the tabset's RID
+ *  from the probe, else looked up by its ID with a small varying script);
+ *  the page in the text otherwise. */
+async function execFetch(io: LayoutIO, ctx: BlueprintCtx, options: LayoutFetchOptions = {}): Promise<{ ok: boolean; log?: string; error?: string }> {
+  if (!io.execOn) return io.exec(buildFetchEc(ctx, options));
+  let item = ctx.tabsetRid;
+  if (!item && !ctx.resultOnly) {
+    const expr = `t.${ecBid(ctx.tabsetId)}`;
+    const found = (await resolveRefRids([expr], code => io.exec(code))).get(expr);
+    if (found instanceof Error) return { ok: false, error: found.message };
+    item = found ?? undefined;
+  }
+  return io.execOn(buildFetchEc(ctx, { ...options, onContext: true }), ecRid(ctx.pageRid), item);
+}
+
+/** Load: fetch the merged layout, reconstruct, and hand back model + an independent baseline. */
+export async function loadModel(io: LayoutIO, ctx: BlueprintCtx): Promise<LoadResult> {
+  const res = await execFetch(io, ctx);
+  if (!res.ok) throw new Error(res.error || 'layout fetch failed');
+  const log = res.log ?? '';
+  const nodes = stripWidgetContent(parseFetchLog(log)); // drop content nested inside leaf widgets (e.g. list members)
+  const overrides = parseOverrides(log); // F2: per-widget overridden props (instance view → reset arrows)
+  const styles = parseStyles(log);       // G3: per-widget current appearance (style mode rendering)
+  const descriptionViewTypes = parseDescriptionViewTypes(log);
+  const descriptionViewProperties = parseDescriptionViewProperties(log);
+  const flows = parseFlows(log);         // flow projections keyed by flow-widget businessId (read-only)
+  const tabMetadata = parseTabMetadata(log);
+  const model = reconstruct(nodes, ctx, overrides, styles, flows, tabMetadata, descriptionViewTypes, descriptionViewProperties);
+  const baseline = reconstruct(nodes, ctx, overrides, styles, flows, tabMetadata, descriptionViewTypes, descriptionViewProperties); // independent clone — diff target, never mutated
+  // A template DescriptionView without viewTypes cannot resolve property applications. When Blueprint
+  // was opened from a concrete Ce* instance, stage that unambiguous source as the default while keeping
+  // the baseline empty so Apply writes the repair explicitly and shows it in review.
+  const inferredEnterpriseType = ctx.enterpriseObjectType;
+  if (inferredEnterpriseType) {
+    walk(model, node => {
+      if (node.className === 'DescriptionView' && !(node.viewTypes?.length)) node.viewTypes = [inferredEnterpriseType];
+    });
+  }
+  const pageName = parsePageName(log);   // names the ONE support Category new sets/pages/tabset land in
+  if (pageName) { model.pageName = pageName; baseline.pageName = pageName; }
+  return { model, baseline, orphans: findOrphans(nodes, model) };
+}
+
+/** Load a direct EditPage without walking a tabset or the surrounding page hierarchy. */
+export async function loadEditPageModel(io: LayoutIO, ctx: BlueprintCtx): Promise<LoadResult> {
+  const res = io.execOn ? await io.execOn(buildEditPageFetchEc(CONTEXT_REF), ecRid(ctx.pageRid)) : await io.exec(buildEditPageFetchEc(ctx.pageId));
+  if (!res.ok) throw new Error(res.error || 'edit page fetch failed');
+  const log = res.log ?? '';
+  const pageName = parsePageName(log) || ctx.pageId;
+  const pageTitle = markerLines(log, EDIT_PAGE_TITLE)[0] || '';
+  const pageTypes = [...new Set(markerLines(log, EDIT_PAGE_TYPE).filter(Boolean))];
+  const children = parseFlowRefChildren(log);
+  const projection: FlowProjection = {
+    ownerId: ctx.pageId,
+    ownerRid: ctx.pageRid,
+    ownerClass: 'EditPage',
+    ownerName: pageName,
+    kind: 'editpage',
+    refId: ctx.pageId,
+    refRid: ctx.pageRid,
+    refClass: 'EditPage',
+    refName: pageName,
+    children,
+  };
+  const make = (): LModel => ({
+    pageId: ctx.pageId,
+    pageRid: ctx.pageRid,
+    pageName,
+    editPageTitle: pageTitle,
+    editPageTypes: pageTypes,
+    pageClass: 'EditPage',
+    tabsetId: '',
+    tabs: [],
+    target: 'instance',
+    hasTemplate: false,
+    flows: { [ctx.pageId]: projection },
+    flowEdits: {},
+  });
+  return { model: make(), baseline: make(), orphans: [] };
+}
+
+async function loadBlueprintModel(io: LayoutIO, ctx: BlueprintCtx): Promise<LoadResult> {
+  return ctx.surface === 'edit-page' ? loadEditPageModel(io, ctx) : loadModel(io, ctx);
+}
+
+/** Lean read-only layout projection. It preserves the exact structural model
+ * while skipping Blueprint-only style, override, flow, height, and baseline
+ * work. Chunks of 32 nodes measured fastest against a live server. */
+export async function loadStructureModel(io: LayoutIO, ctx: BlueprintCtx): Promise<StructureLoadResult> {
+  const res = await execFetch(io, ctx, {
+    projection: 'structure',
+    chunkSize: 32,
+    includeHeight: false,
+  });
+  if (!res.ok) throw new Error(res.error || 'layout structure fetch failed');
+  const log = res.log ?? '';
+  const nodes = stripWidgetContent(parseFetchLog(log));
+  const model = reconstruct(nodes, ctx, undefined, undefined, undefined, parseTabMetadata(log));
+  applyLinkedTemplates(model.tabs, parseLinkedTemplates(log));
+  const pageName = parsePageName(log);
+  if (pageName) model.pageName = pageName;
+  return {
+    model,
+    orphans: findOrphans(nodes, model),
+    truncated: log.includes(STRUCTURE_LIMIT),
+  };
+}
+
+/**
+ * Apply: diff baseline→desired, compile to one EC program, execute, then RE-FETCH to rebuild
+ * the model (real rids replace temp ids; the fresh baseline makes the next apply idempotent).
+ * An empty diff short-circuits to a no-op so the UI can disable Apply when nothing changed.
+ */
+export async function applyModel(
+  io: LayoutIO,
+  baseline: LModel,
+  desired: LModel,
+  ctx: BlueprintCtx,
+  portableIds: PortableIdPlan = {},
+): Promise<ApplyResult> {
+  // Layout steps + flow steps join ONE plan → ONE compiled EC program → one commit. flowDiff reads only
+  // `desired.flowEdits` (staged by businessId), so the layout portion is byte-identical with or without
+  // flow data (pitfall #1) and a flow edit staged from two cells compiles once (pitfall #2).
+  const layoutPlan = diff(baseline, desired);
+  const plan = [...layoutPlan, ...flowDiff(baseline, desired)];
+  const { script, notes } = compile(plan, desired, portableIds);
+  if (!plan.length || !script) {
+    return { ok: true, noop: true, plan, notes, script: '' };
+  }
+  // Stale-baseline guard: re-fetch live and confirm the page hasn't drifted from the baseline the
+  // user started editing. If someone else changed it, committing our diff could clobber their work
+  // (our reorders/deletes reference rids that may have moved). Abort and hand back the fresh state.
+  // This narrows but can't close the window: a concurrent edit landing between this fetch and the
+  // exec below isn't caught — BMP gives us no cross-call transaction, so the check is best-effort.
+  // Flow drift is checked via the projection signature (flow rows live outside the layout diff).
+  const live = await loadBlueprintModel(io, ctx);
+  // Compare against the fresh RAW baseline, not `live.model`: load may stage deterministic repairs
+  // (currently an inferred DescriptionView.viewTypes on an enterprise instance) in its editable copy.
+  if (diff(baseline, live.baseline).length > 0 || flowSignature(live.baseline) !== flowSignature(baseline)) {
+    return { ok: false, noop: false, stale: true, plan, notes, script, model: live.model, baseline: live.baseline,
+      error: 'The page changed since you started editing. Review the refreshed layout and reapply.' };
+  }
+  const occupiedIds = await occupiedPortableIdPlan(io, portableIds);
+  if (occupiedIds.length) {
+    return {
+      ok: false,
+      noop: false,
+      plan,
+      notes,
+      script,
+      model: live.model,
+      baseline: live.baseline,
+      error: `Generated ID ${occupiedIds[0]} is now in use. Reopen Apply to choose the next free suffix.`,
+    };
+  }
+  const res = await io.exec(script, true); // commit — the only writing exec in the whole flow
+  const executionLog = res.log?.trim() || undefined;
+
+  // BMP Extended Code is NOT transactional (verified live 2026-07-12 on fixture t.50675: a mid-script
+  // `Could not find type` error left the prior `.add()` committed — child count went 4→5; see
+  // memory/bmp-ec-nonatomic). So the commit can land PARTIALLY, and a WARNING-level soft failure
+  // returns ok:true while silently dropping a step (`res.ok = !hasError`). `res.ok`/`res.error` alone
+  // therefore can't distinguish full success from partial — the only source of truth is a re-fetch.
+  // Reload UNCONDITIONALLY and reconcile the live page against what we asked for. Every branch hands
+  // back the fresh model + baseline so the editor rebases onto reality: keeping the stale desired model
+  // (with its temp-id creates that DID land) would re-emit those `add()`s and duplicate them on the
+  // next apply — the reload-not-rebase invariant, which the old "apply failed" early-return violated.
+  // The commit at exec() above already ran. If THIS reconcile re-fetch throws (a network blip / EC
+  // timeout on the read AFTER a landed write), do NOT let applyModel throw — that would surface as
+  // "apply failed" though the change is real (D4). Hand back an `unverified` outcome with no model, so
+  // the UI reloads the page to re-discover reality instead of claiming failure. `ok` carries the
+  // commit's own result so the message can distinguish "applied, unverified" from "errored, unverified".
+  let reloaded: LoadResult;
+  try {
+    reloaded = await loadBlueprintModel(io, ctx);
+  } catch (e) {
+    return { ok: res.ok, noop: false, unverified: true, partial: res.hasWarning || !res.ok, plan, notes, script, executionLog,
+      error: res.ok
+        ? 'Applied, but the result could not be verified (the reload failed). Refreshing the page to show the real state.'
+        : `Apply may have partly failed (${res.error || 'BMP error'}) and the result could not be verified (${e instanceof Error ? e.message : String(e)}). Reload the page and check what landed.` };
+  }
+  const landed = diff(baseline, reloaded.model).length > 0
+    || flowSignature(reloaded.model) !== flowSignature(baseline);
+  // A page's first real TabSet cannot be rediscovered through the result-only context that was
+  // resolved before the commit. The re-fetch above therefore returns the same empty/result-only
+  // projection even when BMP successfully created the support Category, TabSet, Tab, and children.
+  // Let the content script reload the page, which resolves a fresh context and discovers the TabSet.
+  const virtualTabsetBootstrap = desired.tabsetVirtual
+    && layoutPlan.some(step => step.kind === 'create' && step.node.kind === 'tab');
+
+  if (!res.ok) {
+    // The script aborted mid-way. Because EC isn't atomic, earlier steps may already be committed.
+    return { ok: false, noop: false, partial: landed, plan, notes, script, executionLog,
+      model: reloaded.model, baseline: reloaded.baseline,
+      error: landed
+        ? `Apply failed partway: ${res.error || 'BMP error'}. Some changes DID land — the layout was refreshed to the real state; review it before re-applying.`
+        : (res.error || 'Apply failed; the page is unchanged.') };
+  }
+  if (!landed) {
+    if (virtualTabsetBootstrap) {
+      return {
+        ok: true,
+        noop: false,
+        unverified: true,
+        plan,
+        notes,
+        script,
+        executionLog,
+        error: 'The first tabset was applied. Refreshing the page to discover its new layout.',
+      };
+    }
+    // res.ok, but the re-fetched page is byte-identical to the baseline → BMP silently discarded the
+    // whole transaction (the "200 but nothing changed" rollback). Catch it rather than mark it saved.
+    // A PURELY-flow apply changes no layout node, so the flow signature covers that half.
+    return { ok: false, noop: false, plan, notes, script, executionLog, model: reloaded.model, baseline: reloaded.baseline,
+      error: 'BMP discarded the changes. The page is unchanged; reload the page and try again.' };
+  }
+  if (res.hasWarning) {
+    // Something landed, but BMP emitted a WARNING — a step may have soft-failed (a missing-value
+    // lookup, a reorder anchor that had moved) and been skipped while the script continued. Report
+    // possibly-partial so the UI asks the user to verify instead of claiming a clean save.
+    return { ok: true, noop: false, partial: true, plan, notes, script, executionLog,
+      model: reloaded.model, baseline: reloaded.baseline,
+      error: 'Applied, but BMP reported warnings — some steps may not have taken. The layout was refreshed; check it matches what you intended.' };
+  }
+  return { ok: true, noop: false, plan, notes, script, executionLog, model: reloaded.model, baseline: reloaded.baseline };
+}

@@ -1,0 +1,212 @@
+{
+ "index: today": {
+  "n": 200,
+  "matched": 357,
+  "matches": 3286,
+  "hits": "858c7740969a1bbefe10682d",
+  "outcome": "628ad61824b4f725cf324f4e"
+ },
+ "index: today folded": {
+  "n": 117,
+  "matched": 357,
+  "matches": 3286,
+  "hits": "ab011c5b8567cc06ed1e4786",
+  "outcome": "81f2fa132c7e0a3d25d4d5d2"
+ },
+ "index: today ignore case": {
+  "n": 200,
+  "matched": 370,
+  "matches": 4700,
+  "hits": "a3d421d619a8e607e0da974d",
+  "outcome": "5136f44b3472198b715d737a"
+ },
+ "index: today whole word": {
+  "n": 115,
+  "matched": 343,
+  "matches": 1864,
+  "hits": "6a4e8c4e64acc7b2a59ca7ed",
+  "outcome": "dee887b15a41022a35992293"
+ },
+ "index: regex": {
+  "n": 200,
+  "matched": 343,
+  "matches": 1532,
+  "hits": "4c6212597a4d4a52d88aa616",
+  "outcome": "7741dc1f60f10ce77d71acfe"
+ },
+ "index: by name": {
+  "n": 117,
+  "matched": 357,
+  "matches": 3286,
+  "hits": "8097fe51571a10a3ed661ba6",
+  "outcome": "81f2fa132c7e0a3d25d4d5d2"
+ },
+ "index: by folder": {
+  "n": 200,
+  "matched": 357,
+  "matches": 3286,
+  "hits": "8051ea5294490b9f6a5d1504",
+  "outcome": "628ad61824b4f725cf324f4e"
+ },
+ "index: as stored": {
+  "n": 200,
+  "matched": 333,
+  "matches": 1521,
+  "hits": "7784165af3b150a2e3857429",
+  "outcome": "0156c86d1af4ff9b43bdf5a8"
+ },
+ "index: types": {
+  "n": 95,
+  "matched": 95,
+  "matches": 351,
+  "hits": "20c683607b679481fcfa8548",
+  "outcome": "d7228120461af125b704627a"
+ },
+ "index: props": {
+  "n": 52,
+  "matched": 52,
+  "matches": 117,
+  "hits": "8ac82ab6d1ddfadde340c365",
+  "outcome": "62a23a453e83f8c261549898"
+ },
+ "index: where root": {
+  "n": 63,
+  "matched": 63,
+  "matches": 584,
+  "hits": "4e81e5d7be834bdb662a6af0",
+  "outcome": "07647444d57ac475ab0ea3e0"
+ },
+ "index: where org": {
+  "n": 34,
+  "matched": 71,
+  "matches": 662,
+  "hits": "14a051426645a9083563efc2",
+  "outcome": "d0846ef4b8d0455c17fd6eee"
+ },
+ "index: page 2": {
+  "n": 100,
+  "matched": 357,
+  "matches": 3286,
+  "hits": "07a9fc839b75eb185d643ede",
+  "outcome": "628ad61824b4f725cf324f4e"
+ },
+ "index: used in code": {
+  "n": 115,
+  "matched": 375,
+  "matches": 2849,
+  "hits": "4b757313e758a8638219d211",
+  "outcome": "5d01e37ffd6e092deef0e6f7"
+ },
+ "index: used in code unfolded": {
+  "n": 200,
+  "matched": 375,
+  "matches": 2849,
+  "hits": "756055936435cd45941aea88",
+  "outcome": "dedb6f2f106ca9e598bc6157"
+ },
+ "server: today": {
+  "n": 200,
+  "matched": 357,
+  "matches": 3286,
+  "hits": "bcd479224fefe9aa8aef6623",
+  "outcome": "3e73de05a19dd8e45cb09124"
+ },
+ "server: today folded": {
+  "n": 117,
+  "matched": 357,
+  "matches": 3286,
+  "hits": "7118c2d2db533b307f6fcb87",
+  "outcome": "49d4c5af01baa89c428cc147"
+ },
+ "server: today ignore case": {
+  "n": 200,
+  "matched": 370,
+  "matches": 4700,
+  "hits": "c1a416fc8a81565963f25619",
+  "outcome": "2cc932164a40d17ce652395f"
+ },
+ "server: today whole word": {
+  "n": 115,
+  "matched": 343,
+  "matches": 1864,
+  "hits": "27bda5efbb68d310d6dd9f07",
+  "outcome": "c182e5ccfc5682e2c595bbda"
+ },
+ "server: regex": {
+  "n": 200,
+  "matched": 343,
+  "matches": 1532,
+  "hits": "72515e09692f11bc7771b2d3",
+  "outcome": "b370f3c9764b0b41a07b3f98"
+ },
+ "server: by name": {
+  "n": 117,
+  "matched": 357,
+  "matches": 3286,
+  "hits": "cb79652e8290e66e7bcd6514",
+  "outcome": "49d4c5af01baa89c428cc147"
+ },
+ "server: by folder": {
+  "n": 200,
+  "matched": 357,
+  "matches": 3286,
+  "hits": "91d24a4225a0b4ba31ca9f98",
+  "outcome": "3e73de05a19dd8e45cb09124"
+ },
+ "server: as stored": {
+  "n": 200,
+  "matched": 333,
+  "matches": 1521,
+  "hits": "0c4e6774f6e305b5bfd5c3be",
+  "outcome": "9f72aee8fdb5dd90d7805586"
+ },
+ "server: types": {
+  "n": 95,
+  "matched": 95,
+  "matches": 351,
+  "hits": "57419a16014128f2d7ccfc06",
+  "outcome": "89d4aa8fb71c96de41bb7364"
+ },
+ "server: props": {
+  "n": 52,
+  "matched": 52,
+  "matches": 117,
+  "hits": "598569d47762556ccdd6a25a",
+  "outcome": "2c2d6202e36f3b926960f009"
+ },
+ "server: where root": {
+  "n": 63,
+  "matched": 63,
+  "matches": 584,
+  "hits": "4e81e5d7be834bdb662a6af0",
+  "outcome": "f0bad3720771e898b4d5f831"
+ },
+ "server: where org": {
+  "n": 0,
+  "matched": 0,
+  "matches": 0,
+  "hits": "4f53cda18c2baa0c0354bb5f",
+  "outcome": "77b612c6e901caa3a38cb9bc"
+ },
+ "server: page 2": {
+  "n": 100,
+  "matched": 357,
+  "matches": 3286,
+  "hits": "3007965db6146d9595a92890",
+  "outcome": "3e73de05a19dd8e45cb09124"
+ },
+ "server: used in code": {
+  "n": 115,
+  "matched": 375,
+  "matches": 2849,
+  "hits": "93fb595841c4a3945bd07a2c",
+  "outcome": "98f57f8de8cbf953387d8001"
+ },
+ "server: used in code unfolded": {
+  "n": 200,
+  "matched": 375,
+  "matches": 2849,
+  "hits": "d009048ba89077155a8c9bcc",
+  "outcome": "a6cc7ba26a3435347fe357e6"
+ }
+}

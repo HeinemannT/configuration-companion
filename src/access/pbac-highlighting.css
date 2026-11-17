@@ -1,0 +1,16 @@
+/* Generated from pbac-highlighting.js. */
+.pbac-structure{color:#0451a5;font-weight:400}
+.pbac-key{color:#0451a5;font-weight:400}
+.pbac-logic{color:#9b00c1;font-weight:700}
+.pbac-role{color:#126b80;font-weight:400}
+.pbac-subject{color:#126b80;font-weight:400}
+.pbac-action{color:#0062aa;font-weight:400}
+.pbac-reference{color:#001080;font-weight:400}
+.pbac-operator{color:#795e26;font-weight:400}
+.pbac-typed{color:#126b80;font-weight:400}
+.pbac-comment{color:#007000;font-weight:400}
+.pbac-string{color:#a31515;font-weight:400}
+.pbac-number{color:#087443;font-weight:400}
+.pbac-atom{color:#0000ff;font-weight:400}
+.pbac-punctuation{color:#3b3b3b;font-weight:400}
+.pbac-invalid{color:#b52020;font-weight:400;text-decoration:underline wavy}

@@ -1,0 +1,248 @@
+import { defineConfig, normalizePath, type Plugin } from 'vite';
+import { resolve } from 'path';
+import { copyFileSync, mkdirSync, existsSync, readFileSync, writeFileSync, rmSync, readdirSync } from 'fs';
+import { execFileSync } from 'child_process';
+import * as esbuild from 'esbuild';
+import { GENERATED_ROOT_DIRECTORIES, GENERATED_ROOT_FILES } from './scripts/build-output-paths.mjs';
+
+const BUILD_TARGET = 'esnext' as const;
+const contentEntry = resolve(import.meta.dirname, 'src/content.ts');
+const blueprintEntry = resolve(import.meta.dirname, 'src/content-blueprint-entry.ts');
+const interceptorEntry = resolve(import.meta.dirname, 'src/interceptor.ts');
+const buildInfoEntry = normalizePath(resolve(import.meta.dirname, 'src/lib/build-info.ts'));
+const BUILD_ID_TOKEN = '__CREV_BUILD_ID__';
+
+function createBuildId(): string {
+  const commit = process.env.GITHUB_SHA?.trim();
+  if (commit) return commit.slice(0, 7);
+  return `dev-${Date.now().toString(36).slice(-6)}`;
+}
+
+/**
+ * Bake a compact identity into every runtime build. Unlike manifest.version,
+ * this changes for each local watch build, so Chrome DevTools can prove which
+ * bundle is actually loaded. Rolldown (Vite 8+) re-runs transforms on every
+ * watch rebuild and has no shouldTransformCachedModule hook, so the transform
+ * alone picks up the new id.
+ */
+function buildInfoPlugin(): Plugin {
+  let buildId = createBuildId();
+
+  return {
+    name: 'crev-build-info',
+    buildStart() {
+      buildId = createBuildId();
+    },
+    transform(code, id) {
+      if (normalizePath(id.split('?')[0]) === buildInfoEntry) {
+        return code.replace(BUILD_ID_TOKEN, buildId);
+      }
+    },
+  };
+}
+
+/**
+ * Content scripts run as classic scripts (not ES modules), so they
+ * cannot use `import` statements. Use esbuild to bundle each content
+ * entry into a self-contained IIFE that replaces the Vite-generated output.
+ *
+ * Three classic-script entries share one esbuild pass config:
+ *   - content.js            — the always-on inspector bundle (src/content.ts)
+ *   - content-blueprint.js  — the lazily-injected Blueprint editor (about
+ *     500 KB in November 2026: content-blueprint/* + lib/layout/* + the
+ *     ~145 KB src/content-blueprint.css via the text loader),
+ *     injected on demand on first Blueprint activation, NOT
+ *     registered for every page load. Keeping it out of content.js is the whole
+ *     point of the split — see src/content-blueprint-entry.ts.
+ *   - interceptor.js        — registered in Chrome's MAIN world. Registered
+ *     content scripts are classic scripts too; leaving Rollup's shared-chunk
+ *     import here silently prevents the interceptor from starting.
+ */
+async function bundleOne(entryPoint: string): Promise<string> {
+  const result = await esbuild.build({
+    entryPoints: [entryPoint],
+    bundle: true,
+    write: false,
+    format: 'iife',
+    minify: true,
+    target: BUILD_TARGET,
+    loader: { '.css': 'text', '.svg': 'text' }, // .svg: the mascot, imported with ?raw
+  });
+  return result.outputFiles[0].text;
+}
+
+function bundleContentScript(): Plugin {
+  return {
+    name: 'bundle-content-script',
+    async generateBundle(_options, bundle) {
+      const contentEntryChunk = bundle['content.js'];
+      if (contentEntryChunk && contentEntryChunk.type === 'chunk') {
+        contentEntryChunk.code = await bundleOne(contentEntry);
+      }
+      const interceptorEntryChunk = bundle['interceptor.js'];
+      if (interceptorEntryChunk && interceptorEntryChunk.type === 'chunk') {
+        interceptorEntryChunk.code = await bundleOne(interceptorEntry);
+      }
+      // content-blueprint.js has no Rollup input (it's content-only, never imported by an ES-module
+      // page), so emit it directly as an asset rather than patching an existing chunk.
+      this.emitFile({
+        type: 'asset',
+        fileName: 'content-blueprint.js',
+        source: await bundleOne(blueprintEntry),
+      });
+    },
+  };
+}
+
+/** Recursively copy a directory */
+function copyDirSync(src: string, dest: string) {
+  if (!existsSync(src)) return;
+  if (!existsSync(dest)) mkdirSync(dest, { recursive: true });
+  for (const entry of readdirSync(src, { withFileTypes: true })) {
+    const srcPath = resolve(src, entry.name);
+    const destPath = resolve(dest, entry.name);
+    if (entry.isDirectory()) {
+      copyDirSync(srcPath, destPath);
+    } else {
+      copyFileSync(srcPath, destPath);
+    }
+  }
+}
+
+/**
+ * Post-build: fix HTML paths in dist/, then copy built artifacts to
+ * the project root so Chrome can load the extension directly from it.
+ * manifest.json and icons/ already live at root (source files).
+ */
+function extensionPlugin(): Plugin {
+  return {
+    name: 'chrome-extension',
+    closeBundle() {
+      const dist = resolve(import.meta.dirname, 'dist');
+      const root = resolve(import.meta.dirname);
+
+      // --- Fix HTML paths in dist/ ---
+      //
+      // Rollup writes each entry HTML to dist/src/<name>/<name>.html with
+      // ../../<name>/, ../../chunks/, ../../assets/ references (relative
+      // to the source location). We move each to dist/<name>/<name>.html
+      // and rewrite the references to be relative to the new location.
+      // All seven entry points share the same rewrite pattern — one helper
+      // instead of seven near-identical 8-line blocks.
+      // Most surfaces are one html per dir (dir === file); studio is the
+      // exception — two pages (studio + the sandboxed sandbox) share studio/ —
+      // so entries are {dir,file}.
+      const HTML_ENTRIES: Array<{ dir: string; file: string }> = [
+        { dir: 'sidepanel', file: 'sidepanel' },
+        { dir: 'access', file: 'access' },
+        { dir: 'editor', file: 'editor' },
+        { dir: 'objectview', file: 'window' },
+        { dir: 'diff', file: 'diff' },
+        { dir: 'codesearch', file: 'codesearch' },
+        { dir: 'transport', file: 'transport' },
+        { dir: 'studio', file: 'studio' },
+        { dir: 'studio', file: 'sandbox' },
+      ];
+      for (const { dir, file } of HTML_ENTRIES) {
+        const srcHtml = resolve(dist, `src/${dir}/${file}.html`);
+        const destDir = resolve(dist, dir);
+        const destHtml = resolve(destDir, `${file}.html`);
+        if (!existsSync(srcHtml)) continue;
+        if (!existsSync(destDir)) mkdirSync(destDir, { recursive: true });
+        let html = readFileSync(srcHtml, 'utf-8');
+        // Self-folder reference: `../../foo/` → `./`
+        html = html.replace(new RegExp(`\\.\\.\\/\\.\\.\\/${dir}\\/`, 'g'), './');
+        // Shared chunks + assets, one level up
+        html = html.replace(/\.\.\/\.\.\/chunks\//g, '../chunks/');
+        html = html.replace(/\.\.\/\.\.\/assets\//g, '../assets/');
+        writeFileSync(destHtml, html);
+      }
+
+      // Clean up src/ directory in dist
+      if (existsSync(resolve(dist, 'src'))) {
+        rmSync(resolve(dist, 'src'), { recursive: true, force: true });
+      }
+
+      // --- Copy built artifacts from dist/ to project root ---
+
+      // Top-level JS files
+      for (const file of GENERATED_ROOT_FILES) {
+        const src = resolve(dist, file);
+        const dest = resolve(root, file);
+        rmSync(dest, { force: true });
+        if (existsSync(src)) copyFileSync(src, dest);
+      }
+
+      // Replace generated directories rather than merging into the previous
+      // build. This prevents removed chunks and assets from surviving locally
+      // and making root-loaded QA differ from the clean release package.
+      for (const dir of GENERATED_ROOT_DIRECTORIES) {
+        const src = resolve(dist, dir);
+        const dest = resolve(root, dir);
+        rmSync(dest, { recursive: true, force: true });
+        if (existsSync(src)) copyDirSync(src, dest);
+      }
+
+      // Chrome keeps an unpacked extension pinned to the directory originally
+      // selected in chrome://extensions. Once qa:devtools-package has created
+      // that stable temp directory, refresh it after every normal/watch build
+      // so Chrome's Reload button always picks up the newest local manifest and
+      // bundles. On CI and fresh checkouts the directory does not exist, so the
+      // helper exits without creating local QA state.
+      execFileSync(
+        process.execPath,
+        [resolve(root, 'scripts/prepare-devtools-package.mjs'), '--if-present'],
+        { stdio: 'inherit' },
+      );
+    },
+  };
+}
+
+export default defineConfig({
+  base: '',
+  build: {
+    outDir: 'dist',
+    emptyOutDir: true,
+    target: BUILD_TARGET,
+    minify: true,
+    modulePreload: false,
+    rolldownOptions: {
+      // Rolldown copies imported constants into the modules that use them. For
+      // tldts (bundled into the service worker) that copied its ~60 KB
+      // public-suffix label string three times (+124 KB). Rollup never did
+      // this; keep each constant in one place.
+      optimization: { inlineConst: false },
+      // CSS imported anywhere in the content-script bundle (content.ts or a src/content* module it
+      // pulls in, e.g. content-blueprint) is handled by esbuild (bundleContentScript plugin) with the
+      // '.css':'text' loader — mark it external so the Rollup pass doesn't try to resolve it.
+      external: (id, importer) => id.endsWith('.css') && !!importer && importer.includes('/content'),
+      input: {
+        'service-worker': resolve(import.meta.dirname, 'src/service-worker.ts'),
+        interceptor: resolve(import.meta.dirname, 'src/interceptor.ts'),
+        content: resolve(import.meta.dirname, 'src/content.ts'),
+        'sidepanel/sidepanel': resolve(import.meta.dirname, 'src/sidepanel/sidepanel.html'),
+        'access/access': resolve(import.meta.dirname, 'src/access/access.html'),
+        'editor/editor': resolve(import.meta.dirname, 'src/editor/editor.html'),
+        // Object window (structure tree + detail pane).
+        'objectview/window': resolve(import.meta.dirname, 'src/objectview/window.html'),
+        'diff/diff': resolve(import.meta.dirname, 'src/diff/diff.html'),
+        'codesearch/codesearch': resolve(import.meta.dirname, 'src/codesearch/codesearch.html'),
+        'transport/transport': resolve(import.meta.dirname, 'src/transport/transport.html'),
+        'studio/studio': resolve(import.meta.dirname, 'src/studio/studio.html'),
+        // Sandboxed page (manifest sandbox.pages) — runs arbitrary CVO code.
+        'studio/sandbox': resolve(import.meta.dirname, 'src/studio/sandbox.html'),
+      },
+      output: {
+        entryFileNames: '[name].js',
+        chunkFileNames: 'chunks/[name].js',
+        assetFileNames: 'assets/[name].[ext]',
+      },
+    },
+  },
+  resolve: {
+    alias: {
+      '@': resolve(import.meta.dirname, 'src'),
+    },
+  },
+  plugins: [buildInfoPlugin(), bundleContentScript(), extensionPlugin()],
+});

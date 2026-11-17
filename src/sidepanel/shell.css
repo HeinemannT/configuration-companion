@@ -1,0 +1,454 @@
+/* Side panel shell: page frame, header with the server control, tab bar,
+ * connection band, menus, status bar, toasts. Primitives (icon
+ * buttons, buttons, menu, band, ID, dot, focus ring) come from
+ * src/styles/ui.css. Tab sheets live next to their tabs (tabs/*.css). */
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── Header ────────────────────────────────────── */
+
+.header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  height: 48px;
+  min-width: 0;
+  padding: 0 6px 0 4px;
+  background: var(--bg);
+  /* the narrow rule below measures the header, not the viewport */
+  container: sp-header / inline-size;
+}
+
+/* The server switcher: the mark in its status ring, the server name over
+ * the user (or the state), and the chevron. The ring carries the state;
+ * the mark never changes. */
+.srvctl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 1 auto;
+  min-width: 0;
+  height: 40px;
+  padding: 0 6px 0 4px;
+  border-radius: var(--radius-lg);
+  text-align: left;
+}
+.srvctl:hover, .srvctl[aria-expanded="true"] { background: var(--layer-01); }
+.ui .srvctl:focus-visible { outline: var(--focus-edge); outline-offset: 0; }
+
+.srv-ring { display: block; flex: none; width: 36px; height: 36px; }
+/* the static boot header: the mark where the ring will be, before the script runs */
+.srv-boot-mark { display: block; flex: none; width: 28px; height: 28px; margin: 4px; }
+.srv-ring > svg { display: block; width: 36px; height: 36px; overflow: visible; }
+.srv-ring .ring-track,
+.srv-ring .ring-arc { fill: none; stroke-width: 2; }
+.srv-ring .ring-track { stroke: var(--border-strong); }
+.srv-ring .ring-arc { display: none; stroke: var(--brand); stroke-linecap: round; }
+.srv-ring[data-ring="ok"] .ring-track { stroke: var(--support-ok); }
+.srv-ring[data-ring="warn"] .ring-track { stroke: var(--support-warn-graphic); }
+.srv-ring[data-ring="fail"] .ring-track { stroke: var(--support-error); }
+.srv-ring[data-ring="none"] .ring-track { stroke: var(--border-strong); stroke-dasharray: 3.5 3.2; }
+/* Connecting: a quarter-turn arc spins over a neutral track. Only the arc
+ * turns (transform, no layout); the mark stays still. */
+.srv-ring[data-ring="connecting"] .ring-track { stroke: var(--border-subtle); }
+.srv-ring[data-ring="connecting"] .ring-arc {
+  display: inline;
+  transform-box: view-box;
+  transform-origin: 18px 18px;
+  animation: srv-ring-spin 0.9s linear infinite;
+}
+@keyframes srv-ring-spin {
+  from { transform: rotate(-90deg); }
+  to   { transform: rotate(270deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .srv-ring[data-ring="connecting"] .ring-arc { animation: none; transform: rotate(-90deg); }
+}
+
+.srv-text {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.srv-name,
+.srv-word {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.srv-name { font-size: 13px; line-height: 16px; font-weight: 600; color: var(--text-primary); }
+.srv-word { font-size: var(--ui-fs-sm); line-height: 16px; color: var(--text-helper); }
+.srv-word[data-tone="warn"] { color: var(--text-warn); font-weight: 500; }
+.srv-word[data-tone="error"] { color: var(--text-error); font-weight: 500; }
+.ui .srv-chev { width: 14px; height: 14px; color: var(--text-helper); }
+.srvctl:hover .srv-chev { color: var(--text-secondary); }
+
+.header .header-icon-btn,
+.header .hdr-mode { width: 28px; height: 28px; }
+.hdr-sp { flex: 1 1 0; min-width: var(--space-1); }
+.header-tools, .hdr-modes { display: inline-flex; align-items: center; gap: 2px; flex: none; }
+.hdr-vsep { width: 1px; height: 16px; margin: 0 4px; flex: none; background: var(--border-subtle); }
+.ui .hdr-mode[aria-pressed="true"] { background: var(--brand-bg); color: var(--text-brand); }
+.hdr-modes.no-page .hdr-mode:not([aria-pressed="true"]) { color: var(--text-placeholder); }
+
+/* A narrow panel: smaller tools without gaps, so the state ("Sign in to
+ * BMP") still fits; the server name truncates first. */
+@container sp-header (max-width: 340px) {
+  .header .header-icon-btn,
+  .header .hdr-mode { width: 24px; height: 24px; }
+  .header-tools, .hdr-modes { gap: 0; }
+  .hdr-vsep { margin: 0 2px; }
+}
+
+/* ── Tab bar (role=tablist) ─────────────────────── */
+
+.tab-bar {
+  flex: none;
+  display: flex;
+  height: 32px;
+  padding: 0 var(--space-2);
+  background: var(--bg);
+  box-shadow: inset 0 -1px 0 var(--border-subtle);
+}
+.tab {
+  position: relative;
+  height: 32px;
+  margin-right: var(--space-2);
+  padding: 0 var(--space-2);
+  font-size: var(--ui-fs-sm);
+  line-height: 32px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.tab:hover { color: var(--text-primary); }
+.tab[aria-selected="true"] { color: var(--text-primary); font-weight: 600; }
+.tab[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: var(--space-2);
+  right: var(--space-2);
+  bottom: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--brand);
+}
+.ui .tab:focus-visible { outline-offset: -2px; }
+
+/* ── Connection band: under the tab bar on every tab ── */
+
+.conn-band {
+  position: relative;
+  flex: none;
+  padding: var(--space-2) var(--space-4);
+  background: var(--layer-01);
+}
+.conn-band[hidden] { display: none; }
+.conn-band::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--support-warn); }
+.conn-band.fail::before { background: var(--support-error); }
+.cb-s { margin: 0; font-size: var(--ui-fs-sm); line-height: 16px; color: var(--text-primary); }
+.cb-a { display: flex; align-items: center; gap: var(--space-1); min-width: 0; height: 24px; margin-top: var(--space-2); }
+.ui .cb-btn { display: inline-flex; align-items: center; gap: var(--space-1); height: 24px; padding: 0 var(--space-2); font-size: var(--ui-fs-sm); flex: none; }
+.ui .cb-btn[hidden] { display: none; }
+.ui .cb-btn.ghost:hover { background: var(--layer-hover); color: var(--text-primary); }
+.cb-btn.spinning .ic { animation: detection-spin .8s linear infinite; }
+.cb-next { min-width: 0; margin-left: var(--space-1); font-size: var(--ui-fs-xs); color: var(--text-helper); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cb-sp { flex: 1 1 0; }
+.cb-dtl {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+  height: 24px;
+  margin-right: calc(-1 * var(--space-2));
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-2);
+  font-size: var(--ui-fs-sm);
+  color: var(--text-secondary);
+}
+.cb-dtl[hidden] { display: none; }
+.cb-dtl:hover { background: var(--layer-hover); color: var(--text-primary); }
+.cb-dtl .ic { transition: transform 80ms; }
+.cb-dtl[aria-expanded="true"] .ic { transform: rotate(180deg); }
+.cb-detail {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-2);
+  background: var(--bg);
+  border-radius: var(--radius-2);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+}
+.cb-detail[hidden] { display: none; }
+.cb-detail code {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 0;
+  font: 400 var(--ui-fs-xs)/16px var(--font-mono);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+/* ── Menus (server switcher, Companion links, Log) ── */
+
+.sp-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 168px;
+  box-shadow: var(--shadow-2);
+}
+.sp-menu button { display: flex; text-align: left; color: var(--text-primary); }
+/* The name has priority: it never shrinks, up to 60% of the row. The host takes
+   what is left and loses its end. (A shared shrink scaled by each part's width
+   still took a fraction of a pixel from a short name, enough for an ellipsis.) */
+.sp-menu-t { flex: 0 0 auto; max-width: 60%; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sp-menu-sub { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; margin-left: auto; padding-left: var(--space-3); }
+.ui .sp-menu-ck { color: var(--text-brand); }
+.ui .sp-menu-ck.off { visibility: hidden; }
+.sp-menu-sep { height: 1px; margin: var(--space-1) 0; background: var(--border-subtle); }
+.sp-menu-meta { padding: var(--space-1) var(--space-2) 2px; font: 400 var(--ui-fs-xs)/16px var(--font-mono); color: var(--text-helper); border-top: 1px solid var(--border-subtle); margin-top: var(--space-1); }
+.srv-menu { min-width: 240px; }
+
+/* ── Tab content ───────────────────────────────── */
+
+.tab-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+/* Browse while the server is down: what it shows may be stale. */
+.tab-content.stale #panel-browse { opacity: .6; }
+
+.tab-panel { display: none; padding: var(--space-3) var(--space-4) var(--space-4); }
+.tab-panel.active { display: block; }
+#panel-connect.active, #panel-log.active { padding: 0; }
+
+@keyframes detection-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Status bar ────────────────────────────────── */
+
+.status-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  height: 24px;
+  padding: 0 var(--space-4);
+  background: var(--layer-01);
+  font-size: var(--ui-fs-xs);
+  color: var(--text-helper);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.status-bar-activity {
+  flex: 1 1 96px;
+  min-width: 48px;
+  text-align: left;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.status-bar-activity.is-idle { color: var(--text-helper); }
+.status-bar-activity.is-working { color: var(--text-primary); }
+
+.status-bar-count {
+  flex-shrink: 0;
+  color: var(--text-helper);
+  font-family: var(--font-mono);
+}
+
+/* Active object context — the shared chip contract, constrained so it
+ * cannot crowd the activity line. */
+.status-bar-context {
+  max-width: 140px;
+  min-width: 0;
+  flex: 1 1 140px;
+  overflow: hidden;
+  padding: 0;
+  border: none;
+  background: none;
+  box-shadow: none;
+}
+.status-bar-context--empty {
+  padding: 0 var(--space-1);
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-1);
+  color: var(--text-helper);
+  font-style: italic;
+  cursor: default;
+}
+.status-bar-context--empty:hover { background: transparent; border-color: var(--border-subtle); color: var(--text-helper); }
+
+@media (max-width: 390px) {
+  .status-bar-count { display: none; }
+  .status-bar-context { max-width: 108px; }
+}
+
+/* Latency traffic light — 6-step ramp plus a grey mark for "no data". */
+.status-bar-latency {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--ui-fs-xs);
+  color: var(--text-secondary);
+}
+.status-bar-latency-ic { display: inline-flex; }
+.status-bar-latency-ic svg { width: 12px; height: 12px; }
+.status-bar-latency--t-1 .status-bar-latency-value,
+.status-bar-latency--t-1 .status-bar-latency-ic { color: var(--text-helper); }
+.status-bar-latency--t0 .status-bar-latency-ic,
+.status-bar-latency--t1 .status-bar-latency-ic { color: var(--support-ok); }
+.status-bar-latency--t2 .status-bar-latency-ic,
+.status-bar-latency--t3 .status-bar-latency-ic { color: var(--text-warn); }
+.status-bar-latency--t4 .status-bar-latency-ic,
+.status-bar-latency--t5 .status-bar-latency-ic { color: var(--support-error); }
+
+/* feedback overlay — a confirmation briefly owns the bar */
+.status-bar [hidden] { display: none; }
+
+.status-bar-flash {
+  display: none;
+  margin-left: auto;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.status-bar--flash .status-bar [hidden] { display: none; }
+
+.status-bar-flash { display: inline; }
+.status-bar--flash #status-bar-context,
+.status-bar--flash #status-bar-latency,
+.status-bar--flash .status-bar-count,
+.status-bar--flash .status-bar-activity { display: none !important; }
+
+/* Loading */
+.pane-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  animation: crev-fade-in var(--duration-normal) var(--ease-decelerate);
+}
+
+/* ── Toast notifications ─────────────────────────
+ * Mirrors the in-page toast styles (content-overlay.css) — the same visual
+ * language in the side panel for save errors and EC failures. The SW fires
+ * TOAST messages; lib/toast.ts renders them.
+ */
+
+#crev-toast-container {
+  position: fixed;
+  top: 8px;
+  right: 8px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  pointer-events: none;
+}
+
+.crev-toast {
+  padding: 7px var(--space-3);
+  border-radius: var(--radius-md);
+  font: 500 11px/1.4 var(--font-body, 'Inter', system-ui, sans-serif);
+  color: var(--text-on-color);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  pointer-events: auto;
+  opacity: 0;
+  transform: translateX(16px);
+  transition: opacity 200ms ease, transform 200ms ease;
+  max-width: 260px;
+}
+
+.crev-toast--visible { opacity: 1; transform: translateX(0); }
+
+.crev-toast--exit { opacity: 0; transform: translateX(16px); }
+
+.crev-toast--success { background: color-mix(in srgb, var(--success) 92%, transparent); }
+
+.crev-toast--error { background: color-mix(in srgb, var(--danger) 92%, transparent); }
+
+.crev-toast--info { background: color-mix(in srgb, var(--info) 92%, transparent); }
+
+/* Toast with an inline action button (e.g. "Reload" after a save). */
+
+.crev-toast--with-action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-right: var(--space-xs);
+}
+
+.crev-toast__text { flex: 1; }
+
+.crev-toast__action {
+  flex: none;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.16);
+  color: var(--text-on-color);
+  font: 600 11px/1 var(--font-body, 'Inter', system-ui, sans-serif);
+  padding: var(--space-1) 9px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.crev-toast__action:hover { background: rgba(255, 255, 255, 0.3); }
+
+/* Error toasts: a dismiss button after the action. */
+
+.crev-toast__close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-on-color);
+  cursor: pointer;
+}
+
+.crev-toast__close:hover { background: rgba(255, 255, 255, 0.25); }
+
+.crev-toast__close:focus-visible { outline: 2px solid var(--text-on-color); outline-offset: 1px; }

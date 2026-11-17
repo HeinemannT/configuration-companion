@@ -1,0 +1,190 @@
+/**
+ * Content script state — single object holding all mutable state.
+ * Replaces 20 scattered module-level `let` variables.
+ * Can be reset atomically on page unload or re-injection.
+ */
+
+import type { EditPageContext, EnrichMode } from './lib/types';
+import type { DetectionResult } from './lib/dom-scanner';
+
+/** Cascade target on the badge — for flow-bearing widgets we surface the
+ *  next link in the chain (InputView → inputSet, ActionButton → actionObject)
+ *  as a second pill so the structure is visible at a glance. */
+export type CascadeTarget = { rid: string; businessId?: string; type?: string; name?: string };
+export type EnrichmentData = {
+  businessId?: string;
+  type?: string;
+  name?: string;
+  templateBusinessId?: string;
+  cascade?: CascadeTarget;
+};
+
+export type EditPageInspectField = {
+  rid: string;
+  businessId: string;
+  name: string;
+  className: 'EditField' | 'EditPageInfo';
+  /** Index in the complete EditPage child stream, including non-EditField rows. */
+  streamIndex: number;
+  property?: string;
+  propertyObject?: CascadeTarget;
+};
+
+export class ContentState {
+  inspectActive = false;
+  enrichMode: EnrichMode = 'widgets';
+  styleInjected = false;
+  fromSync = false;
+  prevConnDisplay: string | null = null;
+  connectionEpochsSeen = false;
+  lastIncidentEpoch = 0;
+  lastRecoveryEpoch = 0;
+  environment: string | null = null;
+  lastUrl = typeof window !== 'undefined' ? window.location.href : '';
+  lastDetection: DetectionResult | null = null;
+
+  /** Page context from the MAIN-world interceptor (React fiber). The bound
+   *  object + active tab — the only source on BMP's custom-routed pages where
+   *  the URL/DOM are blank. Fed by PAGE_CONTEXT, consumed by resolvePageContext.
+   *  Cleared on URL change so a stale page object can't outlive a navigation. */
+  fiberPageContext: { rid?: string; tabRid?: string } | null = null;
+
+  /** Form-definition identity on BMP create/edit routes. Kept separate from
+   * fiberPageContext so showing the EditPage chip cannot change execution
+   * context for Blueprint or Extended Code. */
+  editPageContext: EditPageContext | null = null;
+  /** Ordered EditField identities resolved from the standalone EditPage.
+   *  The DOM carries only native form controls, so this is the join table
+   *  Inspect uses to project configuration badges onto those controls. */
+  editPageInspectRid: string | null = null;
+  editPageInspectFields: EditPageInspectField[] = [];
+  editPageInspectLoadingRid: string | null = null;
+  editPageInspectRequest = 0;
+  editPageInspectRetryAt = 0;
+
+  // Enrichment data from server (RID → identity)
+  enrichments = new Map<string, EnrichmentData>();
+
+  receiveEnrichments(enrichments: Record<string, EnrichmentData>): void {
+    for (const [rid, data] of Object.entries(enrichments)) {
+      this.enrichments.set(rid, data);
+      this.requestedRids.delete(rid);
+    }
+  }
+
+  // Tracks which elements already have overlays attached
+  badgedElements = new WeakSet<Element>();
+
+  // Dedup: RIDs we've already requested enrichment for
+  requestedRids = new Set<string>();
+
+  /** Empty results stop the spinner and suppress render-driven retry loops.
+   * A deliberate refresh or recovered connection must make them eligible again. */
+  retryFailedEnrichments(): void {
+    this.requestedRids.clear();
+    for (const [rid, data] of this.enrichments) {
+      if (!data.businessId && !data.type && !data.name && !data.templateBusinessId && !data.cascade) {
+        this.enrichments.delete(rid);
+      }
+    }
+  }
+
+  // Dedup: RIDs we've already sent as OBJECTS_DISCOVERED
+  discoveredRids = new Set<string>();
+
+  // Favorites cache for quick inspector star state
+  favoriteRids = new Set<string>();
+
+  // MutationObserver instance
+  observer: MutationObserver | null = null;
+
+  // Timers
+  tooltipShowTimer: ReturnType<typeof setTimeout> | null = null;
+  tooltipHideTimer: ReturnType<typeof setTimeout> | null = null;
+  tooltipWarmUntil = 0;
+  debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Coalesced BMP render/context refresh owned by content-observer. It lives
+   *  here (rather than in the observer closure) so reinjection can cancel it. */
+  renderRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Transient DOM state — the badge pill the cursor is currently over
+  // (hover-tooltip dedup guard).
+  hoveredLabelEl: Element | null = null;
+  /** Current rich object-card anchor + keyboard trigger. The card is portalled
+   *  under documentElement, so these references preserve its focus contract. */
+  tooltipLabelEl: HTMLElement | null = null;
+  tooltipTriggerEl: HTMLElement | null = null;
+  tooltipRestoreInProgress = false;
+
+  // Synthetic identity attached to BMP's normal page heading. It is cached
+  // until the heading detaches or the resolved page RID changes, so a busy
+  // dashboard does not repeatedly run header detection.
+  pageHeaderElement: HTMLElement | null = null;
+  pageHeaderLabel: HTMLElement | null = null;
+  pageHeaderRid: string | null = null;
+
+  /** AbortController whose signal is passed to every page-lifetime
+   *  event listener (document.body mouseover, context actions, etc.).
+   *  Aborted by resetAll() so a re-injection or double-load doesn't
+   *  pile up duplicate listeners. */
+  listenerLifetime: AbortController = new AbortController();
+
+  /** Reset enrichment-related state (on inspect off, URL change, or re-inject) */
+  resetOverlays() {
+    this.badgedElements = new WeakSet();
+    this.requestedRids.clear();
+    this.hoveredLabelEl = null;
+    this.tooltipLabelEl = null;
+    this.tooltipTriggerEl = null;
+    this.tooltipRestoreInProgress = false;
+  }
+
+  /** Reset discovery dedup (on URL change) */
+  resetDiscovery() {
+    this.discoveredRids.clear();
+  }
+
+  resetEditPageInspection() {
+    this.editPageInspectRid = null;
+    this.editPageInspectFields = [];
+    this.editPageInspectLoadingRid = null;
+    this.editPageInspectRequest++;
+    this.editPageInspectRetryAt = 0;
+  }
+
+  /** Full reset for re-injection guard */
+  resetAll() {
+    this.inspectActive = false;
+    this.enrichMode = 'widgets';
+    this.styleInjected = false;
+    this.fromSync = false;
+    this.prevConnDisplay = null;
+    this.connectionEpochsSeen = false;
+    this.lastIncidentEpoch = 0;
+    this.lastRecoveryEpoch = 0;
+    this.environment = null;
+    this.lastUrl = typeof window !== 'undefined' ? window.location.href : '';
+    this.lastDetection = null;
+    this.fiberPageContext = null;
+    this.editPageContext = null;
+    this.resetEditPageInspection();
+    this.enrichments.clear();
+    this.resetOverlays();
+    this.pageHeaderElement = null;
+    this.pageHeaderLabel = null;
+    this.pageHeaderRid = null;
+    this.resetDiscovery();
+    this.favoriteRids.clear();
+    if (this.debounceTimer) { clearTimeout(this.debounceTimer); this.debounceTimer = null; }
+    if (this.renderRefreshTimer) { clearTimeout(this.renderRefreshTimer); this.renderRefreshTimer = null; }
+    if (this.tooltipShowTimer) { clearTimeout(this.tooltipShowTimer); this.tooltipShowTimer = null; }
+    if (this.tooltipHideTimer) { clearTimeout(this.tooltipHideTimer); this.tooltipHideTimer = null; }
+    this.tooltipWarmUntil = 0;
+    this.observer?.disconnect();
+    this.observer = null;
+    // Detach every page-lifetime listener in one shot, then arm a
+    // fresh controller for the next injection cycle.
+    this.listenerLifetime.abort();
+    this.listenerLifetime = new AbortController();
+  }
+}

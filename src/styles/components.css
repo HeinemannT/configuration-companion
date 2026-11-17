@@ -1,0 +1,874 @@
+/**
+ * Shared components — buttons, badges, tables.
+ * Imported by all HTML entry points after tokens.css + base.css.
+ */
+
+/* ── Buttons ──────────────────────────────────────── */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+  color: var(--text-2);
+  background: none;
+  border: 1px solid var(--surface-4);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-default),
+              border-color var(--duration-fast) var(--ease-default),
+              color var(--duration-fast) var(--ease-default),
+              transform var(--duration-instant) var(--ease-default),
+              box-shadow var(--duration-fast) var(--ease-default);
+  white-space: nowrap;
+  user-select: none;
+}
+.btn:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+.btn:disabled {
+  background: var(--surface-2);
+  border-color: var(--surface-3);
+  color: var(--text-disabled);
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* Keyboard focus ring. `outline: none` is removed by Chrome's stylesheet
+ * when buttons receive focus via mouse, but `:focus-visible` only fires
+ * for keyboard / programmatic focus — keeping mouse interactions clean
+ * while giving Tab-key users a clear "you are here" marker. WCAG AA. */
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Primary: filled accent. Used for the dominant CTA in a form group.
+ * One per surface, max. */
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-bright);
+  border-color: var(--accent-bright);
+}
+
+/* Secondary: muted outline. The neutral choice next to a primary CTA. */
+.btn-secondary {
+  border-color: var(--surface-4);
+  color: var(--text-2);
+}
+.btn-secondary:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+/* Accent: purple outline */
+.btn-accent { border-color: var(--accent-dim); color: var(--accent-dim); }
+.btn-accent:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* Danger: red */
+.btn-danger { border-color: var(--danger); color: var(--danger); }
+.btn-danger:hover { background: var(--danger); color: #fff; }
+
+/* Success: green */
+.btn-success { border-color: var(--success); color: var(--text-ok); }
+.btn-success:hover { background: var(--success); color: #fff; }
+
+/* Ghost: transparent, no border — used as the "off" state for armed buttons (Run, Save) */
+.btn-ghost { border-color: transparent; color: var(--text-3); }
+.btn-ghost:hover:not(:disabled) { background: var(--surface-3); color: var(--text-2); border-color: transparent; }
+
+/* Keyboard-shortcut chip inside a button (e.g. Save ⌘S). Shared by the EC
+ * editor and the CVO studio so both advertise their shortcuts the same way. */
+.btn kbd {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--space-1);
+  margin-left: var(--space-1);
+  height: 16px;
+  border-radius: var(--radius-md);
+  background: rgba(255,255,255,0.08);
+  color: inherit;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.3px;
+  opacity: 0.8;
+}
+.btn:hover kbd { opacity: 1; }
+.btn:disabled kbd { opacity: 0.4; }
+
+/* Bare icon button — transparent, just the glyph (no box). Shared by the
+ * studio strip and the sidepanel object rows. Hover lifts the text. (The
+ * boxed toggle .header-icon-btn is a separate boxed header component.) */
+.icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: var(--space-0) var(--space-1);
+  color: var(--text-3); background: none; border: none; cursor: pointer;
+}
+.icon-btn svg { width: 13px; height: 13px; }
+.icon-btn:hover { color: var(--text-1); }
+
+/* Micro button — compact, borderless, mono. Toolbar/inline actions shared by
+ * the EC editor and the CVO studio (child-row Save/x, the ? button base). */
+.btn-micro {
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 22px; min-width: 22px; padding: 0 var(--space-xs);
+  border: none; background: none; color: var(--text-3);
+  font-family: var(--font-mono); font-size: var(--text-xs);
+  border-radius: var(--radius-sm); cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-default),
+              color var(--duration-fast) var(--ease-default);
+}
+.btn-micro:hover { background: var(--surface-3); color: var(--text-1); }
+.btn-micro.active { background: var(--accent-bg); color: var(--accent); }
+.btn-micro-label { font-weight: var(--weight-semi); letter-spacing: 0.5px; }
+
+/* Round "?" help button — a btn-micro variant; identical in both editors. */
+.help-btn {
+  font-family: var(--font-body); font-weight: var(--weight-semi);
+  font-size: var(--text-base); width: 22px; height: 22px; border-radius: 50%;
+}
+@keyframes crev-help-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Just-saved pulse — the brief feedback after a Save commits. */
+.btn.btn-saved { animation: btn-save-pulse 0.45s ease-out; }
+@keyframes btn-save-pulse {
+  0%   { transform: scale(1.0); }
+  35%  { transform: scale(1.04); }
+  100% { transform: scale(1.0); }
+}
+
+/* Segmented control — inset pills in a tray. Shared by the EC editor
+ * (template/instance) and the CVO studio (Mock/Live, preview width). */
+.seg {
+  display: inline-flex;
+  flex-shrink: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--surface-4);
+  border-radius: var(--radius-md);
+  padding: var(--space-0);
+  gap: 1px;
+}
+.seg-btn {
+  padding: var(--space-1) var(--space-3);
+  border: none;
+  border-radius: calc(var(--radius-md) - var(--radius-sm));
+  background: none;
+  color: var(--text-3);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.2px;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-default),
+              color var(--duration-fast) var(--ease-default);
+}
+.seg-btn:hover:not(.active) { color: var(--text-1); }
+.seg-btn.active { background: var(--accent); color: #fff; }
+
+/* Same posture as btn-ghost (footer-level button) but hover reveals danger
+ * intent. Used for Reset-all — destructive but routine enough that we don't
+ * want a permanent red outline screaming at the user. */
+.btn-danger-ghost { border-color: transparent; color: var(--text-3); }
+.btn-danger-ghost:hover:not(:disabled) { background: color-mix(in srgb, var(--danger) 15%, transparent); color: var(--danger); border-color: transparent; }
+
+/* Light pages: the success text and the shortcut chip need the light
+ * scope's own values (--success is a fill colour there, under 4.5:1 as text). */
+:root[data-theme="crev-light"] .btn-success { border-color: var(--text-ok); color: var(--text-ok); }
+:root[data-theme="crev-light"] .btn-success:hover { background: var(--text-ok); color: var(--text-on-color); }
+:root[data-theme="crev-light"] .btn kbd { background: var(--layer-01); }
+:root[data-theme="crev-light"] .btn-accent:hover kbd,
+:root[data-theme="crev-light"] .btn-success:hover kbd { background: rgba(255, 255, 255, 0.2); }
+
+/* Size: small */
+.btn-small { padding: var(--space-0) var(--space-2); font-size: var(--text-xs); }
+
+/* Size: wide */
+.btn-wide { width: 100%; padding: var(--space-2) var(--space-3); }
+
+/* ── Inputs ───────────────────────────────────────── */
+
+.input {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 var(--space-2);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  color: var(--text-1);
+  background: var(--surface-2);
+  border: 1px solid var(--surface-4);
+  border-radius: var(--radius-md);
+  outline: none;
+  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.25);
+  transition: border-color var(--duration-fast) var(--ease-default),
+              box-shadow var(--duration-fast) var(--ease-default);
+}
+.input::placeholder { color: var(--text-3); }
+.input:hover { border-color: var(--surface-4); }
+.input:focus {
+  border-color: var(--accent);
+  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.25);
+}
+.input:disabled {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
+
+/* ── Modal (shared confirmation dialog) ───────────── */
+
+.crev-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2147483600;
+  animation: crev-fade-in var(--duration-fast) var(--ease-default);
+}
+
+.crev-modal {
+  min-width: 280px;
+  max-width: 440px;
+  margin: var(--space-4);
+  padding: var(--space-4);
+  background: var(--surface-1);
+  border: 1px solid var(--surface-4);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-3);
+  animation: crev-slide-up var(--duration-normal) var(--ease-decelerate);
+}
+
+.crev-modal-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semi);
+  color: var(--text-1);
+  letter-spacing: -0.005em;
+}
+
+.crev-modal-body {
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--text-2);
+  word-wrap: break-word;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.crev-modal-actor {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) 0 0;
+  border-top: 1px solid var(--surface-4);
+  color: var(--text-3);
+  font: 10px/1.35 var(--font-mono);
+}
+
+.crev-modal-diff-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  background: var(--surface-0);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  margin-top: var(--space-2);
+}
+
+.crev-modal-diff-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.crev-modal-diff-key {
+  color: var(--text-3);
+  min-width: 100px;
+  flex-shrink: 0;
+}
+
+.crev-modal-diff-from {
+  color: var(--text-3);
+  text-decoration: line-through;
+}
+
+.crev-modal-diff-arrow {
+  color: var(--text-3);
+}
+
+.crev-modal-diff-to {
+  color: var(--text-1);
+  font-weight: var(--weight-semi);
+}
+
+.crev-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+/* ── Cards (soft elevation with hover-lift) ───────── */
+
+.crev-card {
+  background: var(--surface-1);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-1);
+  transition: box-shadow var(--duration-fast) var(--ease-default),
+              transform var(--duration-fast) var(--ease-default);
+}
+.crev-card--interactive:hover {
+  box-shadow: var(--shadow-2);
+  transform: translateY(-1px);
+  cursor: pointer;
+}
+
+/* ── AI assistant (shared by the EC editor + CVO/Text studio) ──────────
+ * Mouse-first entry points stay labelled. The prompt itself is a compact,
+ * viewport-clamped popover; it never consumes a full CodeMirror row. */
+.editor-ai-btn,
+.studio-ai-btn {
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+  color: var(--accent-bright);
+  border: 1px solid var(--surface-4);
+  font-family: var(--font-body);
+  font-weight: var(--weight-semi);
+}
+.editor-ai-btn.active,
+.studio-ai-btn.active,
+.editor-ai-btn:hover,
+.studio-ai-btn:hover { color: #fff; background: var(--accent-dim); border-color: var(--accent); }
+.ai-button-label { line-height: 1; }
+
+/* Shared editor/studio action-row collapse. Both surfaces keep the same action
+   priorities so narrow overlay windows cannot make controls overlap. */
+.code-action-row { min-width: 0; }
+.code-action-spacer { flex: 1; }
+
+@media (max-width: 760px) {
+  .code-action-row { gap: var(--space-1); }
+  .code-action-row kbd,
+  .code-action-compact-label,
+  .code-action-secondary .code-action-label { display: none; }
+  .code-action-secondary {
+    width: 28px;
+    min-width: 28px;
+    padding-inline: 0;
+    justify-content: center;
+  }
+  .code-action-ai {
+    width: 28px;
+    min-width: 28px;
+    padding: 0;
+    gap: 0;
+    justify-content: center;
+  }
+  .code-action-ai .ai-button-label { display: none; }
+}
+
+@media (max-width: 680px) {
+  .code-action-tertiary .code-action-label,
+  .code-action-ai { display: none; }
+  .code-action-tertiary {
+    width: 28px;
+    min-width: 28px;
+    padding-inline: 0;
+    justify-content: center;
+  }
+}
+
+/* Retired selection-local entry point. The editor toolbar button and Mod+K are
+   the only invocations. Keep this guard so stale markup can never reappear. */
+.ai-selection-trigger { display: none !important; }
+
+.ai-prompt { max-height: calc(100vh - 16px); overflow: auto; font-family: var(--font-body); }
+.ai-prompt-input {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 10px var(--space-3);
+}
+.ai-prompt-spark { display: inline-flex; flex: none; color: var(--accent-bright); cursor: default; }
+.ai-prompt-spark svg { width: 15px; height: 15px; }
+.ai-inbar-input {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: 22px;
+}
+.ai-inbar-input::placeholder { color: var(--text-3); }
+.ai-prompt-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-top: 1px solid var(--surface-4);
+}
+.ai-prompt-scope {
+  min-width: 0;
+  padding-left: var(--space-1);
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ai-prompt-actions { display: flex; gap: var(--space-1); margin-left: auto; }
+.ai-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  min-height: 28px;
+  padding: 0 var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-body);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semi);
+  cursor: pointer;
+}
+.ai-action--primary { background: var(--accent); color: #fff; }
+.ai-action--primary:hover { background: var(--accent-dim); }
+.ai-action--secondary { background: none; color: var(--text-2); border-color: var(--surface-4); }
+.ai-action--secondary:hover { color: var(--text-1); background: var(--surface-3); }
+
+/* Compact prompt shell. Width and height are constrained by the iframe viewport
+   so overlay-window resize and Studio split resize cannot hide its actions. */
+.ai-strip {
+  position: fixed;
+  z-index: 1200;
+  width: min(440px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  background: var(--surface-2);
+  border: 1px solid var(--surface-4);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-3);
+  overflow: hidden;
+  animation: crev-help-in 120ms var(--ease-decelerate);
+}
+.ai-strip-nub {
+  position: absolute;
+  top: -5px;
+  width: 9px;
+  height: 9px;
+  margin-left: -5px;
+  background: var(--surface-2);
+  border-left: 1px solid var(--surface-4);
+  border-top: 1px solid var(--surface-4);
+  transform: rotate(45deg);
+  pointer-events: none;
+  z-index: 1;
+}
+@media (max-width: 430px) {
+  .ai-prompt-footer { align-items: stretch; flex-direction: column; }
+  .ai-prompt-scope { align-self: flex-start; max-width: 100%; }
+  .ai-prompt-actions { width: 100%; margin-left: 0; }
+  .ai-action { flex: 1 1 0; }
+}
+/* The in-page task frame bottoms out at a 240px host, leaving about 214px for
+   the extension iframe after its titlebar. Start compact-height behavior early
+   enough that the real minimum size actually reaches it. */
+@media (max-width: 360px), (max-height: 240px) {
+  .ai-button-label { display: none; }
+  .ai-prompt-input { padding: var(--space-2); }
+  .ai-prompt-scope { display: none; }
+  .ai-prompt-footer { padding: var(--space-1); }
+}
+.ai-prose { white-space: pre-wrap; margin: 0 0 var(--space-2); }
+.ai-prose:last-child { margin-bottom: 0; }
+.ai-prose code,
+.ai-code {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+.ai-prose code {
+  padding: 1px 4px;
+  color: var(--text-1);
+  background: var(--surface-3);
+  border-radius: var(--radius-sm);
+}
+.ai-code {
+  margin: 0 0 var(--space-2);
+  padding: var(--space-2);
+  color: var(--text-1);
+  background: var(--ec-bg);
+  border: 1px solid var(--surface-3);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  white-space: pre;
+  line-height: var(--leading-normal);
+}
+.ai-status { color: var(--text-3); font-size: var(--text-sm); }
+.ai-status--err { color: var(--danger); }
+
+/* Rendered markdown headings inside an Ask answer — styled bold lines, not
+   literal "## ...". Weight + spacing carry the hierarchy, not size shrink. */
+.ai-head { font-weight: var(--weight-semi); color: var(--text-1); margin: var(--space-2) 0 var(--space-1); }
+.ai-head:first-child { margin-top: 0; }
+.ai-head--1 { font-size: var(--text-sm); }
+.ai-head--2 { font-size: var(--text-sm); }
+.ai-head--3 { font-size: var(--text-xs); color: var(--text-2); }
+
+/* Edit proposal bar (accept/reject) — floats at the bottom-center. */
+.ai-bar {
+  position: fixed;
+  left: 50%;
+  bottom: var(--space-4);
+  transform: translateX(-50%);
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: 90vw;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-1);
+  background: var(--surface-2);
+  border: 1px solid var(--surface-4);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-3);
+  animation: crev-help-in 120ms var(--ease-decelerate);
+}
+.ai-bar--err { border-color: var(--danger); }
+.ai-bar-icon { display: inline-flex; color: var(--accent-bright); }
+.ai-bar-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ai-bar-actions { display: flex; gap: var(--space-1); }
+
+/* ── BMP object identity ─────────────────────────────────────────
+   A type badge is visual only. Object chips add semantic identity,
+   activation and rich preview behavior (lib/object-chip.ts). */
+.bdg {
+  display: inline-flex;
+  align-items: stretch;
+  flex: none;
+  height: 20px;
+  border: 1px solid var(--surface-4);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semi);
+  line-height: 1;
+  color: var(--text-1);
+}
+.bdg .tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  background: var(--c, var(--surface-4));
+  color: var(--text-on-color, #fff);
+}
+.bdg .tile svg { width: 12px; height: 12px; display: block; }
+.bdg .lbl {
+  display: flex;
+  align-items: center;
+  padding: 0 7px;
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+}
+.bdg.xs { height: 18px; }
+.bdg.xs .tile { padding: 0 4px; }
+.bdg.xs .tile svg { width: 11px; height: 11px; }
+.bdg.xs .lbl { padding: 0 6px; }
+.bdg.icon-only,
+.bdg.bdg-property.icon-only {
+  width: auto;
+  border-radius: var(--radius-sm);
+}
+.bdg.icon-only .tile,
+.bdg.bdg-property.icon-only .tile {
+  width: auto;
+  flex-basis: auto;
+  padding: 0 4px;
+}
+.bdg.icon-only .bdg-history { display: none; }
+
+/* Property objects remain standard `.bdg` identities with the same copy and
+   activation behavior. The variant changes presentation only: a split capsule,
+   value-kind color, and (for Historical*) a ClockCountdown mark on the seam. */
+.bdg.bdg-property {
+  width: 57px;
+  border-radius: 999px;
+}
+.bdg.bdg-property .tile {
+  position: relative;
+  flex: 0 0 24px;
+  width: 24px;
+  padding: 0;
+}
+.bdg.bdg-property .tile > svg {
+  width: 12px;
+  height: 12px;
+  transform: translateX(1px);
+}
+.bdg.bdg-property .lbl {
+  justify-content: center;
+  flex: 0 0 31px;
+  width: 31px;
+  padding: 0 0 0 1px;
+}
+.bdg-property .bdg-history {
+  position: absolute;
+  z-index: 2;
+  bottom: 0;
+  left: 19px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 9px;
+  height: 9px;
+  color: #fff;
+  filter: drop-shadow(0 0 1px color-mix(in srgb, var(--c) 42%, var(--surface-1)));
+}
+.bdg.bdg-property .bdg-history svg {
+  display: block;
+  width: 9px;
+  height: 9px;
+}
+.bdg.bdg-property.xs {
+  width: 53px;
+}
+.bdg.bdg-property.xs .tile {
+  flex-basis: 22px;
+  width: 22px;
+}
+.bdg.bdg-property.xs .tile > svg {
+  width: 11px;
+  height: 11px;
+}
+.bdg.bdg-property.xs .lbl {
+  flex-basis: 29px;
+  width: 29px;
+  padding-left: 1px;
+}
+.bdg.bdg-property.xs .bdg-history {
+  left: 18px;
+  width: 8px;
+  height: 8px;
+}
+.bdg.bdg-property.xs .bdg-history svg {
+  width: 8px;
+  height: 8px;
+}
+.bdg-copy { cursor: pointer; }
+.bdg-copy:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.bdg.bdg-copied .tile { background: var(--success) !important; }
+.bdg.bdg-copied .lbl {
+  background: color-mix(in srgb, var(--success) 8%, transparent);
+  color: var(--text-ok);
+}
+.bdg-stack { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.bdg-stack .sbrow { display: inline-flex; gap: 2px; }
+.sbrow .sq {
+  width: 15px;
+  height: 15px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-on-color);
+  border-radius: var(--radius-sm);
+}
+.sbrow .sq svg { width: 9px; height: 9px; display: block; }
+.sbrow .sq.code { background: var(--fam-code); }
+.sbrow .sq.ref { background: #0f9b8e; }
+.bdg-stack.xs .sq { width: 13px; height: 13px; }
+.bdg-stack.xs .sq svg { width: 8px; height: 8px; }
+
+.object-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  text-align: left;
+}
+.object-chip--xs { padding-block: 1px; font-size: var(--text-xs); }
+.object-chip--interactive { cursor: pointer; }
+.object-chip--interactive:hover,
+.object-chip--preview:hover {
+  color: var(--text-1);
+  background: var(--surface-2);
+  border-color: var(--surface-4);
+}
+.object-chip--interactive:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.object-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.object-chip-id {
+  flex: none;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+.object-chip-annotation {
+  flex: none;
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  color: var(--text-3);
+  font-size: var(--text-2xs);
+}
+
+.object-preview-host {
+  position: fixed;
+  z-index: 2000;
+  display: none;
+  width: 264px;
+}
+.object-preview-host--visible {
+  display: block;
+  animation: object-preview-in 110ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes object-preview-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .object-preview-host--visible { animation: none; }
+}
+
+/* Shared object-card shell. Content-script CSS keeps a standalone copy because
+   it is injected into the BMP host page and cannot consume extension tokens. */
+.crev-tt-card {
+  --tt-color: #8d8d8d;
+  width: 264px;
+  overflow: hidden;
+  border: 1px solid #e4e4e9;
+  border-radius: 8px;
+  background: #fff;
+  color: #161616;
+  box-shadow: 0 1px 2px rgba(13,15,20,.05), 0 4px 12px rgba(13,15,20,.10), 0 16px 40px rgba(13,15,20,.16);
+  font: 12px/1.4 'Inter', system-ui, sans-serif;
+}
+.crev-tt-band {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px 9px;
+  background: color-mix(in srgb, var(--tt-color) 8%, #fff);
+  border-bottom: 1px solid color-mix(in srgb, var(--tt-color) 20%, #fff);
+}
+.crev-tt-hd { flex: 1; min-width: 0; }
+.crev-tt-nm {
+  overflow: hidden;
+  color: #0d0f14;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.crev-tt-ty { display: flex; align-items: center; gap: 6px; margin-top: 2px; color: #3f4450; font-size: 10.5px; }
+.crev-tt-tydot { width: 8px; height: 8px; border-radius: 2px; background: var(--tt-color); flex: none; }
+.crev-tt-open {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  flex: none;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: #6e7481;
+  cursor: pointer;
+}
+.crev-tt-open:hover { background: rgba(13,15,20,.06); color: #8a3ffc; }
+.crev-tt-open svg { width: 12px; height: 12px; }
+.crev-tt-body { padding: 7px 8px 8px; }
+.crev-tt-cprow {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  padding: 3px 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.crev-tt-cprow:hover { background: #f4f4f6; }
+.crev-tt-cprow:focus-visible { outline: 2px solid #8a3ffc; outline-offset: -1px; }
+.crev-tt-k { width: 68px; flex: none; color: #6e7481; font-size: 10px; white-space: nowrap; }
+.crev-tt-v {
+  overflow: hidden;
+  color: #161616;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.crev-tt-v--dim { color: #6e7481; }
+.crev-tt-v--ok { color: #24a148 !important; font-weight: 600; }
+.crev-tt-v--fail { color: #da1e28 !important; font-weight: 600; }
+.crev-tt-code {
+  max-height: 96px;
+  margin: 0;
+  padding: 7px 10px;
+  overflow: hidden;
+  border-top: 1px solid #ececf0;
+  background: #fafafb;
+  color: #3f4450;
+  font: 10.5px/1.5 'JetBrains Mono', ui-monospace, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Save review and changed-in-BMP dialogs (object window, editor, Studio):
+   per-object headings and the compact line diff (lib/line-diff.ts). */
+.ow-review-obj { display: flex; align-items: baseline; gap: var(--space-2); margin-top: var(--space-3); font-weight: 600; }
+.ow-review-kind { font-weight: 400; color: var(--text-helper); font-size: var(--ui-fs-sm); }
+.crev-modal-diff-row.ow-review-code { flex-wrap: wrap; }
+.ow-review-code-sum { color: var(--text-3); }
+.ow-ld { flex-basis: 100%; min-width: 0; max-height: 220px; overflow: auto; margin-top: var(--space-1); border-radius: var(--radius-md); background: var(--bg); font: 400 12px/18px var(--font-mono); }
+.ow-ld-row { display: flex; min-width: max-content; padding-right: var(--space-2); }
+.ow-ld-row.del { background: color-mix(in srgb, var(--danger) 14%, transparent); }
+.ow-ld-row.add { background: color-mix(in srgb, var(--success) 14%, transparent); }
+.ow-ld-sign { flex: none; width: 18px; text-align: center; color: var(--text-3); user-select: none; }
+.ow-ld-text { white-space: pre; }
+.ow-ld-gap { padding-left: 18px; color: var(--text-3); font-style: italic; }
+.ov-id-change-warning { margin-top: var(--space-2); padding: var(--space-2); border-left: 2px solid var(--support-error); background: var(--layer-01); color: var(--text-secondary); }

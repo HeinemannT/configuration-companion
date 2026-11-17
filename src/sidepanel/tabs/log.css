@@ -1,0 +1,78 @@
+/* Log tab.
+ * Rows: clock time, result icon, sentence, duration in its own column;
+ * grouped by day bands. Primitives come from src/styles/ui.css. */
+
+.lg { padding-bottom: var(--space-3); }
+/* the filters stay in view while the list scrolls; day bands stick under them */
+.lg-tools { position: sticky; top: 0; z-index: 2; background: var(--bg); display: flex; align-items: center; gap: var(--space-1); min-width: 0; padding: var(--space-2) var(--ui-inset); }
+.lg-sp { flex: 1 1 0; }
+.lg-seg { display: inline-flex; flex: none; gap: 2px; height: 28px; padding: 2px; background: var(--layer-hover); border-radius: var(--radius-2); }
+.lg-seg button { display: inline-flex; align-items: center; height: 24px; padding: 0 var(--space-2); border-radius: var(--radius-1); font-size: var(--ui-fs-sm); color: var(--text-secondary); }
+.lg-seg button:hover { color: var(--text-primary); }
+.lg-seg button[aria-pressed="true"] { background: var(--bg); color: var(--text-primary); font-weight: 600; box-shadow: 0 0 0 1px var(--border-subtle); }
+.lg-cnt { margin-left: var(--space-1); font: 400 var(--ui-fs-xs)/14px var(--font-mono); color: var(--text-helper); }
+.lg-cnt.err { color: var(--text-error); }
+.ui .lg-scope { flex: 0 1 auto; min-width: 0; }
+.lg-scope-t { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ui .lg-scope-ic { display: none; }
+/* narrow: the scope shows as a globe; the menu and the label name the choice */
+@media (max-width: 359px) { .ui .lg-scope-ic { display: block; } .lg-scope-t { display: none; } }
+.ui .lg-export:disabled { opacity: .4; }
+.ui .lg-scope[aria-expanded="true"], .ui .lg-export[aria-expanded="true"] { background: var(--layer-hover); color: var(--text-primary); }
+
+.lg-day { position: sticky; top: 44px; z-index: 1; min-height: var(--ui-row-h); margin-top: var(--space-2); padding: 0 var(--space-3) 0 var(--space-4); border-radius: 0; }
+.lg-list > .lg-day:first-child { margin-top: 0; }
+.lg-day .t { font-size: var(--ui-fs-xs); color: var(--text-secondary); }
+.lg-day .n { margin-left: auto; }
+
+.lg-item { margin: 0 var(--ui-inset); border-radius: var(--radius-2); }
+.lg-item:hover, .lg-item.open { background: var(--ui-row-hover); }
+/* The entry "Show in Log" pointed at: shown for a few seconds. */
+.lg-item.revealed { background: var(--brand-bg); box-shadow: inset 0 0 0 1px var(--brand); }
+.lg-row {
+  display: grid;
+  grid-template-columns: 52px 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--ui-row-h);
+  padding: 0 var(--space-2);
+  cursor: default;
+}
+.ui .lg-row:focus-visible { outline-offset: -2px; border-radius: var(--radius-2); }
+.lg-t, .lg-d { font: 400 var(--ui-fs-xs)/16px var(--font-mono); color: var(--text-helper); white-space: nowrap; }
+.lg-d { min-width: 40px; text-align: right; }
+.lg-list.nodur .lg-row { grid-template-columns: 52px 16px minmax(0, 1fr); }
+.lg-list.nodur .lg-d { display: none; }
+.lg-r { display: grid; place-items: center; color: var(--text-placeholder); }
+.lg-r.success { color: var(--support-ok); }
+.lg-r.warn { color: var(--text-warn); }
+.lg-r.error { color: var(--support-error); }
+/* The sentence truncates; the repeat count and the end time stay in view. */
+.lg-m { display: flex; align-items: baseline; gap: var(--space-1); min-width: 0; white-space: nowrap; }
+.lg-mt { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.lg-rep, .lg-end { flex: none; font: 400 var(--ui-fs-xs)/16px var(--font-mono); color: var(--text-helper); }
+/* A warning whose condition ended: muted, not counted under Problems. */
+.lg-item.ended .lg-r, .lg-item.ended .lg-mt { color: var(--text-helper); }
+
+.lg-detail { padding: 0 var(--space-2) var(--space-2) calc(52px + 16px + 3 * var(--space-2)); }
+.lg-meta { font-size: var(--ui-fs-xs); line-height: 16px; color: var(--text-helper); overflow-wrap: anywhere; }
+.lg-pre {
+  margin: var(--space-1) 0 0;
+  padding: var(--space-2);
+  max-height: 240px;
+  overflow: auto;
+  background: var(--bg);
+  border-radius: var(--radius-2);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+  font: 400 var(--ui-fs-xs)/16px var(--font-mono);
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.ui .lg-copy { margin: var(--space-1) 0 0 calc(-1 * var(--space-2)); }
+
+.lg-more { display: flex; align-items: center; height: 28px; margin: var(--space-2) var(--ui-inset) 0; padding: 0 var(--space-2); font-size: var(--ui-fs-xs); color: var(--text-helper); }
+/* .lg-empty is the shared empty state (.ui-empty in src/styles/ui.css) */
+.lg-lnk { color: var(--text-brand); font-size: var(--ui-fs-sm); font-weight: 500; }
+.lg-lnk:hover { text-decoration: underline; }

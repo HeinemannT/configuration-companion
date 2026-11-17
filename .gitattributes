@@ -1,0 +1,8 @@
+# One line ending for every text file, on every platform.
+* text=auto eol=lf
+
+# Never touch these.
+*.png binary
+*.ico binary
+*.woff2 binary
+*.zip binary

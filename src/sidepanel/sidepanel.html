@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="crev-light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Configuration Companion</title>
+  <link rel="stylesheet" href="../styles/tokens.css">
+  <link rel="stylesheet" href="../styles/base.css">
+  <link rel="stylesheet" href="../styles/components.css">
+  <link rel="stylesheet" href="../styles/ui.css">
+  <link rel="stylesheet" href="./shell.css">
+  <link rel="stylesheet" href="./shared.css">
+  <link rel="stylesheet" href="./tabs/connect.css">
+  <link rel="stylesheet" href="./tabs/log.css">
+  <link rel="stylesheet" href="./tabs/ai.css">
+  <link rel="stylesheet" href="./tabs/browse/browse.css">
+</head>
+<body>
+  <div id="app" aria-busy="true">
+    <div class="header ui" aria-hidden="true">
+      <span class="srvctl"><img class="srv-boot-mark" src="../icons/mark-28.svg" alt="" width="28" height="28"><span class="srv-text"><span class="srv-name">Starting…</span></span></span>
+    </div>
+    <div class="pane-loading">Loading…</div>
+  </div>
+  <script type="module" src="./sidepanel.ts"></script>
+</body>
+</html>

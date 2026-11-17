@@ -1,0 +1,141 @@
+/**
+ * CSS integrity locks for the INJECTED stylesheets. A single unclosed comment
+ * swallows every rule up to the next comment terminator — that failure silently
+ * destroyed the .crev-eo-host position:fixed (2026-07-06) and left the floating
+ * editor in document flow under the widgets. The SAME class of break drops the
+ * badges (.crev-label) and their positioning context (.crev-outline) into normal
+ * flow, piling them up in the lower-left of the page — the reported "badges leaking
+ * into the page" symptom. These tests strip comments the way a CSS parser does and
+ * assert that every load-bearing overlay rule survives intact.
+ */
+import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+const FILES = ['src/content-overlay.css', 'src/content-blueprint.css'];
+
+/** Every rule whose loss lets an overlay element leak into page flow. `selector`
+ *  is matched as a standalone base rule (selector directly followed by `{ … }`),
+ *  and each `must` substring has to survive comment-stripping. NB: content-overlay
+ *  uses spaced declarations (`position: fixed`); content-blueprint is compact
+ *  (`position:absolute`) — the tokens below match each file's actual style. */
+const LOAD_BEARING: Array<{ file: string; selector: string; must: string[] }> = [
+  // content-overlay.css — every element injected into the host page and positioned
+  // by this sheet: outline context, badges, hover card, editor host,
+  // drag snap-ghost, toast container. Losing any one's position drops it
+  // into document flow (the lower-left leak).
+  { file: 'src/content-overlay.css',   selector: '.crev-outline',         must: ['position: relative'] },
+  { file: 'src/content-overlay.css',   selector: '.crev-label',           must: ['position: absolute', 'z-index'] },
+  { file: 'src/content-overlay.css',   selector: '.crev-label.crev-page-label', must: ['position: static !important', 'display: inline-flex'] },
+  { file: 'src/content-overlay.css',   selector: '.crev-label.crev-label--inline-start', must: ['position: static !important', 'display: inline-flex'] },
+  // A new badge is hidden until placed; nothing animates its first placement.
+  { file: 'src/content-overlay.css',   selector: '.crev-label.crev-label--placing', must: ['visibility: hidden', 'transition: none'] },
+  { file: 'src/content-overlay.css',   selector: '#crev-tooltip',       must: ['position: fixed', 'z-index', '2147483644'] },
+  { file: 'src/content-overlay.css',   selector: '.crev-eo-host',         must: ['position: fixed', 'z-index'] },
+  { file: 'src/content-overlay.css',   selector: '.crev-eo-snap-ghost',   must: ['position: fixed', 'z-index'] },
+  { file: 'src/content-overlay.css',   selector: '#crev-toast-container',  must: ['position: fixed', 'z-index'] },
+  // Inspect outline frame and the locate spot: position and z-index are inline
+  // (content-outline.ts, content-current.ts); the sheet keeps them click-through.
+  { file: 'src/content-overlay.css',   selector: '.crev-frame',           must: ['pointer-events: none', 'inset: 0'] },
+  { file: 'src/content-overlay.css',   selector: '#crev-locate-spot',     must: ['pointer-events: none'] },
+  // content-blueprint.css — the full-page editing layer
+  { file: 'src/content-blueprint.css', selector: '#crev-blueprint-layer', must: ['position:absolute', 'z-index'] },
+  // The command bar may overflow at narrow BMP widths, but this chip must retain its intrinsic
+  // width. Otherwise its badge paints outside the shrunken flex box and overlaps the edit target.
+  { file: 'src/content-blueprint.css', selector: '#crev-blueprint-layer .bp-page-chip', must: ['flex:0 0 auto'] },
+];
+
+function read(p: string): string {
+  return readFileSync(join(__dirname, '../../..', p), 'utf8');
+}
+
+/** Strip /* … *​/ comments; throws on an unclosed one. */
+function stripComments(css: string, file: string): string {
+  let out = '', i = 0;
+  while (i < css.length) {
+    const open = css.indexOf('/*', i);
+    if (open === -1) { out += css.slice(i); break; }
+    out += css.slice(i, open);
+    const close = css.indexOf('*/', open + 2);
+    if (close === -1) throw new Error(`${file}: unclosed comment at offset ${open}`);
+    i = close + 2;
+  }
+  return out;
+}
+
+/** Escape a CSS selector for use inside a RegExp. */
+const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+describe('injected CSS integrity', () => {
+  it.each(FILES)('%s has no unclosed comments and balanced braces', (f) => {
+    const css = stripComments(read(f), f);
+    let depth = 0;
+    for (const ch of css) {
+      if (ch === '{') depth++;
+      else if (ch === '}') { depth--; expect(depth).toBeGreaterThanOrEqual(0); }
+    }
+    expect(depth).toBe(0);
+  });
+
+  // Each load-bearing rule must survive comment-stripping with its position/z-index
+  // intact. Losing any one of these drops an overlay element into document flow.
+  it.each(LOAD_BEARING)('$selector keeps its layout props ($file)', ({ file, selector, must }) => {
+    const css = stripComments(read(file), file);
+    const m = css.match(new RegExp(esc(selector) + '\\s*\\{[^}]*\\}'));
+    expect(m, `${selector} base rule missing in ${file}`).toBeTruthy();
+    for (const token of must) expect(m![0], `${selector} lost "${token}"`).toContain(token);
+  });
+
+  it('leaves the window resize handles unclipped along each full edge; the children round the corners', () => {
+    const css = stripComments(read('src/content-overlay.css'), 'src/content-overlay.css');
+    const body = (sel: string) => css.match(new RegExp(esc(sel) + '\\s*\\{[^}]*\\}'))?.[0] ?? '';
+    // A clip on the host cut the edge strips (3 px past the edge) in half.
+    expect(body('.crev-eo-host')).not.toMatch(/overflow:\s*(hidden|clip)/);
+    expect(body('.crev-eo-host')).not.toMatch(/contain:[^;]*paint/);
+    expect(body('.crev-eo-titlebar')).toContain('border-radius: 7px 7px 0 0');
+    expect(body('.crev-eo-iframe')).toContain('border-radius: 0 0 7px 7px');
+    // East and west run from corner square to corner square, as north and south do.
+    for (const dir of ['e', 'w']) {
+      expect(body(`.crev-eo-resize--${dir}`)).toMatch(/top: 14px; bottom: 14px; width: 6px/);
+    }
+    expect(body('.crev-eo-resize--n')).toMatch(/left: 14px; right: 14px; height: 6px/);
+  });
+
+  it('keeps only the linked-property sub-badge in the pill language', () => {
+    const css = stripComments(read('src/content-overlay.css'), 'src/content-overlay.css');
+    const property = css.match(/\.crev-sub--property\s*\{[^}]*\}/)?.[0] ?? '';
+    const base = css.match(/\.crev-sub\s*\{[^}]*\}/)?.[0] ?? '';
+    expect(property).toContain('border-radius: 999px');
+    expect(property).toContain('width: 20px');
+    expect(base).toContain('border-radius: 2px');
+  });
+
+  it('draws a part (a tab, a field) with four short ticks and no dot: its badge is its one mark', () => {
+    const css = stripComments(read('src/content-overlay.css'), 'src/content-overlay.css');
+    const part = css.match(/\.crev-frame\.crev-frame--part\s*\{[^}]*\}/)?.[0] ?? '';
+    expect(part).not.toMatch(/radial-gradient/);
+    for (const corner of ['left top', 'right top', 'left bottom', 'right bottom'])
+      expect(part.split(`) ${corner} /`).length - 1, corner).toBe(2);
+  });
+
+  it('keeps Blueprint header controls contained at narrow and zoomed viewport widths', () => {
+    const css = stripComments(read('src/content-blueprint.css'), 'src/content-blueprint.css');
+    const responsive = css.match(/@media\s*\(max-width:900px\)\s*\{[\s\S]*?\n\}/)?.[0] ?? '';
+    expect(responsive).toContain('.bp-header{width:calc(100vw - 16px);min-width:0;max-width:none}');
+    expect(responsive).toContain('.bp-chip{flex-wrap:wrap');
+    expect(responsive).toContain('.bp-page-chip{flex:1 1 140px');
+    expect(responsive).toContain('.bp-commit-actions{margin-left:auto}');
+    expect(responsive).toContain('.bp-header.style .bp-paint{grid-column:2;grid-row:2');
+  });
+
+  it('keeps the DescriptionView source contained and gives it the narrow header row', () => {
+    const css = stripComments(read('src/content-blueprint.css'), 'src/content-blueprint.css');
+    expect(css).toContain('.bp-rdescription-editing{height:auto!important;min-height:180px;overflow:hidden}');
+    expect(css).toContain('.bp-dv-source select{width:128px;min-width:0;max-width:128px');
+    expect(css).toContain('@container bp-description (max-width:460px)');
+    expect(css).toContain('.bp-dv-body:has(.bp-dv-source select) .bp-dv-title');
+    expect(css).toContain('.bp-dv-body:has(.bp-dv-source select) .bp-dv-source select{flex:1;width:100%;max-width:none}');
+    expect(css).toContain('.bp-dv-property-add .crev-property-picker__list{position:static;width:100%;max-width:none;max-height:160px');
+    expect(css).toContain('@container bp-description (max-width:220px)');
+  });
+});

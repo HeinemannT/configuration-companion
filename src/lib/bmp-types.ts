@@ -1,0 +1,1006 @@
+/**
+ * BMP type registry for Java serialization.
+ * Registers the wire-compatible class metadata needed by the extension's
+ * Configuration Studio command transport.
+ */
+
+import {
+  registerType, JavaEnum, BlockDataWriter,
+  SC_SERIALIZABLE, SC_EXTERNALIZABLE, SC_BLOCK_DATA, SC_WRITE_METHOD, SC_ENUM,
+  type JavaClassDesc, type JavaReader,
+} from './java-serial';
+import { registerJavaTime } from './java-time';
+
+// ── Enum Class Descriptors ──────────────────────────────────────
+
+const JAVA_LANG_ENUM: JavaClassDesc = {
+  name: 'java.lang.Enum',
+  uid: 0n,
+  flags: SC_SERIALIZABLE | SC_ENUM,
+  fields: [],
+  parent: null,
+};
+
+const CLIENT_USER_AGENT: JavaClassDesc = {
+  name: 'com.corporater.bmp.base.system.auth.ClientUserAgent',
+  uid: 0n,
+  flags: SC_SERIALIZABLE | SC_ENUM,
+  fields: [],
+  parent: JAVA_LANG_ENUM,
+};
+
+const PRINCIPAL_TYPE: JavaClassDesc = {
+  name: 'com.corporater.bmp.base.system.auth.PrincipalType',
+  uid: 0n,
+  flags: SC_SERIALIZABLE | SC_ENUM,
+  fields: [],
+  parent: JAVA_LANG_ENUM,
+};
+
+const ON_BEHALF_OF_TYPE: JavaClassDesc = {
+  name: 'com.corporater.bmp.base.system.auth.OnBehalfOfType',
+  uid: 0n,
+  flags: SC_SERIALIZABLE | SC_ENUM,
+  fields: [],
+  parent: JAVA_LANG_ENUM,
+};
+
+const CALENDAR_TYPE: JavaClassDesc = {
+  name: 'com.corporater.bmp.base.date.CalendarType',
+  uid: 0n,
+  flags: SC_SERIALIZABLE | SC_ENUM,
+  fields: [],
+  parent: JAVA_LANG_ENUM,
+};
+
+const LOG_TYPE: JavaClassDesc = {
+  name: 'com.corporater.bmp.dto.command.extended.LogType',
+  uid: 0n,
+  flags: SC_SERIALIZABLE | SC_ENUM,
+  fields: [],
+  parent: JAVA_LANG_ENUM,
+};
+
+// ── Enum Factories ──────────────────────────────────────────────
+
+const Enums = {
+  ClientUserAgent: (name: string) => new JavaEnum(CLIENT_USER_AGENT, name),
+  PrincipalType: (name: string) => new JavaEnum(PRINCIPAL_TYPE, name),
+  OnBehalfOfType: (name: string) => new JavaEnum(ON_BEHALF_OF_TYPE, name),
+  CalendarType: (name: string) => new JavaEnum(CALENDAR_TYPE, name),
+  LogType: (name: string) => new JavaEnum(LOG_TYPE, name),
+};
+
+// ── Expression Class Descriptors ────────────────────────────────
+
+/** AbstractCorpoExpression — base class for all expression types.
+ *  Implements Persistable (extends Serializable). Parent (AbstractTransformable) is NOT Serializable.
+ *  Single field: value (String) — the expression code text. */
+const ABSTRACT_CORPO_EXPRESSION: JavaClassDesc = {
+  name: 'com.corporater.bmp.base.expression.AbstractCorpoExpression',
+  uid: 340n,
+  flags: SC_SERIALIZABLE,
+  fields: [{ name: 'value', type: 'L', className: 'Ljava/lang/String;' }],
+  parent: null,  // AbstractTransformable is NOT Serializable
+};
+
+/** CorpoExtendedExpression — concrete type for Extended Code expressions.
+ *  Used by ExtendedTable, all chart types, and other HasExtendedExpression types. */
+const CORPO_EXTENDED_EXPRESSION: JavaClassDesc = {
+  name: 'com.corporater.bmp.value.type.expression.CorpoExtendedExpression',
+  uid: 3060807707032977491n,
+  flags: SC_SERIALIZABLE,
+  fields: [],
+  parent: ABSTRACT_CORPO_EXPRESSION,
+};
+
+// ── Class Descriptors ───────────────────────────────────────────
+
+const RID: JavaClassDesc = {
+  name: 'com.corporater.base.generation.system.Rid',
+  uid: 340n,
+  flags: SC_SERIALIZABLE,
+  fields: [{ name: 'identifier', type: 'J' }],
+  parent: null,
+};
+
+const CORPO_TIME: JavaClassDesc = {
+  name: 'com.corporater.bmp.base.date.CorpoTime',
+  uid: -2082729704767556684n,
+  flags: SC_SERIALIZABLE,
+  fields: [
+    { name: 'ms', type: 'J' },
+    { name: 'calendarType', type: 'L', className: 'Lcom/corporater/bmp/base/date/CalendarType;' },
+    { name: 'formattedValue', type: 'L', className: 'Ljava/lang/String;' },
+  ],
+  parent: null,
+};
+
+const PERIOD_IMPL: JavaClassDesc = {
+  name: 'com.corporater.bmp.base.date.period.PeriodImpl',
+  uid: 4664058561047724008n,
+  flags: SC_SERIALIZABLE,
+  fields: [],
+  parent: null,
+};
+
+const MONTH: JavaClassDesc = {
+  name: 'com.corporater.bmp.base.date.period.Month',
+  uid: 7588986724074479258n,
+  flags: SC_SERIALIZABLE,
+  fields: [],
+  parent: PERIOD_IMPL,
+};
+
+const DAY: JavaClassDesc = {
+  name: 'com.corporater.bmp.base.date.period.Day',
+  uid: 4889883387193469455n,
+  flags: SC_SERIALIZABLE,
+  fields: [],
+  parent: PERIOD_IMPL,
+};
+
+const QUARTER: JavaClassDesc = {
+  name: 'com.corporater.bmp.base.date.period.Quarter',
+  uid: 2604480583845996170n,
+  flags: SC_SERIALIZABLE,
+  fields: [],
+  parent: PERIOD_IMPL,
+};
+
+const TYPE_KEY: JavaClassDesc = {
+  name: 'com.corporater.base.generation.system.TypeKey',
+  uid: 0n,
+  flags: SC_SERIALIZABLE,
+  fields: [{ name: 'typeId', type: 'L', className: 'Ljava/lang/String;' }],
+  parent: null,
+};
+
+// java.lang.Long/Number — needed for TreeItemCommand's boxed Long rid field
+const JAVA_LANG_NUMBER: JavaClassDesc = {
+  name: 'java.lang.Number',
+  uid: -8742448824652078965n,
+  flags: SC_SERIALIZABLE,
+  fields: [],
+  parent: null,
+};
+
+const JAVA_LANG_LONG: JavaClassDesc = {
+  name: 'java.lang.Long',
+  uid: 4290774380558885855n,
+  flags: SC_SERIALIZABLE,
+  fields: [{ name: 'value', type: 'J' }],
+  parent: JAVA_LANG_NUMBER,
+};
+
+const JAVA_LANG_BOOLEAN: JavaClassDesc = {
+  name: 'java.lang.Boolean', uid: -3665804199014368530n, flags: SC_SERIALIZABLE,
+  fields: [{ name: 'value', type: 'Z' }], parent: null,
+};
+const JAVA_LANG_DOUBLE: JavaClassDesc = {
+  name: 'java.lang.Double', uid: -9172774392245257468n, flags: SC_SERIALIZABLE,
+  fields: [{ name: 'value', type: 'D' }], parent: JAVA_LANG_NUMBER,
+};
+const GET_TYPE_FIELDS_COMMAND: JavaClassDesc = {
+  name: 'com.corporater.bmp.dto.command.type.GetTypeFieldsCommand', uid: 0n, flags: SC_SERIALIZABLE,
+  fields: [{ name: 'keys', type: 'L', className: 'Ljava/util/Collection;' }], parent: null,
+};
+
+const LOAD_TYPE_CONFIG_COMMAND: JavaClassDesc = {
+  name: 'com.corporater.bmp.dto.command.type.LoadTypeConfigCommand', uid: 0n, flags: SC_SERIALIZABLE, fields: [], parent: null,
+};
+const GET_PROPERTIES_BY_ID_COMMAND: JavaClassDesc = {
+  name: 'com.corporater.bmp.dto.command.repository.GetPropertiesByIdCommand', uid: 0n, flags: SC_SERIALIZABLE,
+  fields: [{ name: 'id', type: 'L', className: 'Ljava/lang/String;' }, { name: 'properties', type: '[', className: '[Ljava/lang/String;' },
+    { name: 'space', type: 'L', className: 'Lcom/corporater/base/generation/system/IdSpace;' }], parent: null,
+};
+const ID_SPACE: JavaClassDesc = { name: 'com.corporater.base.generation.system.IdSpace', uid: 0n, flags: SC_SERIALIZABLE | SC_ENUM, fields: [], parent: JAVA_LANG_ENUM };
+export const makeLoadTypeConfigCommand = () => ({ $type: LOAD_TYPE_CONFIG_COMMAND.name });
+export const makeReferenceIdentityCommand = (space: string, id: string) => ({
+  $type: GET_PROPERTIES_BY_ID_COMMAND.name, space: new JavaEnum(ID_SPACE, space), id, properties: ['getRid', 'getTypeKey', 'getModel'],
+});
+export function makeGetTypeFieldsCommand(type: string | string[]): any {
+  return { $type: GET_TYPE_FIELDS_COMMAND.name, keys: { $type: 'java.util.ArrayList', $elements: (Array.isArray(type) ? type : [type]).map(typeId => ({ $type: TYPE_KEY.name, typeId })) } };
+}
+
+/** Field keys have already been resolved against BMP's native type schema. */
+export interface AccessTraceUpdates {
+  type: string;
+  properties?: Record<string, string | number | boolean | null>;
+  references?: Record<string, string | string[] | null>;
+  parent_rid?: string | null;
+}
+function makeTraceUpdates(updates?: AccessTraceUpdates, creating = false): any {
+  const entries: [string, any][] = [];
+  if (updates) {
+    // Update carries only changed fields. The type used to resolve field keys
+    // is schema context, not an implicit submitted new.type.
+    if (creating && updates.type) entries.push(['type', { $type: TYPE_KEY.name, typeId: updates.type }]);
+    for (const [key, value] of Object.entries(updates.properties ?? {})) {
+      entries.push([key, typeof value === 'boolean' ? { $type: JAVA_LANG_BOOLEAN.name, value } : typeof value === 'number' ? { $type: JAVA_LANG_DOUBLE.name, value } : value]);
+    }
+    for (const [key, value] of Object.entries(updates.references ?? {})) {
+      entries.push([key, Array.isArray(value) ? { $type: 'java.util.ArrayList', $elements: value.map(makeRid) } : value === null ? null : makeRid(value)]);
+    }
+    if (updates.parent_rid !== undefined) entries.push(['parent', updates.parent_rid === null ? null : makeRid(updates.parent_rid)]);
+  }
+  return { $type: 'java.util.HashMap', $entries: entries, $size: entries.length };
+}
+
+const TREE_ITEM_COMMAND: JavaClassDesc = {
+  name: 'com.corporater.bmp.dto.command.tree.TreeItemCommand',
+  uid: -4494633739301165944n,
+  flags: SC_SERIALIZABLE,
+  fields: [{ name: 'rid', type: 'L', className: 'Ljava/lang/Long;' }],
+  parent: null,
+};
+
+/** GetServerSettingsCommand: no fields; answers ServerSettings (licence
+ *  flags, release, `enabledFeatures`). serialVersionUID from serialver on the
+ *  5.6.17.6 jars. */
+const GET_SERVER_SETTINGS_COMMAND: JavaClassDesc = {
+  name: 'com.corporater.bmp.dto.command.repository.GetServerSettingsCommand',
+  uid: -404017528900228969n,
+  flags: SC_SERIALIZABLE,
+  fields: [],
+  parent: null,
+};
+
+const SIMPLE_CALCULATION_CONTEXT: JavaClassDesc = {
+  name: 'com.corporater.bmp.base.context.SimpleCalculationContext',
+  uid: 0n,
+  flags: SC_SERIALIZABLE,
+  fields: [
+    { name: 'yearToDate', type: 'Z' },
+    { name: 'date', type: 'L', className: 'Lcom/corporater/bmp/base/date/CorpoTime;' },
+    { name: 'end', type: 'L', className: 'Lcom/corporater/bmp/base/date/CorpoTime;' },
+    { name: 'itemRid', type: 'L', className: 'Lcom/corporater/base/generation/system/Rid;' },
+    { name: 'nodeTypeRid', type: 'L', className: 'Lcom/corporater/base/generation/system/Rid;' },
+    { name: 'objectRid', type: 'L', className: 'Lcom/corporater/base/generation/system/Rid;' },
+    { name: 'orgRid', type: 'L', className: 'Lcom/corporater/base/generation/system/Rid;' },
+    { name: 'period', type: 'L', className: 'Lcom/corporater/bmp/base/date/period/Period;' },
+  ],
+  parent: null,
+};
+
+const LOGIN_TICKET: JavaClassDesc = {
+  name: 'com.corporater.bmp.base.system.auth.LoginTicket',
+  uid: 0n,
+  flags: SC_SERIALIZABLE,
+  fields: [
+    { name: 'key', type: 'J' },
+    { name: 'clientUserAgent', type: 'L', className: 'Lcom/corporater/bmp/base/system/auth/ClientUserAgent;' },
+    { name: 'onBehalfOfId', type: 'L', className: 'Ljava/lang/String;' },
+    { name: 'onBehalfOfType', type: 'L', className: 'Lcom/corporater/bmp/base/system/auth/OnBehalfOfType;' },
+    { name: 'principalId', type: 'L', className: 'Ljava/lang/String;' },
+    { name: 'principalType', type: 'L', className: 'Lcom/corporater/bmp/base/system/auth/PrincipalType;' },
+  ],
+  parent: null,
+};
+
+const SERVER_EXCEPTION_RESPONSE: JavaClassDesc = {
+  name: 'com.corporater.bmp.base.system.exception.ServerExceptionResponse',
+  uid: 4006n,
+  flags: SC_SERIALIZABLE,
+  fields: [
+    { name: 'fatal', type: 'Z' },
+    { name: 'isUserMessage', type: 'Z' },
+    { name: 'requiresLocalization', type: 'Z' },
+    { name: 'message', type: 'L', className: 'Ljava/lang/String;' },
+    { name: 'stackTrace', type: 'L', className: 'Ljava/lang/String;' },
+  ],
+  parent: null,
+};
+
+// ── Command Class Descriptors ───────────────────────────────────
+
+const CONTEXT_INTEGRATION_COMMAND: JavaClassDesc = {
+  name: 'com.corporater.bmp.dto.command.ContextIntegrationCommand',
+  uid: -2040863406857312980n,
+  flags: SC_SERIALIZABLE,
+  fields: [
+    { name: 'context', type: 'L', className: 'Lcom/corporater/bmp/base/context/SimpleCalculationContext;' },
+  ],
+  parent: null,
+};
+
+const ABSTRACT_INTEGRATION_COMMAND: JavaClassDesc = {
+  name: 'com.corporater.bmp.dto.command.AbstractIntegrationCommand',
+  uid: -7114741235727918n,
+  flags: SC_SERIALIZABLE,
+  fields: [
+    { name: 'data', type: 'L', className: 'Lcom/corporater/bmp/dto/ObjectData;' },
+  ],
+  parent: CONTEXT_INTEGRATION_COMMAND,
+};
+
+const INTEGRATION_GET_OBJECT_COMMAND: JavaClassDesc = {
+  name: 'com.corporater.bmp.dto.command.repository.IntegrationGetObjectCommand',
+  uid: -2618124967670449045n,
+  flags: SC_SERIALIZABLE,
+  fields: [
+    { name: 'rid', type: 'L', className: 'Lcom/corporater/base/generation/system/Rid;' },
+  ],
+  parent: CONTEXT_INTEGRATION_COMMAND,
+};
+
+const INTEGRATION_UPDATE_COMMAND: JavaClassDesc = {
+  name: 'com.corporater.bmp.dto.command.repository.IntegrationUpdateCommand',
+  uid: -4071308193265133922n,
+  flags: SC_SERIALIZABLE,
+  fields: [
+    { name: 'context', type: 'L', className: 'Lcom/corporater/bmp/base/context/SimpleCalculationContext;' },
+  ],
+  parent: ABSTRACT_INTEGRATION_COMMAND,
+};
+
+const EXTENDED_EXECUTE_COMMAND: JavaClassDesc = {
+  name: 'com.corporater.bmp.dto.command.extended.ExtendedExecuteCommand',
+  uid: -5760775447856129650n,
+  flags: SC_SERIALIZABLE,
+  fields: [
+    { name: 'commandColumn', type: 'I' },
+    { name: 'commandLine', type: 'I' },
+    { name: 'showResult', type: 'Z' },
+    { name: 'transactional', type: 'Z' },
+    { name: 'context', type: 'L', className: 'Lcom/corporater/bmp/base/context/SimpleCalculationContext;' },
+    { name: 'entity', type: 'L', className: 'Lcom/corporater/bmp/dto/ObjectRefDto;' },
+    { name: 'expressionRid', type: 'L', className: 'Lcom/corporater/base/generation/system/Rid;' },
+    { name: 'function', type: 'L', className: 'Ljava/lang/String;' },
+  ],
+  parent: null,
+};
+
+// ── Response Class Descriptors ──────────────────────────────────
+
+const INTEGRATION_OBJECT_RESPONSE: JavaClassDesc = {
+  name: 'com.corporater.bmp.dto.response.IntegrationObjectResponse',
+  uid: 1698316271062164157n,
+  flags: SC_SERIALIZABLE,
+  fields: [
+    { name: 'response', type: 'L', className: 'Ljava/lang/Object;' },
+  ],
+  parent: null,
+};
+
+const LOG_ENTRY: JavaClassDesc = {
+  name: 'com.corporater.bmp.dto.command.extended.LogEntry',
+  uid: -4404261606243425876n,
+  flags: SC_SERIALIZABLE,
+  fields: [
+    { name: 'logType', type: 'L', className: 'Lcom/corporater/bmp/dto/command/extended/LogType;' },
+    { name: 'message', type: 'L', className: 'Ljava/lang/String;' },
+    { name: 'time', type: 'L', className: 'Ljava/lang/Long;' },
+  ],
+  parent: null,
+};
+
+const EXTENDED_EXECUTE_RESULT: JavaClassDesc = {
+  name: 'com.corporater.bmp.dto.command.extended.ExtendedExecuteResult',
+  uid: 0n,
+  flags: SC_SERIALIZABLE,
+  fields: [
+    { name: 'entries', type: 'L', className: 'Ljava/util/List;' },
+  ],
+  parent: null,
+};
+
+// ── ObjectData (Externalizable) ─────────────────────────────────
+
+const OBJECT_DATA: JavaClassDesc = {
+  name: 'com.corporater.bmp.dto.ObjectData',
+  uid: 1n,
+  flags: SC_EXTERNALIZABLE | SC_BLOCK_DATA,
+  fields: [],
+  parent: null,
+};
+
+// ── Standard Java Types ─────────────────────────────────────────
+
+const JAVA_UTIL_ARRAYLIST: JavaClassDesc = {
+  name: 'java.util.ArrayList',
+  uid: 8683452581122892189n,
+  flags: SC_SERIALIZABLE | SC_WRITE_METHOD,
+  fields: [{ name: 'size', type: 'I' }],
+  parent: null,
+};
+
+const JAVA_UTIL_HASHMAP: JavaClassDesc = {
+  name: 'java.util.HashMap',
+  uid: 362498820763181265n,
+  flags: SC_SERIALIZABLE | SC_WRITE_METHOD,
+  fields: [
+    { name: 'loadFactor', type: 'F' },
+    { name: 'threshold', type: 'I' },
+  ],
+  parent: null,
+};
+
+const JAVA_UTIL_HASHSET: JavaClassDesc = {
+  name: 'java.util.HashSet',
+  uid: -5024744406713321676n,
+  flags: SC_SERIALIZABLE | SC_WRITE_METHOD,
+  fields: [],
+  parent: null,
+};
+
+// JDK ImmutableCollections serialization proxy (javap java.util.CollSer).
+// GetTypeFieldsCommand returns Stream.toList(), represented by tag 4.
+const JAVA_UTIL_COLLSER: JavaClassDesc = {
+  name: 'java.util.CollSer', uid: 6309168927139932177n,
+  flags: SC_SERIALIZABLE | SC_WRITE_METHOD,
+  fields: [{ name: 'tag', type: 'I' }], parent: null,
+};
+
+// ── Access Trace (admin permission test) ────────────────────────
+// AccessTraceCommand(AccessTraceRequestDTO, SimpleCalculationContext). All
+// records use serialVersionUID = 0L for 5.6.7.2 compatibility. Fields follow
+// Java's canonical stream order (primitives first,
+// then references) — deserialization matches by name, so this is belt-and-
+// suspenders. The enum + List + Map are serialized by the existing writers.
+
+const ACCESS_TRACE_ACTION_DTO: JavaClassDesc = {
+  name: 'com.corporater.bmp.dto.command.access.AccessTraceActionDTO',
+  uid: 0n,
+  flags: SC_SERIALIZABLE | SC_ENUM,
+  fields: [],
+  parent: JAVA_LANG_ENUM,
+};
+
+const ACCESS_TRACE_REQUEST_DTO: JavaClassDesc = {
+  name: 'com.corporater.bmp.dto.command.access.AccessTraceRequestDTO',
+  uid: 0n,
+  flags: SC_SERIALIZABLE,
+  fields: [
+    { name: 'indexBasedEvaluation', type: 'Z' },
+    { name: 'requestDepth', type: 'I' },
+    { name: 'action', type: 'L', className: 'Lcom/corporater/bmp/dto/command/access/AccessTraceActionDTO;' },
+    { name: 'allowedStatementPaths', type: 'L', className: 'Ljava/util/List;' },
+    { name: 'entityRid', type: 'L', className: 'Lcom/corporater/base/generation/system/Rid;' },
+    { name: 'resourceRids', type: 'L', className: 'Ljava/util/List;' },
+    { name: 'updates', type: 'L', className: 'Ljava/util/Map;' },
+  ],
+  parent: null,
+};
+
+const ACCESS_TRACE_COMMAND: JavaClassDesc = {
+  name: 'com.corporater.bmp.dto.command.access.AccessTraceCommand',
+  uid: 0n,
+  flags: SC_SERIALIZABLE,
+  fields: [
+    { name: 'accessTraceRequestDTO', type: 'L', className: 'Lcom/corporater/bmp/dto/command/access/AccessTraceRequestDTO;' },
+    { name: 'context', type: 'L', className: 'Lcom/corporater/bmp/base/context/SimpleCalculationContext;' },
+  ],
+  parent: null,
+};
+
+// ── Helpers ─────────────────────────────────────────────────────
+
+/** Build a Rid object for serialization */
+function makeRid(id: bigint | number | string): any {
+  const n = typeof id === 'string' ? BigInt(id) : typeof id === 'number' ? BigInt(id) : id;
+  return { $type: 'com.corporater.base.generation.system.Rid', identifier: n };
+}
+
+/** Build a CorpoTime for "now" (or for `ms`) */
+function makeCorpoTimeNow(ms?: number): any {
+  const now = ms ?? Date.now();
+  const d = new Date(now);
+  const formatted = d.toISOString().slice(0, 10); // yyyy-MM-dd
+  return {
+    $type: 'com.corporater.bmp.base.date.CorpoTime',
+    ms: BigInt(now),
+    calendarType: Enums.CalendarType('ISO'),
+    formattedValue: formatted,
+  };
+}
+
+/** Build a SimpleCalculationContext with sensible defaults */
+function makeContext(opts?: {
+  orgRid?: bigint;
+  objectRid?: bigint;
+  itemRid?: bigint;
+  period?: string;
+  /** The context's end (`this.end` in EC); now when not given. */
+  endMs?: number;
+}): any {
+  const zeroRid = makeRid(0n);
+  const now = makeCorpoTimeNow();
+  const end = opts?.endMs != null ? makeCorpoTimeNow(opts.endMs) : now;
+  // Default period: Month
+  const period = { $type: 'com.corporater.bmp.base.date.period.Month' };
+  return {
+    $type: 'com.corporater.bmp.base.context.SimpleCalculationContext',
+    yearToDate: false,
+    date: now,
+    end,
+    itemRid: opts?.itemRid ? makeRid(opts.itemRid) : (opts?.objectRid ? makeRid(opts.objectRid) : zeroRid),
+    nodeTypeRid: zeroRid,
+    objectRid: opts?.objectRid ? makeRid(opts.objectRid) : zeroRid,
+    orgRid: opts?.orgRid ? makeRid(opts.orgRid) : zeroRid,
+    period,
+  };
+}
+
+export type AccessTraceAction = 'READ' | 'UPDATE' | 'DELETE' | 'CREATE';
+
+/** Build an AccessTraceCommand — the admin permission test (the engine behind
+ *  Config Studio's Access Trace). Traces whether `subjectRid` (a user OR role)
+ *  has `action` access to `resourceRid`, returning a recursive PBAC decision
+ *  tree. The trace runs as the logged-in user FOR the given subject — no
+ *  impersonation. */
+export function makeAccessTraceCommand(
+  resourceRid: string | readonly string[],
+  subjectRid: string,
+  action: AccessTraceAction = 'READ',
+  depth = 10,
+  updates?: AccessTraceUpdates,
+  indexed = false,
+): any {
+  // One command may name several resources; BMP answers one trace per resource.
+  const resources = typeof resourceRid === 'string' ? [resourceRid] : [...resourceRid];
+  if (!resources.length) throw new Error('An access trace needs at least one resource.');
+  return {
+    $type: 'com.corporater.bmp.dto.command.access.AccessTraceCommand',
+    accessTraceRequestDTO: {
+      $type: 'com.corporater.bmp.dto.command.access.AccessTraceRequestDTO',
+      indexBasedEvaluation: indexed,
+      requestDepth: depth,
+      action: new JavaEnum(ACCESS_TRACE_ACTION_DTO, action),
+      allowedStatementPaths: { $type: 'java.util.ArrayList', $elements: [] },
+      entityRid: makeRid(subjectRid),
+      resourceRids: { $type: 'java.util.ArrayList', $elements: resources.map(makeRid) },
+      updates: makeTraceUpdates(updates, action === 'CREATE'),
+    },
+    context: makeContext({ objectRid: BigInt(resources[0]) }),
+  };
+}
+
+/** Build an IntegrationGetObjectCommand */
+export function makeGetObjectCommand(rid: string): any {
+  return {
+    $type: 'com.corporater.bmp.dto.command.repository.IntegrationGetObjectCommand',
+    // Config Studio always sends its current calculation context. A null context
+    // reaches CalculationContext.getStart() on current BMP builds and fails before
+    // the object is read.
+    context: makeContext({ objectRid: BigInt(rid) }),
+    rid: makeRid(rid),
+  };
+}
+
+/** Build a TreeItemCommand — lightweight tree node fetch by RID.
+ *  Returns TreeNodeInformationDto (id, type, text) without full property serialization.
+ *  Avoids the NullPointerException that GetObjectCommand hits on some old BMP objects. */
+export function makeTreeItemCommand(rid: string): any {
+  return {
+    $type: 'com.corporater.bmp.dto.command.tree.TreeItemCommand',
+    rid: { $type: 'java.lang.Long', value: BigInt(rid) },
+  };
+}
+
+/** Build a GetServerSettingsCommand (no fields). */
+export function makeGetServerSettingsCommand(): any {
+  return { $type: 'com.corporater.bmp.dto.command.repository.GetServerSettingsCommand' };
+}
+
+/** Parse a deserialized TreeNodeInformationDto into enrichment fields */
+export function parseTreeNodeInfo(obj: any): { rid: string; businessId?: string; type?: string; name?: string } | null {
+  if (!obj) return null;
+  const rid = obj.rid?.identifier != null ? String(obj.rid.identifier) : undefined;
+  if (!rid) return null;
+  return {
+    rid,
+    businessId: obj.id != null ? String(obj.id) : undefined,
+    type: (obj.type?.typeId ?? '') || undefined,
+    name: obj.text != null ? String(obj.text) : undefined,
+  };
+}
+
+/** Properties that require CorpoExtendedExpression wrapping in binary serialization.
+ *  CVO html/javascript are plain Strings — no wrapping needed.
+ *  SAVE_PROPERTY does not use this path for expression slots: it saves every
+ *  one of them through Extended Code (`savesViaExtendedCode` in object-read.ts). */
+const EXPRESSION_PROPS = new Set(['expression']);
+
+/** Wrap a value in CorpoExtendedExpression if the property requires it */
+function wrapExpressionValue(property: string, value: any): any {
+  if (EXPRESSION_PROPS.has(property) && typeof value === 'string') {
+    return {
+      $type: 'com.corporater.bmp.value.type.expression.CorpoExtendedExpression',
+      value,
+    };
+  }
+  return value;
+}
+
+/** Build an IntegrationUpdateCommand */
+export function makeUpdateCommand(rid: string, type: string, properties: Record<string, any>): any {
+  return {
+    $type: 'com.corporater.bmp.dto.command.repository.IntegrationUpdateCommand',
+    // ContextIntegrationCommand.context
+    context: null,
+    // AbstractIntegrationCommand.data
+    data: makeObjectData(rid, type, properties),
+    // IntegrationUpdateCommand.context (shadows parent)
+    // This field is also named 'context' — comes after 'data' in serialization order
+  };
+}
+
+/** Build an ObjectData for update commands */
+function makeObjectData(rid: string, type: string, properties: Record<string, any>): any {
+  const props: Record<string, any> = {
+    _rid: makeRid(rid),
+    _type: { $type: 'com.corporater.base.generation.system.TypeKey', typeId: type },
+  };
+  for (const [k, v] of Object.entries(properties)) {
+    props[k] = wrapExpressionValue(k, v);
+  }
+  return {
+    $type: 'com.corporater.bmp.dto.ObjectData',
+    references: {},
+    props,
+    overridden: new Set<string>(),
+    mutated: new Set(Object.keys(properties)),
+  };
+}
+
+/** Build an ExtendedExecuteCommand */
+export function makeExtendedExecuteCommand(
+  code: string,
+  opts?: { objectRid?: bigint; orgRid?: bigint; itemRid?: bigint; endMs?: number; transactional?: boolean },
+): any {
+  const ctx = makeContext(opts?.objectRid || opts?.orgRid || opts?.endMs != null ? { objectRid: opts?.objectRid, orgRid: opts?.orgRid, itemRid: opts?.itemRid, endMs: opts?.endMs } : undefined);
+  return {
+    $type: 'com.corporater.bmp.dto.command.extended.ExtendedExecuteCommand',
+    commandColumn: 0,
+    commandLine: 0,
+    showResult: true,
+    transactional: opts?.transactional ?? false,
+    context: ctx,
+    entity: null,
+    expressionRid: null,
+    function: code,
+  };
+}
+
+// ── Response Parsers ────────────────────────────────────────────
+
+/** One server-side EC log entry, kept alongside the flattened `log` so UI
+ * consumers can distinguish a returned value from warnings and debug output. */
+export interface EcOutputEntry {
+  logType: string;
+  message: string;
+  /** BMP prefixes the last-expression value with `Result : `. */
+  result: boolean;
+}
+
+interface ParsedEcResult {
+  ok: boolean;
+  log: string;
+  outputEntries: EcOutputEntry[];
+  hasError: boolean;
+  hasWarning: boolean;
+  error?: string;
+}
+
+/** Parse EC streaming response objects */
+export function parseEcResults(objects: any[]): ParsedEcResult {
+  const lines: string[] = [];
+  const outputEntries: EcOutputEntry[] = [];
+  let hasError = false;
+  let hasWarning = false;
+  const errors: string[] = [];
+
+  for (const obj of objects) {
+    if (!obj) continue;
+    const cls = obj.$class ?? '';
+
+    if (cls === 'com.corporater.bmp.base.system.exception.ServerExceptionResponse') {
+      errors.push(obj.message ?? 'Server error');
+      hasError = true;
+      continue;
+    }
+
+    if (cls === 'com.corporater.bmp.dto.command.extended.ExtendedExecuteResult') {
+      const raw = obj.entries;
+      // entries may be a native array, a deserialized ArrayList ({$elements: [...]}),
+      // or a SeqListImpl ({delegate: {$elements: [...]}}) as seen in BMP 5.6.7.2
+      const entries = Array.isArray(raw) ? raw
+        : raw?.$elements           // plain ArrayList
+        ?? raw?.delegate?.$elements // SeqListImpl → delegate → ArrayList
+        ?? raw?.delegate;           // SeqListImpl → delegate is native array
+      if (Array.isArray(entries)) {
+        for (const entry of entries) {
+          if (!entry) continue;
+          const logType = entry.logType instanceof JavaEnum ? entry.logType.name : String(entry.logType ?? '');
+          let message = entry.message ?? '';
+          const result = message.startsWith('Result : ');
+          // BMP wraps last-expression output with "Result : " prefix
+          if (result) {
+            message = message.slice(9); // 'Result : '.length === 9
+          }
+          if (logType === 'ERROR') hasError = true;
+          if (logType === 'WARNING') hasWarning = true;
+          outputEntries.push({ logType, message, result });
+          lines.push(message);
+        }
+      }
+      continue;
+    }
+
+    // Unknown object — try to extract useful info
+    if (typeof obj === 'string') {
+      if (obj === 'END') continue;
+      lines.push(obj);
+    }
+  }
+
+  return {
+    ok: !hasError && errors.length === 0,
+    log: lines.join('\n'),
+    outputEntries,
+    hasError,
+    hasWarning,
+    error: errors.length > 0 ? errors.join('; ') : undefined,
+  };
+}
+
+/** Parse a command response (Collection<IntegrationResponse>) */
+export function parseCommandResponse(raw: any): any[] {
+  // Response is typically an ArrayList
+  if (Array.isArray(raw)) return raw;
+  if (raw && typeof raw === 'object') {
+    // If it's an ArrayList-like with elements
+    if (raw.$elements) return raw.$elements;
+    // IntegrationObjectResponse
+    if (raw.response !== undefined) return [raw.response];
+  }
+  return [raw];
+}
+
+// ── Registration ────────────────────────────────────────────────
+
+export function registerBmpTypes() {
+  registerJavaTime();
+  registerType({
+    desc: JAVA_UTIL_COLLSER,
+    annotationWriter: (obj, writer) => {
+      const elements = obj.$elements ?? [];
+      writer.writeInt(elements.length);
+      for (const element of elements) writer.writeObject(element);
+    },
+    extReader: (reader, result) => {
+      const count = reader.blockReadInt();
+      if (count < 0 || count > 100_000) throw new Error('Invalid immutable collection size');
+      const elements = Array.from({ length: count }, () => reader.blockReadObject());
+      if (result) {
+        result.$elements = elements;
+        if ((result.tag & 0xff) === 3) {
+          if (count % 2) throw new Error('Invalid immutable map entry count');
+          result.$entries = Array.from({ length: count / 2 }, (_, i) => [elements[i * 2], elements[i * 2 + 1]]);
+          result.$map = Object.fromEntries(result.$entries.map(([key, value]: [any, any]) => [String(key?.typeId ?? (key instanceof JavaEnum ? key.name : key)), value]));
+        }
+      }
+      return result;
+    },
+  });
+  // Simple value types
+  registerType({ desc: RID });
+  registerType({ desc: CORPO_TIME });
+  registerType({ desc: TYPE_KEY });
+  registerType({ desc: PERIOD_IMPL });
+  registerType({ desc: MONTH });
+  registerType({ desc: DAY });
+  registerType({ desc: QUARTER });
+
+  // Expression types (for reading AND writing code properties via binary serialization)
+  registerType({ desc: ABSTRACT_CORPO_EXPRESSION });
+  registerType({ desc: CORPO_EXTENDED_EXPRESSION });
+
+  // Context
+  registerType({ desc: SIMPLE_CALCULATION_CONTEXT });
+
+  // Auth
+  registerType({
+    desc: LOGIN_TICKET,
+    objectBuilder: (fields) => fields,
+  });
+
+  // Error
+  registerType({
+    desc: SERVER_EXCEPTION_RESPONSE,
+    objectBuilder: (fields) => fields,
+  });
+
+  // java.lang.Long/Number — for TreeItemCommand's boxed Long field
+  registerType({ desc: JAVA_LANG_NUMBER });
+  registerType({ desc: JAVA_LANG_LONG });
+  registerType({ desc: JAVA_LANG_BOOLEAN });
+  registerType({ desc: JAVA_LANG_DOUBLE });
+  registerType({ desc: GET_TYPE_FIELDS_COMMAND });
+  registerType({ desc: LOAD_TYPE_CONFIG_COMMAND });
+  registerType({ desc: GET_PROPERTIES_BY_ID_COMMAND });
+
+  // Commands — no fieldExtractors needed; obj properties match field names directly
+  registerType({ desc: INTEGRATION_GET_OBJECT_COMMAND });
+  registerType({ desc: CONTEXT_INTEGRATION_COMMAND });
+  registerType({ desc: ABSTRACT_INTEGRATION_COMMAND });
+  registerType({ desc: INTEGRATION_UPDATE_COMMAND });
+  registerType({ desc: EXTENDED_EXECUTE_COMMAND });
+  registerType({ desc: TREE_ITEM_COMMAND });
+  registerType({ desc: GET_SERVER_SETTINGS_COMMAND });
+
+  // Access trace (admin permission test)
+  registerType({ desc: ACCESS_TRACE_ACTION_DTO });
+  registerType({ desc: ACCESS_TRACE_REQUEST_DTO });
+  registerType({ desc: ACCESS_TRACE_COMMAND });
+
+  // Responses
+  registerType({
+    desc: INTEGRATION_OBJECT_RESPONSE,
+    objectBuilder: (fields) => fields,
+  });
+
+  registerType({
+    desc: LOG_ENTRY,
+    objectBuilder: (fields) => fields,
+  });
+
+  registerType({
+    desc: EXTENDED_EXECUTE_RESULT,
+    objectBuilder: (fields) => fields,
+  });
+
+  // ObjectData (Externalizable)
+  registerType({
+    desc: OBJECT_DATA,
+    extWriter: (obj, w) => {
+      const bw = new BlockDataWriter(w);
+      // 1. writeObject(references) — HashMap
+      bw.writeObject(makeHashMap(obj.references ?? {}));
+      // 2. writeInt(props.size())
+      const props = obj.props ?? {};
+      const entries = Object.entries(props);
+      bw.writeInt(entries.length);
+      // 3. For each prop: writeUTF(key), writeObject(value)
+      for (const [key, value] of entries) {
+        bw.writeUTF(key);
+        bw.writeObject(value);
+      }
+      // 4. writeObject(overridden) — HashSet
+      bw.writeObject(makeHashSet(obj.overridden ?? new Set()));
+      // 5. writeObject(mutated) — HashSet
+      bw.writeObject(makeHashSet(obj.mutated ?? new Set()));
+      bw.flush();
+    },
+    extReader: (r: JavaReader) => {
+      // Read ObjectData external content
+      const references = r.blockReadObject(); // HashMap
+      const propsCount = r.blockReadInt();
+      const props: Record<string, any> = {};
+      for (let i = 0; i < propsCount; i++) {
+        const key = r.blockReadUTF();
+        const value = r.blockReadObject();
+        props[key] = value;
+      }
+      const overridden = r.blockReadObject(); // HashSet
+      const mutated = r.blockReadObject(); // HashSet
+      return { props, references, overridden, mutated };
+    },
+  });
+
+  // Standard Java types
+  registerType({
+    desc: JAVA_UTIL_ARRAYLIST,
+    fieldExtractor: (obj) => ({ size: obj.$elements?.length ?? obj.size ?? 0 }),
+    annotationWriter: (obj, bw) => {
+      const elements = obj.$elements ?? [];
+      bw.writeInt(elements.length); // capacity
+      for (const elem of elements) {
+        bw.writeObject(elem);
+      }
+    },
+    extReader: (r: JavaReader, result?: any) => {
+      const size = result?.size ?? 0;
+      r.blockReadInt(); // capacity
+      const elements: any[] = [];
+      for (let i = 0; i < size; i++) {
+        elements.push(r.blockReadObject());
+      }
+      if (result) {
+        result.$elements = elements;
+        result.length = size;
+      }
+      return result ?? { $elements: elements, length: size };
+    },
+  });
+
+  registerType({
+    desc: JAVA_UTIL_HASHMAP,
+    fieldExtractor: (obj) => ({
+      loadFactor: obj.loadFactor ?? 0.75,
+      threshold: obj.threshold ?? 12,
+    }),
+    annotationWriter: (obj, bw) => {
+      bw.writeInt(obj.$capacity ?? 16); // bucket count
+      bw.writeInt(obj.$size ?? 0);      // entry count
+      const entries: [any, any][] = obj.$entries ?? [];
+      for (const [key, value] of entries) {
+        bw.writeObject(key);
+        bw.writeObject(value);
+      }
+    },
+    extReader: (r: JavaReader, result?: any) => {
+      r.blockReadInt(); // capacity
+      const size = r.blockReadInt();
+      if (size < 0 || size > 100_000) throw new Error('Invalid map size');
+      const map: Record<string, any> = Object.create(null);
+      const entries: [any, any][] = [];
+      for (let i = 0; i < size; i++) {
+        const key = r.blockReadObject();
+        const value = r.blockReadObject();
+        const keyStr = key instanceof JavaEnum ? key.name : String(key ?? '');
+        entries.push([key, value]);
+        map[keyStr] = value;
+      }
+      if (result) {
+        result.$map = map;
+        result.$size = size;
+        result.$entries = entries;
+      }
+      return result ?? { $map: map, $size: size, $entries: entries };
+    },
+  });
+
+  registerType({
+    desc: JAVA_UTIL_HASHSET,
+    annotationWriter: (obj, bw) => {
+      bw.writeInt(obj.$capacity ?? 16);     // capacity
+      bw.writeFloat(obj.$loadFactor ?? 0.75); // loadFactor
+      bw.writeInt(obj.$size ?? 0);           // size
+      const elements: any[] = obj.$elements ?? [];
+      for (const elem of elements) {
+        bw.writeObject(elem);
+      }
+    },
+    extReader: (r: JavaReader, result?: any) => {
+      r.blockReadInt(); // capacity
+      r.blockReadInt(); // loadFactor (readFloat as 4 raw bytes)
+      const size = r.blockReadInt();
+      const elements: any[] = [];
+      for (let i = 0; i < size; i++) {
+        elements.push(r.blockReadObject());
+      }
+      if (result) {
+        result.$elements = elements;
+        result.$size = size;
+      }
+      return result ?? { $elements: elements, $size: size };
+    },
+  });
+}
+
+// ── HashMap / HashSet Construction ──────────────────────────────
+
+function makeHashMap(obj: Record<string, any>): any {
+  const entries = Object.entries(obj);
+  return {
+    $type: 'java.util.HashMap',
+    loadFactor: 0.75,
+    threshold: 12,
+    $entries: entries,
+    $size: entries.length,
+    $capacity: 16,
+  };
+}
+
+function makeHashSet(set: Set<string> | string[]): any {
+  const elements = set instanceof Set ? [...set] : set;
+  return {
+    $type: 'java.util.HashSet',
+    $elements: elements,
+    $size: elements.length,
+    $capacity: 16,
+    $loadFactor: 0.75,
+  };
+}

@@ -1,0 +1,196 @@
+/**
+ * Provider metadata — base URLs, host-permission origins, default + suggested
+ * models. Pure data with no runtime dependencies, so it is safe to import from
+ * the service worker (client, handler), the low-level site-access module, and
+ * the sidepanel UI alike.
+ */
+
+import type { AiApiType, AiCustomProvider, AiMaxTokensParam, AiProviderId, AiSettings } from './types';
+
+export type BuiltinProviderId = Exclude<AiProviderId, 'custom'>;
+
+export interface ProviderMeta {
+  id: AiProviderId;
+  label: string;
+  /** Base URL. For OpenAI-compatible providers this already includes `/v1`;
+   *  the request appends `/chat/completions`. For Anthropic the request appends
+   *  `/v1/messages`. */
+  baseUrl: string;
+  /** Host-permission match pattern requested when a key is saved. */
+  origin: string;
+  /** Suggested default model (editable). */
+  defaultModel: string;
+  /** Static suggestion list for the model datalist. */
+  suggestedModels: string[];
+  /** True for the OpenAI `/chat/completions` dialect (openai / deepseek / grok). */
+  openAiCompat: boolean;
+  /** Optional selected-model limits from a custom catalogue. */
+  maxInputTokens?: number;
+  maxOutputTokens?: number;
+  /** OpenAI-compatible output-limit field. Defaults to max_completion_tokens. */
+  maxTokensParam?: AiMaxTokensParam;
+}
+
+export const PROVIDERS: Record<BuiltinProviderId, ProviderMeta> = {
+  anthropic: {
+    id: 'anthropic',
+    label: 'Anthropic',
+    baseUrl: 'https://api.anthropic.com',
+    origin: 'https://api.anthropic.com/*',
+    defaultModel: 'claude-opus-4-8',
+    suggestedModels: ['claude-opus-4-8', 'claude-sonnet-5', 'claude-haiku-4-5'],
+    openAiCompat: false,
+  },
+  openai: {
+    id: 'openai',
+    label: 'OpenAI',
+    baseUrl: 'https://api.openai.com/v1',
+    origin: 'https://api.openai.com/*',
+    defaultModel: 'gpt-5.2',
+    suggestedModels: ['gpt-5.2', 'gpt-5-mini'],
+    openAiCompat: true,
+    maxTokensParam: 'max_completion_tokens',
+  },
+  deepseek: {
+    id: 'deepseek',
+    label: 'DeepSeek',
+    baseUrl: 'https://api.deepseek.com/v1',
+    origin: 'https://api.deepseek.com/*',
+    defaultModel: 'deepseek-v4-flash',
+    suggestedModels: ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-chat'],
+    openAiCompat: true,
+    maxTokensParam: 'max_tokens',
+  },
+  grok: {
+    id: 'grok',
+    label: 'Grok',
+    baseUrl: 'https://api.x.ai/v1',
+    origin: 'https://api.x.ai/*',
+    defaultModel: 'grok-4',
+    suggestedModels: ['grok-4'],
+    openAiCompat: true,
+    maxTokensParam: 'max_completion_tokens',
+  },
+};
+
+export const AI_PROVIDER_IDS: BuiltinProviderId[] = ['anthropic', 'openai', 'deepseek', 'grok'];
+
+function nonEmptyString(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !value.trim()) throw new Error(`${field} must be a non-empty string`);
+  return value.trim();
+}
+
+function optionalPositiveInteger(value: unknown, field: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isInteger(value) || (value as number) <= 0) throw new Error(`${field} must be a positive integer`);
+  return value as number;
+}
+
+function optionalMaxTokensParam(value: unknown, field: string): AiMaxTokensParam | undefined {
+  if (value === undefined) return undefined;
+  if (value !== 'max_tokens' && value !== 'max_completion_tokens') {
+    throw new Error(`${field} must be "max_tokens" or "max_completion_tokens"`);
+  }
+  return value;
+}
+
+function apiBaseUrl(value: unknown, field: string): string {
+  const raw = nonEmptyString(value, field).replace(/\/+$/, '');
+  let parsed: URL;
+  try { parsed = new URL(raw); } catch { throw new Error(`${field} must be a valid URL`); }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') throw new Error(`${field} must use http or https`);
+  return raw;
+}
+
+/**
+ * True when an AI provider address would send the API key and the prompt in
+ * plain text: it parses, uses `http:`, and does not point at this machine
+ * (`localhost`, 127.0.0.0/8, `[::1]`). Local models stay quiet. Text that is
+ * not yet a valid URL is not judged here; the save path reports that.
+ */
+export function isPlainTextAiAddress(address: string): boolean {
+  let parsed: URL;
+  try { parsed = new URL(address.trim()); } catch { return false; }
+  if (parsed.protocol !== 'http:') return false;
+  const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
+  if (host === 'localhost' || host === '[::1]') return false;
+  const octets = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (octets && octets[1] === '127' && octets.slice(2).every(o => Number(o) <= 255)) return false;
+  return true;
+}
+
+export const PLAIN_TEXT_AI_ADDRESS_WARNING =
+  'This address is not encrypted: the API key and the content you send travel in plain text.';
+
+/** Parse the technical-user JSON format. The returned provider is safe to
+ * persist; the plaintext key is returned separately for immediate encryption. */
+export function parseCustomProviderJson(json: string): { provider: AiCustomProvider; apiKey?: string } {
+  let raw: unknown;
+  try { raw = JSON.parse(json); } catch (e) {
+    throw new Error(`Invalid JSON: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Provider JSON must be an object');
+  const input = raw as Record<string, unknown>;
+  const apiType = input.apiType;
+  if (apiType !== 'openai' && apiType !== 'anthropic') throw new Error('apiType must be "openai" or "anthropic"');
+  if (!Array.isArray(input.models) || input.models.length === 0) throw new Error('models must contain at least one model');
+  const models = input.models.map((item, index) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error(`models[${index}] must be an object`);
+    const model = item as Record<string, unknown>;
+    if (typeof model.toolCalling !== 'boolean') throw new Error(`models[${index}].toolCalling must be true or false`);
+    if (model.vision !== undefined && typeof model.vision !== 'boolean') throw new Error(`models[${index}].vision must be true or false`);
+    return {
+      id: nonEmptyString(model.id, `models[${index}].id`),
+      name: nonEmptyString(model.name, `models[${index}].name`),
+      url: apiBaseUrl(model.url, `models[${index}].url`),
+      toolCalling: model.toolCalling,
+      ...(model.vision !== undefined ? { vision: model.vision } : {}),
+      ...(optionalPositiveInteger(model.maxInputTokens, `models[${index}].maxInputTokens`) !== undefined
+        ? { maxInputTokens: model.maxInputTokens as number } : {}),
+      ...(optionalPositiveInteger(model.maxOutputTokens, `models[${index}].maxOutputTokens`) !== undefined
+        ? { maxOutputTokens: model.maxOutputTokens as number } : {}),
+      ...(optionalMaxTokensParam(model.maxTokensParam, `models[${index}].maxTokensParam`) !== undefined
+        ? { maxTokensParam: model.maxTokensParam as AiMaxTokensParam } : {}),
+    };
+  });
+  if (new Set(models.map(model => model.id)).size !== models.length) throw new Error('Model ids must be unique');
+  if (!models.some(model => model.toolCalling)) throw new Error('At least one model must support tool calling');
+  const key = input.apiKey;
+  if (key !== undefined && typeof key !== 'string') throw new Error('apiKey must be a string');
+  return {
+    provider: {
+      name: nonEmptyString(input.name, 'name'),
+      vendor: nonEmptyString(input.vendor, 'vendor'),
+      apiType: apiType as AiApiType,
+      models,
+    },
+    ...(typeof key === 'string' && key.trim() ? { apiKey: key.trim() } : {}),
+  };
+}
+
+/** Resolve the selected settings into the same runtime shape as a built-in. */
+export function resolveProvider(settings: Pick<AiSettings, 'provider' | 'model' | 'customProvider'>): ProviderMeta {
+  if (settings.provider !== 'custom') return PROVIDERS[settings.provider];
+  const custom = settings.customProvider;
+  if (!custom) throw new Error('Custom provider configuration is missing');
+  const model = custom.models.find(item => item.id === settings.model);
+  if (!model) throw new Error(`Model "${settings.model}" is not in the custom provider JSON`);
+  if (!model.toolCalling) throw new Error(`Model "${settings.model}" does not support tool calling`);
+  return {
+    id: 'custom',
+    label: custom.name,
+    baseUrl: model.url,
+    origin: `${new URL(model.url).origin}/*`,
+    defaultModel: custom.models.find(item => item.toolCalling)?.id ?? custom.models[0].id,
+    suggestedModels: custom.models.filter(item => item.toolCalling).map(item => item.id),
+    openAiCompat: custom.apiType === 'openai',
+    maxInputTokens: model.maxInputTokens,
+    maxOutputTokens: model.maxOutputTokens,
+    maxTokensParam: model.maxTokensParam,
+  };
+}
+
+export function customProviderOrigins(provider: AiCustomProvider | undefined): string[] {
+  if (!provider) return [];
+  return [...new Set(provider.models.map(model => `${new URL(model.url).origin}/*`))];
+}

@@ -1,0 +1,27 @@
+node_modules/
+dist/
+
+# Build output. The Vite build mirrors dist/ to the repository root so the
+# root can be loaded as an unpacked extension. Keep this list in step with
+# scripts/build-output-paths.mjs (a unit test compares them).
+/content.js
+/content-blueprint.js
+/interceptor.js
+/service-worker.js
+/access/
+/assets/
+/chunks/
+/codesearch/
+/diff/
+/editor/
+/objectview/
+/sidepanel/
+/studio/
+/transport/
+
+# Local working material
+/.tmp/
+/docs/
+/plans/
+/bench/
+/experiments/

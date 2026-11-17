@@ -1,0 +1,59 @@
+{
+  "name": "configuration-companion",
+  "version": "0.16.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.extension.json",
+    "lint": "eslint src --max-warnings 0",
+    "notices:check": "node scripts/check-third-party-notices.mjs",
+    "clean": "node scripts/clean-build-output.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "bench": "node scripts/run-benches.mjs",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "qa:devtools-package": "npm run build && node scripts/prepare-devtools-package.mjs",
+    "check:package": "node scripts/check-package-contract.mjs",
+    "verify": "npm audit --audit-level=high && npm run notices:check && npm run pbac:palette:check && npm run typecheck && npm run lint && npm test && npm run build && npm run check:package",
+    "prebuild": "node scripts/generate-pbac-palette.mjs --check",
+    "pbac:palette": "node scripts/generate-pbac-palette.mjs",
+    "pbac:palette:check": "node scripts/generate-pbac-palette.mjs --check"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/chrome": "^0.1.43",
+    "@types/js-beautify": "^1.14.3",
+    "@types/node": "^25.9.9",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.14.0",
+    "happy-dom": "^21.0.4",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.72.2",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.0"
+  },
+  "dependencies": {
+    "@codemirror/autocomplete": "^6.20.4",
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/lang-css": "^6.3.1",
+    "@codemirror/lang-html": "^6.4.12",
+    "@codemirror/lang-javascript": "^6.2.5",
+    "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/language": "^6.13.1",
+    "@codemirror/lint": "^6.9.8",
+    "@codemirror/merge": "^6.12.3",
+    "@codemirror/search": "^6.7.2",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.15",
+    "@lezer/highlight": "^1.2.5",
+    "@lezer/json": "^1.0.3",
+    "js-beautify": "^2.0.3",
+    "tough-cookie": "6.0.2"
+  }
+}

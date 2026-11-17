@@ -1,0 +1,1526 @@
+/* Extended Code editor in the approved light look: crev-light tokens and the
+ * shared ui.css primitives; CodeMirror colours live in editor-core/theme.ts.
+ * Tokens + base imported via HTML. Local layout and overrides only. */
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text-primary);
+}
+
+#editor-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* ── Header (identity strip + target toggle) ─── */
+
+.editor-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-3);
+  background: var(--bg);
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+  min-height: 40px;
+}
+
+/* Save-target zone: a muted "Editing" intent label + the segmented control. */
+.editor-header-target {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+.editor-command-actor {
+  max-width: 230px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-helper);
+  font-family: var(--font-mono);
+  font-size: var(--ui-fs-xs);
+  flex-shrink: 1;
+}
+.editor-command-actor.is-unverified { color: var(--text-warn); }
+.editor-target-label {
+  font-size: var(--ui-fs-xs);
+  color: var(--text-helper);
+}
+
+/* EC execution context (`this`) uses the shared object chip, separated from
+   the edited widget identity by a quiet divider. */
+.editor-id-context {
+  flex-shrink: 1;
+  margin-left: var(--space-1);
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--border-subtle);
+}
+
+.editor-header-id {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.editor-id-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-brand);
+  flex-shrink: 0;
+}
+.editor-id-icon svg { width: 15px; height: 15px; }
+
+.editor-id-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-0) var(--space-xs);
+  border-radius: var(--radius-sm);
+  background: var(--type-color, var(--fam-code));
+  color: var(--text-on-color);
+  font-size: var(--ui-fs-xs);
+  font-weight: var(--weight-semi);
+  letter-spacing: 0.4px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.editor-id-name {
+  color: var(--text-primary);
+  font-size: var(--ui-fs-name);
+  font-weight: var(--weight-semi);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+/* Clickable identity name — navigates BMP to the object. Looks like a
+ * regular name until hovered, when it gets the accent treatment so the
+ * user knows it's interactive. */
+.editor-id-name--link {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  padding: 0;
+  text-align: left;
+}
+.editor-id-name--link:hover { color: var(--text-brand); text-decoration: underline; }
+
+/* Muted monospace ID beside the name (the ui-id look). */
+.editor-id-bid {
+  color: var(--text-helper);
+  font-family: var(--font-mono);
+  font-size: var(--ui-fs-xs);
+  flex-shrink: 0;
+}
+
+/* ── Segmented control (template/instance) ───── */
+
+/* Segmented control (template/instance) now uses the shared .seg / .seg-btn
+ * in components.css, shared with the CVO studio. */
+
+/* ── Property tabs (tablist with underline) ──── */
+
+.editor-prop-tabs {
+  /* Same strip grammar as the studio's file switch (flush tabs, own padding). */
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-0);
+  padding: 0 var(--space-2);
+  background: var(--bg);
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+  min-height: 32px;
+}
+
+.editor-prop-tabs--empty {
+  min-height: 0;
+  border-bottom: 0;
+}
+
+.editor-prop-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-3);
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--ui-fs-sm);
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-default);
+}
+
+.editor-prop-tab:hover { color: var(--text-primary); background: var(--layer-hover); }
+
+.editor-prop-tab.active { color: var(--text-primary); font-weight: var(--weight-semi); }
+
+.editor-prop-tab.active::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: var(--brand);
+}
+
+.editor-prop-tab-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--support-info);
+}
+
+/* ── CodeMirror container ─────────────────────── */
+
+.editor-cm-wrap {
+  flex: 1;
+  /* Floor so a maximized / tall output panel can't crush the editor to
+   * nothing — it keeps at least a few lines visible. */
+  min-height: 72px;
+  overflow: hidden;
+  position: relative;
+}
+
+.editor-cm-wrap .cm-editor {
+  height: 100%;
+}
+
+.editor-cm-wrap .cm-scroller {
+  overflow: auto;
+  font-family: var(--font-mono);
+  /* 13px: comfortable editing size — one step above the read-only diff (12px),
+   * down from the oversized 16px the window shipped with. */
+  font-size: var(--text-base);
+  line-height: 1.5;
+}
+
+.editor-cm-wrap .cm-content {
+  /* Minimal breathing room above line 1 — 8px read as accidental. */
+  padding: var(--space-1) 0;
+}
+
+/* Colours, gutters, find panel, autocomplete and lint: editor-core/theme.ts */
+
+/* Block matching highlight */
+.cm-ec-block-match {
+  background: var(--brand-bg);
+  border-bottom: 2px solid var(--brand);
+}
+
+/* Variable-occurrence highlight — driven by varHighlight.ts via the
+ * Vars panel's mouseenter/leave on each row. Yellow-ish wash so the
+ * eye picks it up without confusing it with the EC accent (purple). */
+.cm-var-highlight {
+  background: color-mix(in srgb, var(--support-warn) 30%, transparent);
+  border-radius: var(--radius-sm);
+}
+
+/* ── Action toolbar (Preview/Run/Save + status) ─ */
+
+.editor-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  min-height: 40px;
+  background: var(--bg);
+  border-top: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.editor-actions .btn {
+  height: 28px;
+  padding: 0 var(--space-3);
+  font-size: var(--ui-fs-sm);
+  white-space: nowrap;
+}
+
+/* kbd chip + btn-saved pulse now live in components.css (.btn kbd /
+ * .btn.btn-saved), shared with the CVO studio. */
+
+/* Save in-flight: subtle pulse so users see the action took. */
+.editor-actions .btn[data-saving] {
+  opacity: 0.7;
+  animation: editor-saving-pulse 1.4s ease-in-out infinite;
+}
+@keyframes editor-saving-pulse {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 0.9; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .editor-actions .btn[data-saving] { animation: none; }
+}
+
+.editor-actions-spacer { flex: 1; }
+
+/* Preview | Execute — two grouped buttons forming one segmented control. */
+.editor-run-group {
+  display: inline-flex;
+  align-items: stretch;
+}
+.editor-run-group .editor-run-preview {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  margin-right: 0;
+}
+.editor-run-group .editor-run-execute {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: 1px solid var(--brand-line);
+  margin-left: -1px;
+}
+.editor-run-group .editor-run-execute:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* Selection-aware Preview: a trailing dot appears when the editor has a
+ * non-empty selection, signalling that Preview/Execute run only the selection.
+ * Driven by updatePreviewSelDot() flipping --sel; no DOM rebuild. */
+.editor-run-group .editor-run-preview--sel .editor-run-label::after {
+  content: ' ·';
+  opacity: 0.85;
+}
+
+/* Saved-flash state — Save button briefly shows a check + "Saved"
+ * after a successful commit, then renderShell re-paints it back to
+ * the dim "Save" baseline. */
+.editor-status {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  font-size: var(--ui-fs-xs);
+  color: var(--text-helper);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+.editor-status-compact,
+.editor-status-message { display: none; }
+.editor-status--message .editor-status-cursor { display: none; }
+.editor-status--message .editor-status-message { display: inline; }
+
+/* The editor runs in its own iframe, so viewport width is the action row's
+ * available width. Metadata yields space in two deliberate stages: readable
+ * shorthand first, then hidden. Primary actions never inherit that collapse. */
+@media (max-width: 760px) {
+  .editor-actions { padding-inline: var(--space-2); }
+  .editor-status-full { display: none; }
+  .editor-status-compact { display: inline; }
+}
+
+@media (max-width: 680px) {
+  .editor-status:not(.editor-status--message) { display: none; }
+}
+
+/* ── Drag handle ─────────────────────────────── */
+
+.editor-drag-handle {
+  height: 4px;
+  background: var(--bg);
+  border-top: 1px solid var(--border-subtle);
+  cursor: row-resize;
+  flex-shrink: 0;
+  position: relative;
+  overflow: visible; /* let the maximize button float above the 4px bar */
+}
+
+.editor-drag-handle:hover,
+.editor-drag-handle.dragging {
+  background: var(--layer-hover);
+}
+
+.editor-drag-handle::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 24px;
+  height: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--text-helper);
+  opacity: 0.5;
+}
+
+.editor-drag-handle:hover::after,
+.editor-drag-handle.dragging::after {
+  opacity: 0.8;
+}
+
+/* Maximize / restore toggle — floats centered on the divider, to the
+ * right of the grip. Invisible until the divider is hovered (or while
+ * maximized), so it never competes with the editor. Its own pointer
+ * cursor overrides the row-resize, and a pointerdown stopPropagation
+ * (in JS) keeps a click from starting a drag. */
+/* ── Output panel ────────────────────────────── */
+
+.editor-output {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+  flex-shrink: 0;
+}
+
+.editor-output > #bottom-panel-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Panel headers are tinted section bands (the ui-band look). */
+.editor-output-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 32px;
+  padding: 0 var(--space-2) 0 var(--space-3);
+  background: var(--layer-01);
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.editor-output-header-spacer { flex: 1; }
+
+.editor-output-context {
+  color: var(--text-helper);
+  font-size: var(--ui-fs-xs);
+}
+
+.editor-output-header .btn-micro:disabled {
+  color: var(--text-disabled);
+  background: none;
+  cursor: default;
+}
+
+/* Subtle rule separating the OUTPUT-TEXT controls (\n / table / copy) from the
+   PANEL controls (maximize / minimize), both grouped on the right. */
+.editor-output-header-div {
+  align-self: stretch;
+  width: 1px;
+  margin: var(--space-2) var(--space-1);
+  background: var(--border-strong);
+  flex-shrink: 0;
+}
+
+/* "Stale" indicator next to the result pill — the editor's code has
+ * been edited since this output was produced, so the result no longer
+ * reflects what's in the buffer. Amber so it reads as advisory, not
+ * error. */
+.editor-output-stale {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: var(--space-0) var(--space-2);
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  background: color-mix(in srgb, var(--support-warn) 20%, var(--bg));
+  color: var(--text-warn);
+  line-height: 1.4;
+  cursor: help;
+}
+.editor-output-stale svg { width: 11px; height: 11px; flex-shrink: 0; }
+
+.editor-output-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-0) var(--space-2);
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semi);
+  letter-spacing: 0.2px;
+  line-height: 1.4;
+}
+
+.editor-output-pill.ok {
+  background: color-mix(in srgb, var(--support-ok) 12%, var(--bg));
+  color: var(--text-ok);
+}
+
+.editor-output-pill.error {
+  background: color-mix(in srgb, var(--support-error) 10%, var(--bg));
+  color: var(--text-error);
+}
+
+.editor-output-pill svg { width: 11px; height: 11px; }
+
+.editor-output-pill-dur {
+  margin-left: var(--space-1);
+  padding-left: var(--space-1);
+  border-left: 1px solid currentColor;
+  font-family: var(--font-mono);
+  font-weight: var(--weight-normal);
+  opacity: 0.85;
+}
+
+.editor-output-content {
+  padding: var(--space-xs) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-primary);
+  overflow: auto;
+  flex: 1;
+}
+
+.editor-output-content.ok { color: var(--text-ok); }
+.editor-output-content.error { color: var(--text-error); }
+
+/* Inert rendering of a successful HTML-bearing EC result. This replaces only
+ * the output body; the normal status/timing/stale header and panel sizing stay
+ * untouched. The iframe is sandboxed without permissions in editor.ts. */
+.editor-html-preview {
+  display: block;
+  width: 100%;
+  min-height: 120px;
+  flex: 1;
+  border: 0;
+  background: #fff;
+}
+
+.editor-html-toggle-label {
+  font-size: var(--text-2xs);
+  letter-spacing: -0.4px;
+}
+
+/* ── Bottom bar ──────────────────────────────── */
+
+.editor-bottom-bar {
+  display: flex;
+  align-items: stretch;
+  padding: 0 var(--space-2);
+  background: var(--bg);
+  border-top: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+  min-height: 32px;
+}
+
+/* Panel tabs (left side) — same underline pattern as property tabs */
+.editor-panel-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-1);
+}
+
+.editor-panel-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font-size: var(--ui-fs-sm);
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-default);
+}
+.editor-panel-tab svg { width: 14px; height: 14px; }
+
+.editor-panel-tab:hover { color: var(--text-primary); background: var(--layer-hover); }
+.editor-panel-tab.active { color: var(--text-primary); font-weight: var(--weight-semi); }
+
+.editor-panel-tab.active::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -1px;
+  height: 2px;
+  background: var(--brand);
+}
+
+
+.btn-micro {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--ui-ctl-h);
+  min-width: var(--ui-ctl-h);
+  padding: 0 var(--space-1);
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--ui-fs-xs);
+  border-radius: var(--radius-2);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-default),
+              color var(--duration-fast) var(--ease-default);
+}
+
+.btn-micro svg { width: 16px; height: 16px; }
+
+.btn-micro:hover {
+  background: var(--layer-hover);
+  color: var(--text-primary);
+}
+
+.btn-micro.active {
+  background: var(--brand-bg);
+  color: var(--text-brand);
+}
+
+.btn-micro-label {
+  font-weight: var(--weight-semi);
+  letter-spacing: 0.5px;
+}
+
+/* ── Book popover ────────────────────────────────
+ * Quick-lookup overlay anchored under the book icon (next to the ?
+ * button). Tabbed UX — Namespaces (live help() output), EC syntax
+ * cheat, Snippets. Anchored, fixed positioning (lib/popover-anchor.ts)
+ * but is wider + taller because the content is denser. */
+
+.editor-book-popover {
+  position: fixed;
+  z-index: 1000;
+  width: 460px;
+  max-height: 580px;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-2);
+  box-shadow: var(--shadow-2);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: crev-help-in 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.editor-book-tabs {
+  display: flex;
+  gap: var(--space-0);
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.editor-book-tab {
+  background: none;
+  border: none;
+  padding: var(--space-xs) var(--space-3);
+  font-size: var(--ui-fs-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 100ms ease, border-color 100ms ease;
+}
+.editor-book-tab:hover { color: var(--text-primary); }
+.editor-book-tab.active {
+  color: var(--text-primary);
+  font-weight: var(--weight-semi);
+  border-bottom-color: var(--brand);
+}
+
+.editor-book-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-3) var(--space-4) var(--space-3);
+  font-size: var(--ui-fs-sm);
+  color: var(--text-primary);
+}
+
+.editor-book-section-title {
+  font-size: var(--ui-fs-xs);
+  font-weight: var(--weight-semi);
+  color: var(--text-helper);
+  margin: var(--space-3) 0 var(--space-xs);
+}
+.editor-book-section-title:first-child { margin-top: 0; }
+
+/* ── Filter input (shared across tabs) ────────── */
+.editor-book-filter {
+  margin-bottom: var(--space-1);
+}
+.editor-book-filter-input {
+  width: 100%;
+  height: 28px;
+  background: var(--bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-2);
+  padding: 0 var(--space-2);
+  font-size: var(--ui-fs-sm);
+  color: var(--text-primary);
+  outline: none;
+}
+.editor-book-filter-input:focus { outline: 0; border-color: var(--brand); box-shadow: 0 0 0 1px var(--brand); }
+.editor-book-filter-input::placeholder { color: var(--text-placeholder); }
+
+.editor-book-empty {
+  padding: var(--space-4) 0;
+  text-align: center;
+  color: var(--text-helper);
+  font-size: var(--ui-fs-sm);
+}
+
+.editor-book-link {
+  background: none;
+  border: none;
+  color: var(--text-brand);
+  cursor: pointer;
+  font-size: inherit;
+  text-decoration: underline;
+  padding: 0;
+  font-style: normal;
+}
+.editor-book-link:hover { color: var(--brand-hover); }
+
+.editor-book-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--ui-fs-xs);
+  color: var(--text-helper);
+}
+
+.editor-book-flash {
+  margin: 0 var(--space-4);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  text-align: center;
+  animation: crev-help-in 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.editor-book-flash--ok {
+  background: var(--brand-bg);
+  color: var(--text-primary);
+}
+.editor-book-flash--fail {
+  background: color-mix(in srgb, var(--support-error) 10%, var(--bg));
+  color: var(--text-error);
+}
+
+/* ── Namespaces tab ────────────────────────────
+ * Each row has TWO independent click targets: the prefix cell (left)
+ * and each type-name span (right). Only the inner `.editor-book-ns-
+ * token` spans carry the click handler — the row itself doesn't have
+ * cursor:pointer because the cells between (arrow, padding) aren't
+ * clickable. Hovering a token underlines it as the affordance signal,
+ * and a faint cell-level hover on the parent surfaces what's inside. */
+.editor-book-ns-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+.editor-book-ns-row td { padding: var(--space-1) var(--space-xs); vertical-align: middle; }
+.editor-book-ns-prefix {
+  font-family: var(--font-mono);
+  width: 70px;
+}
+.editor-book-ns-arrow {
+  color: var(--text-helper);
+  width: 16px;
+  text-align: center;
+}
+.editor-book-ns-types {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+.editor-book-ns-clickable:hover { background: var(--layer-hover); }
+
+/* The clickable atoms — prefix string and each type name. Underline
+ * appears on hover so the user can SEE that this exact bit is what
+ * gets inserted at the cursor. */
+.editor-book-ns-token {
+  cursor: pointer;
+  padding: 1px var(--space-0);
+  border-radius: var(--radius-sm);
+  transition: background 100ms ease, text-decoration-color 100ms ease;
+}
+.editor-book-ns-prefix .editor-book-ns-token {
+  color: var(--ec-idspace);
+  font-weight: var(--weight-semi);
+}
+.editor-book-ns-types .editor-book-ns-token {
+  color: var(--ec-class);
+}
+.editor-book-ns-token:hover {
+  text-decoration: underline;
+  text-decoration-color: var(--brand);
+  text-underline-offset: 3px;
+}
+
+/* ── EC cheat tab ──────────────────────────── */
+.editor-book-cheat-group + .editor-book-cheat-group { margin-top: var(--space-3); }
+.editor-book-cheat-table { width: 100%; border-collapse: collapse; }
+.editor-book-cheat-table td {
+  padding: var(--space-0) var(--space-xs) var(--space-0) 0;
+  vertical-align: top;
+}
+.editor-book-cheat-token {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--ec-kw);
+  width: 240px;
+  white-space: pre-wrap;
+}
+.editor-book-cheat-desc {
+  font-size: var(--ui-fs-xs);
+  color: var(--text-secondary);
+}
+
+/* ── Snippets tab ──────────────────────────── */
+.editor-book-snippet {
+  background: var(--bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-2);
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-2);
+}
+.editor-book-snippet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-xs);
+}
+.editor-book-snippet-title {
+  font-size: var(--ui-fs-sm);
+  font-weight: var(--weight-semi);
+  color: var(--text-primary);
+  flex: 1;
+  min-width: 0;
+}
+/* Small unboxed text button (the ui-tbtn look). */
+.editor-book-snippet-copy {
+  height: var(--ui-ctl-h);
+  background: none;
+  border: 0;
+  color: var(--text-secondary);
+  border-radius: var(--radius-2);
+  padding: 0 var(--space-2);
+  font-size: var(--ui-fs-xs);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.editor-book-snippet-copy:hover {
+  background: var(--layer-hover);
+  color: var(--text-primary);
+}
+.editor-book-copied {
+  background: var(--brand-bg);
+  color: var(--text-brand);
+}
+.editor-book-copy-fail {
+  background: color-mix(in srgb, var(--support-error) 10%, var(--bg));
+  color: var(--text-error);
+}
+.editor-book-snippet-code {
+  margin: 0;
+  padding: var(--space-xs) var(--space-2);
+  background: var(--ec-bg);
+  border-left: 2px solid var(--fam-code);
+  border-radius: 0 var(--radius-2) var(--radius-2) 0;
+  font-family: var(--font-mono);
+  font-size: var(--ui-fs-xs);
+  line-height: 1.45;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.editor-book-snippet-hint {
+  margin-top: var(--space-xs);
+  font-size: var(--ui-fs-xs);
+  color: var(--text-helper);
+}
+
+/* The book button shares `btn-micro` with the `?` help button — no
+ * dedicated rules needed (display: inline-flex is already part of
+ * the base micro-button styling). The id `#btn-book` only carries
+ * the JS click hook, no CSS. */
+
+/* Meta footer for the Namespaces tab — count + hint, split sides. */
+.editor-book-meta-hint { color: var(--text-helper); }
+
+/* ── History list ────────────────────────────── */
+
+.editor-history-list { overflow-y: auto; flex: 1; padding: var(--space-1); }
+
+/* One line per run, in a rounded hover band (the ui-row look). */
+.editor-history-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--ui-row-h);
+  padding: 0 var(--ui-inset);
+  border-radius: var(--radius-2);
+  cursor: pointer;
+  font-size: var(--ui-fs-sm);
+}
+
+.editor-history-item:hover { background: var(--ui-row-hover); }
+
+.editor-history-icon,
+.editor-history-status {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: 14px;
+  justify-content: center;
+  color: var(--text-helper);
+}
+.editor-history-icon svg,
+.editor-history-status svg { width: 14px; height: 14px; }
+
+/* ok = check, fail = cross: the shape carries the state, colour repeats it. */
+.editor-history-status.ok { color: var(--text-ok); }
+.editor-history-status.fail { color: var(--text-error); }
+
+.editor-history-code {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: var(--ui-fs-sm);
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.editor-history-dur {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--ui-fs-xs);
+  color: var(--text-helper);
+  min-width: 48px;
+  text-align: right;
+}
+.editor-history-time {
+  flex-shrink: 0;
+  font-size: var(--ui-fs-xs);
+  color: var(--text-helper);
+}
+
+.editor-history-empty {
+  padding: var(--space-4) var(--space-3);
+  color: var(--text-helper);
+  font-size: var(--ui-fs-sm);
+  text-align: center;
+}
+
+/* ── Loading ─────────────────────────────────── */
+
+.editor-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-helper);
+  font-size: var(--ui-fs-base);
+}
+
+.editor-load-error {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  width: min(520px, calc(100% - 48px));
+  min-height: 100%;
+  margin: 0 auto;
+  gap: var(--space-3);
+}
+
+.editor-load-error-title {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.editor-load-error-message {
+  color: var(--text-error);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.editor-load-error-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* ── Structured EC Output ─────────────────────── */
+
+.ec-output-parsed {
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  line-height: 1.5;
+  color: var(--text-primary);
+  padding: var(--space-2) var(--space-3);
+  /* Take whatever vertical room is left in the bottom panel and scroll
+   * within it — without these, a long log overflowed downward and the
+   * user couldn't reach the bottom. The same flex/overflow contract
+   * that .editor-output-content uses for the error branch. */
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.ec-out-line { white-space: pre-wrap; word-break: break-word; }
+/* Raw-mode box-drawing rows (table rendering toggled off): keep each row
+ * on one line so the monospace art doesn't wrap into nonsense. The panel
+ * (.ec-output-parsed) already scrolls, so wide rows scroll horizontally. */
+.ec-out-raw { white-space: pre; word-break: normal; }
+.ec-out-meta { color: var(--text-secondary); font-style: italic; }
+.ec-out-warn { color: var(--text-warn); }
+.ec-out-error { color: var(--text-error); font-weight: var(--weight-semi); }
+.ec-out-data { display: flex; gap: 0; flex-wrap: wrap; }
+.ec-out-data-key { color: var(--text-primary); font-weight: var(--weight-semi); }
+.ec-out-data-sep { color: var(--text-helper); }
+.ec-out-data-val { color: var(--text-secondary); }
+.ec-out-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+  margin: var(--space-1) 0;
+}
+.ec-out-table th {
+  text-align: left;
+  padding: var(--space-0) var(--space-xs);
+  border-bottom: 1px solid var(--border-strong);
+  color: var(--text-secondary);
+  font-weight: var(--weight-semi);
+}
+.ec-out-table td {
+  padding: 1px var(--space-xs);
+  color: var(--text-primary);
+}
+.ec-out-table tr:nth-child(even) td { background: var(--layer-01); }
+
+/* ── Variables Panel (40/60 split: vars | properties) ──────────── */
+
+.editor-vars-split {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.editor-vars-list-pane {
+  flex: 0 0 40%;
+  min-width: 200px;
+  max-width: 50%;
+  overflow-y: auto;
+  border-right: 1px solid var(--border-subtle);
+  padding: var(--space-1);
+}
+.editor-vars-props-pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.editor-vars-item {
+  display: flex;
+  gap: var(--space-2);
+  min-height: var(--ui-row-h);
+  padding: 0 var(--ui-inset);
+  border-radius: var(--radius-2);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: var(--ui-fs-sm);
+  align-items: center;
+}
+.editor-vars-item:hover { background: var(--ui-row-hover); }
+.editor-vars-item--selected,
+.editor-vars-item--selected:hover {
+  background: var(--brand-bg);
+  box-shadow: inset 2px 0 var(--brand);
+}
+.editor-vars-name {
+  color: var(--text-primary);
+  font-weight: var(--weight-semi);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.editor-vars-typechip {
+  flex-shrink: 0;
+  padding: 1px var(--space-xs);
+  border-radius: var(--radius-md);
+  font-size: var(--text-2xs);
+  font-family: var(--font-body);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.2px;
+  border: 1px solid transparent;
+}
+.editor-vars-typechip--list {
+  background: var(--brand-bg);
+  color: var(--text-brand);
+  border-color: var(--brand-line);
+}
+.editor-vars-typechip--scalar {
+  background: color-mix(in srgb, var(--support-ok) 10%, var(--bg));
+  color: var(--text-ok);
+  border-color: color-mix(in srgb, var(--support-ok) 35%, transparent);
+}
+.editor-vars-typechip--primitive {
+  background: var(--layer-01);
+  color: var(--text-secondary);
+  border-color: var(--border-subtle);
+}
+.editor-vars-typechip--unknown {
+  background: transparent;
+  color: var(--text-helper);
+  border-color: var(--border-subtle);
+}
+/* Loop-variable marker — a var bound by forEach/map/… rather than `:=`. */
+.editor-vars-loopbadge {
+  flex-shrink: 0;
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.2px;
+  text-transform: uppercase;
+  color: var(--text-helper);
+  background: var(--layer-01);
+  border: 1px solid var(--border-subtle);
+}
+
+/* Right pane — header + filter row + scrollable list */
+.editor-vars-props-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  background: var(--layer-01);
+  flex-shrink: 0;
+}
+.editor-vars-props-title {
+  font-size: var(--ui-fs-sm);
+  font-weight: var(--weight-semi);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.editor-vars-props-count {
+  font-weight: var(--weight-normal);
+  font-family: var(--font-mono);
+  color: var(--text-helper);
+  font-size: var(--ui-fs-xs);
+}
+.editor-vars-props-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  background: var(--bg);
+  flex-shrink: 0;
+}
+.editor-vars-props-filter {
+  flex: 1;
+  min-width: 0;
+  height: var(--ui-ctl-h);
+  padding: 0 var(--space-2);
+  font-size: var(--ui-fs-sm);
+  font-family: var(--font-mono);
+  background: var(--bg);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-2);
+  outline: none;
+}
+.editor-vars-props-filter::placeholder { color: var(--text-placeholder); }
+.editor-vars-props-filter:focus {
+  outline: 0;
+  border-color: var(--brand);
+  box-shadow: 0 0 0 1px var(--brand);
+}
+
+/* Kind-filter pill row — replaces the legacy "Show system" checkbox.
+ * Pills sit below the substring filter, each one is a toggle. Active
+ * pills paint in the accent colour; inactive sit in a subtle surface
+ * tone with a thin border. Compact (24px height, 11px font) so the
+ * row fits a side-panel width. */
+.editor-vars-props-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  padding: 0 var(--space-3) var(--space-1);
+  background: var(--bg);
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+.editor-vars-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 var(--space-2);
+  border-radius: 11px;
+  background: var(--bg);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: var(--ui-fs-xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: background 100ms ease, border-color 100ms ease, color 100ms ease;
+  user-select: none;
+}
+.editor-vars-pill:hover {
+  background: var(--layer-hover);
+  color: var(--text-primary);
+}
+.editor-vars-pill.active {
+  background: var(--brand-bg);
+  border-color: var(--brand);
+  color: var(--text-brand);
+}
+.editor-vars-pill--sys.active {
+  background: var(--layer-active);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.editor-vars-props-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-1);
+}
+.editor-vars-prop-row {
+  display: grid;
+  grid-template-columns: var(--space-3) minmax(0, 1.6fr) minmax(0, 1.4fr) auto;
+  gap: var(--space-3);
+  align-items: center;
+  min-height: var(--ui-row-h);
+  padding: 0 var(--ui-inset);
+  border-radius: var(--radius-2);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: var(--ui-fs-sm);
+}
+.editor-vars-prop-row:hover { background: var(--ui-row-hover); }
+.editor-vars-prop-row--system .editor-vars-prop-accessor { color: var(--text-secondary); }
+.editor-vars-prop-accessor {
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.editor-vars-prop-label {
+  color: var(--text-helper);
+  font-family: var(--font-ui);
+  font-size: var(--ui-fs-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.editor-vars-prop-kind {
+  flex-shrink: 0;
+  padding: 0 var(--space-xs);
+  border-radius: var(--radius-md);
+  font-size: var(--text-2xs);
+  font-family: var(--font-ui);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+.editor-vars-prop-kind--ref   { color: var(--text-brand); border-color: var(--brand-line); }
+.editor-vars-prop-kind--ec    { color: var(--text-warn); border-color: color-mix(in srgb, var(--support-warn) 60%, transparent); }
+.editor-vars-prop-kind--sys   { color: var(--text-helper); }
+.editor-vars-prop-kind--hist  { color: var(--text-ok); border-color: color-mix(in srgb, var(--support-ok) 40%, transparent); }
+.editor-vars-prop-kind--data  { color: var(--text-secondary); }
+
+/* Expand toggle for list/tag props (leading grid column). A bare chevron that
+   rotates down when the option dropdown is open. */
+.editor-vars-prop-expand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-3);
+  height: var(--space-3);
+  padding: 0;
+  margin: 0;
+  background: none;
+  border: none;
+  color: var(--text-helper);
+  cursor: pointer;
+  transition: transform 120ms ease, color 120ms ease;
+}
+.editor-vars-prop-expand:hover { color: var(--text-primary); }
+.editor-vars-prop-expand.expanded { transform: rotate(90deg); color: var(--text-primary); }
+.editor-vars-prop-expand-spacer { display: inline-block; }
+
+/* Group wrapping a prop row + its expanded allowed-value dropdown. */
+.editor-vars-prop-options {
+  padding: var(--space-1) var(--space-3) var(--space-2) calc(var(--space-3) * 2 + var(--space-3));
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.editor-vars-prop-option {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: var(--ui-fs-xs);
+}
+.editor-vars-prop-option:hover { background: var(--layer-hover); }
+.editor-vars-prop-option-ref { color: var(--text-brand); white-space: nowrap; }
+.editor-vars-prop-option-name {
+  color: var(--text-helper);
+  font-family: var(--font-ui);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.editor-vars-prop-options-empty {
+  padding: 1px var(--space-2);
+  color: var(--text-helper);
+  font-size: var(--text-xs);
+}
+.editor-vars-prop-options-set {
+  padding: var(--space-1) var(--space-2) 0;
+  color: var(--text-helper);
+  font-size: var(--ui-fs-xs);
+  font-weight: var(--weight-semi);
+}
+
+.editor-vars-props-empty {
+  padding: var(--space-6) var(--space-3);
+  color: var(--text-helper);
+  font-size: var(--ui-fs-sm);
+  text-align: center;
+}
+
+.editor-vars-props-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  padding: var(--space-4);
+  color: var(--text-secondary);
+  font-size: var(--ui-fs-sm);
+}
+.editor-vars-props-error-head {
+  font-weight: var(--weight-semi);
+  color: var(--text-error);
+}
+.editor-vars-props-error-body {
+  font-family: var(--font-mono);
+  font-size: var(--ui-fs-xs);
+  color: var(--text-helper);
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+/* ── Sparkline ───────────────────────────────── */
+
+.ec-sparkline {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 16px;
+  padding: var(--space-1) var(--space-3) var(--space-0);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.ec-sparkline-bar {
+  width: 3px;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  min-height: 2px;
+}
+.ec-sparkline-bar.ok { background: var(--support-ok); }
+.ec-sparkline-bar.fail { background: var(--support-error); }
+.ec-sparkline-label {
+  margin-left: auto;
+  font-size: var(--ui-fs-xs);
+  color: var(--text-helper);
+  align-self: center;
+}
+
+/* ── Hover documentation tooltip (hoverDocs) ─── */
+
+.hover-tooltip {
+  padding: var(--space-xs) var(--space-3);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  max-width: 340px;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-2);
+  box-shadow: var(--shadow-2);
+  font-family: var(--font-ui);
+}
+.cm-tooltip:has(> .hover-tooltip) { background: transparent; border: 0; box-shadow: none; }
+/* The CodeMirror tooltip wrapper is neutralised so the shared component.css
+   object-card shell is the only visible container. */
+.cm-tooltip:has(.crev-tt-card) {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.cm-tooltip:has(.crev-tt-card) {
+  animation: editor-object-card-in 110ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes editor-object-card-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cm-tooltip:has(.crev-tt-card) { animation: none; }
+}
+/* Confirm modal styles live in styles/components.css (.crev-modal*), shared
+ * via lib/modal — editor.html loads components.css. */
+
+/* Scrollbars defined in base.css */
+.editor-vars-typechip--json {
+  color: var(--text-brand);
+  border-color: var(--brand-line);
+}
+
+.editor-json-source {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-json-list {
+  padding-block: 2px;
+}
+
+.editor-json-group {
+  display: contents;
+}
+
+.editor-json-row {
+  min-height: 27px;
+  display: grid;
+  grid-template-columns: 18px minmax(80px, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer;
+}
+
+.editor-json-row:hover {
+  background: var(--ui-row-hover);
+}
+
+.editor-json-row--invalid,
+.editor-json-row--array {
+  cursor: default;
+}
+
+.editor-json-expand {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  color: var(--text-helper);
+  background: transparent;
+}
+
+.editor-json-expand svg {
+  width: 11px;
+  height: 11px;
+  transition: transform 120ms ease;
+}
+
+.editor-json-expand.expanded svg {
+  transform: rotate(90deg);
+}
+
+.editor-json-expand-spacer {
+  width: 18px;
+}
+
+.editor-json-key {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+.editor-json-row--invalid .editor-json-key {
+  color: var(--text-helper);
+}
+
+.editor-json-kind,
+.editor-json-note {
+  color: var(--text-helper);
+  font-size: var(--ui-fs-xs);
+}
+
+.editor-json-note {
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+/* ── Code references (editor-core/code-ref-links.ts) ─────────────────
+ * The link underline and the CodeMirror tooltip hooks live in ui.css (shared
+ * with the object window). The card and the inline peek below repeat the
+ * object window's look, since this page does not load window.css. */
+.cm-ref-card-host .ow-card { width: 420px; max-width: 80vw; background: var(--bg); border: 1px solid var(--border-strong); border-radius: var(--radius-2); box-shadow: var(--shadow-2); font: 400 var(--ui-fs-sm)/20px var(--font-ui); color: var(--text-primary); }
+.ow-card-plain { display: flex; gap: var(--space-2); padding: var(--space-1) var(--space-3); color: var(--text-secondary); }
+.ow-card-plain code { font: 400 var(--ui-fs-xs) var(--font-mono); }
+.ow-card-h { display: flex; align-items: center; gap: var(--space-2); height: 32px; padding: 0 var(--space-3); min-width: 0; }
+.ow-card-h .nm { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; min-width: 6em; }
+.ow-card-h .ui-id { flex: 0 4 auto; }
+.ow-card-h .ty { color: var(--text-helper); margin-left: auto; white-space: nowrap; }
+/* Compact card: name line with the open button, one muted line of type,
+ * class and model; the code only when there is code. */
+.cm-ref-card-host .ow-card.compact { width: max-content; min-width: 220px; max-width: min(420px, 80vw); padding-bottom: 6px; }
+.ow-card-h { padding-right: var(--space-1); }
+.ow-card-h .grow { flex: 1 0 var(--space-2); }
+.ow-card-h .ow-card-open { flex: none; }
+.ow-card-h .ui-id { font-family: var(--font-mono); color: var(--text-helper); }
+.ow-card-m { margin-top: -6px; padding: 0 var(--space-3) 4px; color: var(--text-helper); font-size: var(--ui-fs-xs); line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ow-card .ui-id, .ow-peek .ui-id { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.ow-dot { width: 8px; height: 8px; border-radius: var(--radius-1); flex: none; display: inline-block; }
+.ow-tt { width: 16px; height: 16px; border-radius: var(--radius-1); flex: none; display: inline-block; }
+.ow-card-f { display: flex; align-items: center; gap: var(--space-3); height: 32px; padding: 0 var(--space-3); color: var(--text-helper); font-size: var(--ui-fs-xs); }
+.ow-card-f .grow { flex: 1; }
+.ow-card kbd { font: 400 10px var(--font-mono); padding: 0 4px; border: 1px solid var(--border-subtle); border-radius: var(--radius-1); color: var(--text-secondary); }
+.ow-card-note, .ow-peek-note { display: block; padding: 0 var(--space-3) 6px; color: var(--text-helper); }
+.ow-card .ow-code, .cm-ref-peek .ow-code { margin: 0 var(--space-2); padding: 6px 0; background: var(--ec-bg); border-left: 2px solid var(--fam-code); font: 400 11.5px/18px var(--font-mono); }
+.cm-ref-peek .ow-code { margin: 0; border-left: 0; background: transparent; }
+.ow-code .ow-ln { display: flex; }
+.ow-code .ow-ln .n { flex: none; width: 28px; padding-right: var(--space-2); text-align: right; color: var(--text-helper); user-select: none; }
+.ow-code .ow-ln .c { padding: 0 var(--space-3); white-space: pre; overflow: hidden; text-overflow: ellipsis; color: var(--text-primary); }
+.cm-ref-peek { margin: 2px var(--space-2) 4px 32px; border: 1px solid var(--border-subtle); border-left: 2px solid var(--brand); background: var(--bg); border-radius: 0 var(--radius-2) var(--radius-2) 0; font: 400 var(--ui-fs-sm)/20px var(--font-ui); color: var(--text-primary); white-space: normal; }
+.cm-ref-peek .ow-peek-h { display: flex; align-items: center; gap: var(--space-2); min-height: 28px; padding: 0 var(--space-1) 0 var(--space-2); min-width: 0; }
+.cm-ref-peek .ow-peek-h .nm { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 4em; }
+.cm-ref-peek .ow-peek-h .ty { color: var(--text-helper); white-space: nowrap; }
+.cm-ref-peek .ow-peek-h .cnt { margin-left: auto; font: 400 var(--ui-fs-xs) var(--font-mono); color: var(--text-helper); white-space: nowrap; }
+.cm-ref-peek .acts { display: flex; gap: 2px; }
+.cm-ref-peek .ow-more { padding: 0 0 4px 40px; color: var(--text-helper); font-size: var(--ui-fs-xs); }
+.ow-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

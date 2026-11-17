@@ -1,0 +1,348 @@
+/**
+ * Design tokens — single source of truth for the entire extension.
+ * Imported by all HTML entry points. Content overlay uses derived values.
+ * See DESIGN.md for the full design system specification.
+ */
+
+/* ── Self-hosted Inter (latin, 4 weights, ~96KB total) ── */
+@font-face { font-family: 'Inter'; font-weight: 400; font-style: normal; font-display: swap; src: url('../assets/fonts/inter-400.woff2') format('woff2'); }
+@font-face { font-family: 'Inter'; font-weight: 500; font-style: normal; font-display: swap; src: url('../assets/fonts/inter-500.woff2') format('woff2'); }
+@font-face { font-family: 'Inter'; font-weight: 600; font-style: normal; font-display: swap; src: url('../assets/fonts/inter-600.woff2') format('woff2'); }
+@font-face { font-family: 'Inter'; font-weight: 700; font-style: normal; font-display: swap; src: url('../assets/fonts/inter-700.woff2') format('woff2'); }
+
+/* ── Self-hosted JetBrains Mono (No-Ligatures, subset) ──
+ * Self-hosted so the mono italic is deterministic across OSes. The old
+ * system stack ('SF Mono', 'Cascadia Code', Consolas, …) meant the italic
+ * face was whatever the OS resolved — on Windows that's Cascadia Code,
+ * whose italic is a SCRIPT cursive (ugly s/l/f in Extended Code).
+ * JetBrains Mono's italic is a clean slanted-roman, so EC comments /
+ * MISSING read as slanted text, not cursive. One font for roman + italic
+ * keeps monospace cell metrics uniform (no cursor drift in CodeMirror).
+ *
+ * Subsetted with pyftsubset to DROP the ligature features
+ * (calt/liga/dlig/clig): programming ligatures are off (>=, :=, <>, !=
+ * stay as separate characters) and the ligature glyphs are pruned, which
+ * also halved the size (~21KB → ~9KB per face; 4 faces ≈ 36KB total).
+ * `--unicodes='*'` kept every real character, so UI glyphs (≡ ▾ ▸ ✕ ∅ →)
+ * are intact. */
+@font-face { font-family: 'JetBrains Mono'; font-weight: 400; font-style: normal; font-display: swap; src: url('../assets/fonts/jetbrains-mono-400.woff2') format('woff2'); }
+@font-face { font-family: 'JetBrains Mono'; font-weight: 500; font-style: normal; font-display: swap; src: url('../assets/fonts/jetbrains-mono-500.woff2') format('woff2'); }
+@font-face { font-family: 'JetBrains Mono'; font-weight: 700; font-style: normal; font-display: swap; src: url('../assets/fonts/jetbrains-mono-700.woff2') format('woff2'); }
+@font-face { font-family: 'JetBrains Mono'; font-weight: 400; font-style: italic;  font-display: swap; src: url('../assets/fonts/jetbrains-mono-400i.woff2') format('woff2'); }
+
+:root {
+  /* ── Surfaces (darkest → lightest) ──────────────────
+   * Cool-slate-tinted neutrals (not pure gray) with perceptually evened
+   * low-end steps, so stacked panels read as distinct layers. */
+  --surface-0: #0f1014;
+  --surface-1: #17181d;
+  --surface-2: #1f2128;
+  --surface-3: #2b2e38;
+  --surface-4: #3a3e4a;
+
+  /* ── Text ─────────────────────────────────────────── */
+  --text-1: #e6e6ea;
+  --text-2: #b2b4bb;
+  --text-3: #8a8c93;   /* raised to ~4.6:1 on surface-1 (was #707070 ≈ 3.5:1, sub-AA) */
+  --text-disabled: #5a5c63;
+
+  /* ── Accent ───────────────────────────────────────────
+   * One violet hue varied only by lightness — and deliberately in the
+   * Catppuccin Mocha mauve family (#cba6f7) so the UI chrome harmonizes with
+   * the EC code palette below. Replaced the old near-max-chroma magenta that
+   * bloomed on thin elements and clashed with Mocha. No magenta anywhere now;
+   * focus rings use the same hue, brighter (see --focus-ring). */
+  --accent: #8b5cf6;
+  --accent-dim: #7c4ddb;
+  --accent-bright: #a78bfa;
+  --accent-bg: #221a36;
+
+  /* ── Semantic ─────────────────────────────────────────
+   * Retuned from IBM Carbon (harsh, foreign to this theme) to the Catppuccin
+   * Mocha family so signal colors harmonize with the accent + EC palette. Still
+   * unmistakably green / yellow / red, just softer and of-a-piece. */
+  --success: #a6e3a1;   /* Mocha green */
+  --warning: #f9e2af;   /* Mocha yellow */
+  --danger:  #f38ba8;   /* Mocha red */
+
+  /* Latency tiers — used by status-bar latency dot + similar
+   * connection-quality indicators. Same hue family as semantic
+   * tokens but tuned for the small dot context. */
+  --latency-excellent: #24a148;
+  --latency-good: #6fdc8c;
+  --latency-ok: #f1c21b;
+  --latency-slow: #ff832b;
+  --latency-very-slow: #d2552b;
+  --latency-dead: #da1e28;
+
+  /* Editor / code-preview syntax colours. Distinct from semantic
+   * (these are tuned for monospace contrast on dark surfaces). */
+  --syntax-string: #a6e3a1;  /* matches --ec-str (Mocha green) */
+  --syntax-number: #fab387;  /* matches --ec-num (Mocha peach) */
+  --info: #89b4fa;           /* Mocha blue */
+
+  /* ── Extended Code highlight palette ─────────────────
+   * Dark (Mocha) values for surfaces outside the crev-light scope; the
+   * light values live in the crev-light block below. The CodeMirror theme
+   * (src/editor-core/theme.ts) reads these through var(), as do the
+   * object window code blocks, the sidepanel `.ec-preview` block
+   * and the Code Search match-line composition. Hex literals used
+   * to be repeated across four CSS files plus highlight.ts — change
+   * a colour here, every surface picks it up.
+   *
+   * Family: Catppuccin Mocha — battle-tested on dark IDE backgrounds,
+   * WCAG-AA-friendly contrast on #1e1e2e, soothing pastels rather
+   * than the harsh Tailwind-default highlight palette we shipped
+   * first. Tokyo Night was the runner-up; Mocha won on overall
+   * harmony when 18+ token categories are visible at once.
+   *
+   * Categories carry weight/style cues for FAST scanning:
+   *   bold        → high-signal categories (tx writes, class types,
+   *                 agg slow operations)
+   *   italic      → out-of-band semantics (null, comments)
+   *   underline   → the .expression eval-vs-text gotcha (distinct
+   *                 from italic so a glance disambiguates)
+   *   normal      → everything else
+   *
+   * On collisions (e.g. tx + num both Peach): the categories share
+   * a hue but disambiguate by weight (tx is bold, num is not) and
+   * by context (tx appears after `.`, num is digits). Acceptable.
+   */
+  --ec-bg:        #1e1e2e;  /* Catppuccin Mocha base */
+
+  /* Identifier kinds */
+  --ec-kw:        #cba6f7;  /* Mauve   — control flow keywords */
+  --ec-ctx:       #b4befe;  /* Lavender — root / this / self / parent */
+  --ec-bool:      #f5c2e7;  /* Pink    — TRUE / FALSE */
+  --ec-null:      #585b70;  /* Surface2 — MISSING / NULL / NA  (italic) */
+
+  /* Literals */
+  --ec-str:       #a6e3a1;  /* Green   — strings */
+  --ec-num:       #fab387;  /* Peach   — numbers */
+  --ec-cmt:       #7f849c;  /* Overlay1 — comments  (italic) */
+  --ec-op:        #9399b2;  /* Overlay2 — operators */
+
+  /* Constants */
+  --ec-style:     #f9e2af;  /* Yellow  — LEFT / RIGHT / BOLD format */
+  --ec-date:      #89dceb;  /* Sky     — TODAY / BOP / EOP / period */
+
+  /* Functions */
+  --ec-global:    #94e2d5;  /* Teal    — LIST / JSON / output / when */
+  /* Tokyo Night "macroName" orange — semantically `aggregate` IS a
+   * macro-style operation (engine-level evaluator, slower than a
+   * plain function call). Distinct enough from Catppuccin Peach
+   * (--ec-num / --ec-tx) by saturation + bold weight; not red, so
+   * the "no red for non-errors" rule still holds. */
+  --ec-agg:       #ff9e64;  /* (bold) */
+
+  /* Methods */
+  --ec-tx:        #fab387;  /* Peach   — .add / .delete / .change  (bold) */
+  --ec-tbl:       #a6e3a1;  /* Green   — .addColumn / .addRow / table-builder */
+  --ec-read:      #89b4fa;  /* Blue    — .filter / .forEach / .children */
+
+  /* References */
+  --ec-class:     #f9e2af;  /* Yellow  — class names after SELECT / .add (T)  (bold) */
+  --ec-idspace:   #74c7ec;  /* Sapphire — `t.foo` / `o.100` / `d.bar` */
+
+  /* Properties */
+  --ec-prop:      #f5e0dc;  /* Rosewater — .name / .id / .rid / .className */
+  --ec-expr:      #f2cdcd;  /* Flamingo — bare `.expression`  (underline) */
+
+  /* ── Typography ───────────────────────────────────── */
+  --font-body: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Consolas, ui-monospace, monospace;
+
+  /* Widened from the old 10–14px (only 4px of total range, so size couldn't
+   * carry hierarchy). Now titles can actually lead while data stays compact. */
+  --text-2xs: 10px;  /* compact tier below xs — dense badges, kbd chips, micro-labels */
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-lg: 15px;
+  --text-xl: 18px;
+  --text-2xl: 22px;
+
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semi: 600;
+  --weight-bold: 700;
+
+  --leading-tight: 1.2;
+  --leading-normal: 1.4;
+  --leading-relaxed: 1.6;
+
+  /* ── Spacing (4px grid) ───────────────────────────── */
+  --space-0: 2px;   /* half-step for genuinely tight cases (chip/pill internals) */
+  --space-1: 4px;
+  --space-xs: 6px;  /* compact step between 4 and 8 — dense tool-UI paddings (tabs, strips, chips) */
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  /* ── Radius ───────────────────────────────────────── */
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 8px;
+
+  /* ── Elevation ────────────────────────────────────── */
+  /* Layered shadows — ambient + key — for a softer, more dimensional feel. */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.02);
+  --shadow-2: 0 2px 6px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.03);
+  --shadow-3: 0 4px 12px rgba(0, 0, 0, 0.35), 0 16px 40px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  --shadow-4: 0 8px 24px rgba(0, 0, 0, 0.4), 0 32px 64px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.05);
+
+  /* Focused/armed state — accent-tinted halo, used for active overlays + key buttons */
+  --shadow-accent: 0 0 0 1px rgba(139, 92, 246, 0.45), 0 24px 64px rgba(0, 0, 0, 0.45);
+
+  /* ── Focus ring ───────────────────────────────────── */
+  --focus-ring: 0 0 0 2px rgba(139, 92, 246, 0.55);
+  --focus-ring-strong: 0 0 0 2px rgba(139, 92, 246, 0.85);
+
+  /* ── Transitions ──────────────────────────────────── */
+  --duration-instant: 80ms;
+  --duration-fast: 120ms;
+  --duration-normal: 180ms;
+  --duration-slow: 260ms;
+
+  /* Smooth, slightly springy default — feels more modern than cubic-bezier(0.4,0,0.2,1) */
+  --ease-default: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-decelerate: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-accelerate: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ * OVERHAUL THEME (Carbon bones · Companion fonts · Keyline accent)
+ * ───────────────────────────────────────────────────────────────────
+ * NEW semantic token layer, scoped to `[data-theme="crev-light|crev-dark"]`.
+ * Dormant until an entry point opts in (e.g. sidepanel <html data-theme>).
+ * The default :root above (legacy dark) is untouched, so the other six
+ * surfaces render exactly as before. Components migrate to these names
+ * one surface at a time.
+ *
+ * Rule: purple = action/active/selected · family colour = type
+ * (badge tile + code rail only) · amber = unsaved. Else Carbon gray.
+ * ═══════════════════════════════════════════════════════════════════ */
+:root[data-theme="crev-light"],
+:root[data-theme="crev-dark"] {
+  --font-ui: 'Inter', system-ui, -apple-system, sans-serif;
+
+  /* Type scale (size / line / weight bundled) — hierarchy by weight+space */
+  --type-title:  600 20px/28px var(--font-ui);
+  --type-heading:600 16px/22px var(--font-ui);
+  --type-body:   400 14px/20px var(--font-ui);
+  --type-body-strong: 600 14px/20px var(--font-ui);
+  --type-label:  600 12px/16px var(--font-ui);
+  --type-helper: 400 12px/16px var(--font-ui);
+  --type-code:   400 12px/16px var(--font-mono);
+
+  /* Brand accent = ACTION */
+  --brand:        #8a3ffc;
+  --brand-hover:  #7c3aed;
+  --focus-edge:   2px solid var(--brand);   /* edge ring, offset applied at use site */
+  --keyline-line: inset 0 -2px 0 var(--brand);
+
+  /* Family colours = "what type" — ≤9 hues (code nudged to violet, ≠ brand) */
+  --fam-structure:#42be65; --fam-layout:#7e8ce0; --fam-table:#fa4d56;
+  --fam-viz:#ff8389; --fam-input:#1f8bff; --fam-button:#0f62fe;
+  --fam-code:#7b5cff; --fam-content:#d2a373; --fam-status:#f1c21b;
+
+  --dirty: #f1c21b;
+  --radius-0:0; --radius-1:2px; --radius-2:4px; --radius-round:999px;
+}
+
+/* Light (Carbon White) */
+:root[data-theme="crev-light"] {
+  --bg:#ffffff; --layer-01:#f4f4f4; --layer-hover:#e8e8e8; --layer-active:#e0e0e0;
+  --border-subtle:#e0e0e0; --border-strong:#8d8d8d;
+  --text-primary:#161616; --text-secondary:#525252; --text-helper:#6f6f6f;
+  --text-placeholder:#a8a8a8; --text-on-color:#ffffff; --text-brand:#7c3aed; --text-disabled:#c6c6c6;
+  --brand-bg:#f4efff; --brand-line:#e4d8ff;
+  --support-ok:#24a148; --support-warn:#f1c21b; --support-error:#da1e28; --support-info:#0f62fe;
+  /* text on light backgrounds in the support hues (AA on --bg and --layer-01) */
+  /* amber for rings and other graphics on white (3.3:1); --support-warn is 1.6:1 there.
+   * Text keeps --text-warn. */
+  --support-warn-graphic:#b28600;
+  --text-error:#b81921; --text-warn:#c2410c; --text-ok:#198038;
+  /* tinted surfaces for the support states: unsaved (bar, tag, row), added and removed
+   * (diff lines, review tags); --dirty-line edges the unsaved bar */
+  --dirty-bg:#fff8dc; --dirty-line:#ecd990; --support-ok-bg:#defbe6; --support-error-bg:#fff1f1;
+  /* Access record kinds (open-record tabs): strip + icon hue, and the very light
+   * tint of the active tab. Hues of the earlier coloured tabs; each hue is at
+   * least 4.5:1 on --layer-01 and on its tint, so it also passes as a 3:1 icon. */
+  --kind-role:#397a54;      --kind-role-tint:#f1f6f3;
+  --kind-policy:#336d9d;    --kind-policy-tint:#f1f5f8;
+  --kind-test:#5b6979;      --kind-test-tint:#f4f5f7;
+  --kind-workspace:#79549c; --kind-workspace-tint:#f6f3f8;
+
+  /* ── Legacy-name remap → light values (re-skins existing components in
+   *    this scope with zero edits; other surfaces keep :root dark) ── */
+  --surface-0:#ffffff; --surface-1:#f4f4f4; --surface-2:#ececec; --surface-3:#e0e0e0; --surface-4:#d0d0d0;
+  --text-1:#161616; --text-2:#525252; --text-3:#6f6f6f; --text-disabled:#a8a8a8;
+  --accent:#8a3ffc; --accent-dim:#7c3aed; --accent-bright:#a374ff; --accent-bg:#f4efff;
+  --success:#24a148; --warning:#f1c21b; --danger:#da1e28; --info:#0f62fe;
+  --focus-ring:0 0 0 2px rgba(138,63,252,.5); --focus-ring-strong:0 0 0 2px rgba(138,63,252,.85);
+  --shadow-1:0 1px 2px rgba(20,22,28,.08);
+  --shadow-2:0 4px 12px rgba(20,22,28,.10);
+  --shadow-3:0 10px 30px rgba(20,22,28,.14);
+  --shadow-4:0 20px 50px rgba(20,22,28,.20);
+  --shadow-accent:0 0 0 1px rgba(138,63,252,.4), 0 12px 32px rgba(20,22,28,.18);
+
+  /* ── EC syntax on light — the Catppuccin Latte hues, darkened so every
+   *    token reaches WCAG AA (4.5:1) against --ec-bg, white, the active-line
+   *    tint (6% brand) and the selection tint (12% brand). Every light code
+   *    surface reads these: the Extended Code editor and the object window's
+   *    inline editor (one CodeMirror theme, editor-core/theme.ts), the
+   *    object window's code blocks, code search and the side panel previews.
+   *    Contrast on --ec-bg / white is noted per line. ── */
+  --ec-bg:      #f4f4f4;
+  --ec-kw:      #7a2ed8;  /* Mauve      5.95 / 6.54 */
+  --ec-ctx:     #4f56c9;  /* Lavender   5.44 / 5.99 */
+  --ec-bool:    #a8197f;  /* Pink       6.14 / 6.75 */
+  --ec-null:    #5d6272;  /* Overlay0   5.53 / 6.08 (italic) */
+  --ec-str:     #2b6c1d;  /* Green      5.85 / 6.43 */
+  --ec-num:     #a63c00;  /* Peach      5.84 / 6.43 */
+  --ec-cmt:     #5d6272;  /* Overlay1   5.53 / 6.08 (italic) */
+  --ec-op:      #585b6b;  /* Overlay2   6.11 / 6.72 */
+  --ec-style:   #85540f;  /* Yellow     5.83 / 6.42 */
+  --ec-date:    #05638d;  /* Sky        6.01 / 6.61 */
+  --ec-global:  #0f6b6c;  /* Teal       5.72 / 6.29 */
+  --ec-agg:     #a63c00;  /* Peach      5.84 / 6.43 (bold) */
+  --ec-tx:      #a63c00;  /* Peach      5.84 / 6.43 (bold) */
+  --ec-tbl:     #2b6c1d;  /* Green      5.85 / 6.43 */
+  --ec-read:    #1450d0;  /* Blue       6.18 / 6.80 */
+  --ec-class:   #85540f;  /* Yellow     5.83 / 6.42 (bold) */
+  --ec-idspace: #13697a;  /* Sapphire   5.73 / 6.31 */
+  --ec-prop:    #8f4c41;  /* Rosewater  5.82 / 6.41 */
+  --ec-expr:    #a33c3c;  /* Flamingo   5.84 / 6.42 (underline) */
+}
+
+/* Dark (Carbon Gray 100) — dark-ready drop-in, same semantic names */
+:root[data-theme="crev-dark"] {
+  --bg:#161616; --layer-01:#262626; --layer-hover:#2e2e2e; --layer-active:#393939;
+  --border-subtle:#393939; --border-strong:#6f6f6f;
+  --text-primary:#f4f4f4; --text-secondary:#c6c6c6; --text-helper:#8d8d8d;
+  --text-placeholder:#6f6f6f; --text-on-color:#ffffff; --text-brand:#b69dff; --text-disabled:#525252;
+  --brand-bg:rgba(138,63,252,.18); --brand-line:rgba(138,63,252,.4);
+  --support-ok:#42be65; --support-warn:#f1c21b; --support-error:#fa4d56; --support-info:#4589ff;
+  --support-warn-graphic:#f1c21b;
+  --text-error:#ff8389; --text-warn:#f1c21b; --text-ok:#42be65;
+  --dirty-bg:rgba(241,194,27,.14); --dirty-line:rgba(241,194,27,.5); --support-ok-bg:rgba(66,190,101,.16); --support-error-bg:rgba(250,77,86,.16);
+  --kind-role:#6fc496;      --kind-role-tint:rgba(111,196,150,.12);
+  --kind-policy:#78afe0;    --kind-policy-tint:rgba(120,175,224,.12);
+  --kind-test:#a3afbd;      --kind-test-tint:rgba(163,175,189,.12);
+  --kind-workspace:#bb97de; --kind-workspace-tint:rgba(187,151,222,.12);
+}
+
+/* ── Reduced motion ──────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

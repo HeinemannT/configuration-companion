@@ -1,0 +1,450 @@
+/**
+ * Tests for BmpClient EC codegen paths that are version-sensitive.
+ *
+ * Specifically:
+ * - resolveRef(rid) version branches:
+ *     - supportsLookup === true  → `lookup(rid)`
+ *     - supportsLookup === false → `{ns}.{bid}` (via cache) or `{ns}.{bid}` (via binary identity fetch)
+ *     - cache miss + no identity → throws
+ * - saveCodeViaEc():
+ *     - escapes backslashes, double quotes, CR, LF
+ *     - dispatches to template vs instance (per saveTarget) — implemented at the
+ *       caller layer; here we verify it writes to whichever RID is passed in.
+ */
+import { describe, it, expect, vi } from 'vitest';
+import { mockChromeStorage } from './chrome-mock';
+
+interface CodegenHarness {
+  client: any;
+  executeEcCalls: string[];
+  transportMock: ReturnType<typeof vi.fn>;
+}
+
+/** Answer TreeItemCommand posts like BMP does: one IntegrationObjectResponse
+ *  per command, in command order; an unknown rid has no TreeNodeInformationDto. */
+function mockTreeItems(client: any, known: Record<string, { businessId: string; type: string; name: string }>, failing = new Set<string>()) {
+  const posts: string[][] = [];
+  client.transport.sendCommands = vi.fn(async (commands: Array<{ rid: { value: bigint } }>) => {
+    posts.push(commands.map(c => String(c.rid.value)));
+    return new ArrayBuffer(0);
+  });
+  client.transport.deserializeStream = vi.fn(() => posts[posts.length - 1].some(rid => failing.has(rid))
+    ? [{ $class: 'com.corporater.bmp.base.system.exception.ServerExceptionResponse', message: 'ObjectProfileMappingImpl cannot be cast' }]
+    : [{
+    $class: 'java.util.ArrayList',
+    $elements: posts[posts.length - 1].map(rid => known[rid]
+      ? { $class: 'IntegrationObjectResponse', response: { $class: 'com.corporater.bmp.dto.TreeNodeInformationDto', rid: { identifier: rid }, id: known[rid].businessId, text: known[rid].name, type: { typeId: known[rid].type } } }
+      : { $class: 'IntegrationObjectResponse', response: null }),
+    }]);
+  return posts;
+}
+
+async function createClientHarness(): Promise<CodegenHarness> {
+  mockChromeStorage();
+  const { BmpClient } = await import('../bmp-client');
+  const client = new BmpClient('https://bmp.test/', 'admin', 'pass', 'p1');
+
+  const transportMock = vi.fn<(...args: any[]) => Promise<any[]>>();
+  (client as any).transport = {
+    sendStreamingCommand: transportMock,
+    sendCommands: vi.fn(),
+    sendRequest: vi.fn(),
+    deserializeResponse: vi.fn(),
+    formatError: (e: unknown) => e instanceof Error ? e.message : String(e),
+  };
+  (client as any).auth = {
+    sessionEpoch: 0,
+    assertAuthEpoch: vi.fn(),
+    ensureAuth: vi.fn(async () => 'mock-jwt'),
+    login: vi.fn(async () => 'mock-jwt'),
+    logout: vi.fn(),
+    invalidateLoginTicket: vi.fn(),
+    refreshLoginTicket: vi.fn(async () => 'mock-ticket'),
+    recoverAuth: vi.fn(async () => 'mock-jwt'),
+    absorbAuth: vi.fn(),
+    refreshAuth: vi.fn(async () => null),
+    _jwt: 'mock-jwt',
+  };
+
+  // Capture every EC code string that goes through executeEc()
+  const executeEcCalls: string[] = [];
+  const realExecuteEc = client.executeEc.bind(client);
+  client.executeEc = vi.fn(async (code: string, objectRid?: string, transactional = false) => {
+    executeEcCalls.push(code);
+    return realExecuteEc(code, objectRid, transactional);
+  });
+
+  return { client, executeEcCalls, transportMock };
+}
+
+describe('BmpClient.resolveRef — version branches', () => {
+  it('supportsLookup === true → lookup(rid)', async () => {
+    const { client } = await createClientHarness();
+    client.applyVersionFlags('5.6.7.2');
+    expect(client.supportsLookup).toBe(true);
+
+    const ref = await client.resolveRef('1234567890123456789');
+    expect(ref).toBe('lookup(1234567890123456789)');
+  });
+
+  it('supportsLookup === null verifies support before generating lookup(rid)', async () => {
+    const { client } = await createClientHarness();
+    // No version flags applied → supportsLookup is null
+    expect(client.supportsLookup).toBeNull();
+    client.executeEc.mockResolvedValue({ ok: true, log: 'CREV_LOOKUP_SUPPORTED' });
+
+    const ref = await client.resolveRef('111');
+    expect(ref).toBe('lookup(111)');
+    expect(client.supportsLookup).toBe(true);
+  });
+
+  it('supportsLookup === false + cache hit → namespace prefix + businessId', async () => {
+    const { client } = await createClientHarness();
+    client.assumeOldBmp();
+    expect(client.supportsLookup).toBe(false);
+
+    // Inject cache that knows the businessId + type
+    client.cache = {
+      get: vi.fn((_rid: string) => ({ businessId: 'sc_main', type: 'Scorecard' })),
+    };
+
+    const ref = await client.resolveRef('111');
+    // Scorecard isn't in NAMESPACE_MAP → falls back to 't'
+    expect(ref).toContain('LIST(t.get("sc_main")).filter(str(rid) = "111").first()');
+  });
+
+  it('supportsLookup === false + cache hit for ExtendedMethodConfig → k.{bid}', async () => {
+    const { client } = await createClientHarness();
+    client.assumeOldBmp();
+    client.cache = {
+      get: vi.fn((_rid: string) => ({ businessId: 'pMyProp', type: 'ExtendedMethodConfig' })),
+    };
+
+    const ref = await client.resolveRef('111');
+    // ExtendedMethodConfig → "k" namespace
+    expect(ref).toContain('LIST(k.get("pMyProp")).filter(str(rid) = "111").first()');
+  });
+
+  it('supportsLookup === false + cache miss → binary identity fetch fallback', async () => {
+    const { client } = await createClientHarness();
+    client.assumeOldBmp();
+    client.cache = { get: vi.fn(() => undefined) };
+    mockTreeItems(client, { '999': { businessId: 'sc_fetched', type: 'Scorecard', name: 'Fetched' } });
+    const ref = await client.resolveRef('999');
+    expect(ref).toContain('LIST(t.get("sc_fetched")).filter(str(rid) = "999").first()');
+  });
+
+  it('fresh identity lookup evicts a pre-5.6.3 business-ID reference before verification', async () => {
+    const { client } = await createClientHarness();
+    client.assumeOldBmp();
+    let cached: { businessId: string; type: string } | undefined = {
+      businessId: 'old_id', type: 'Scorecard',
+    };
+    const invalidate = vi.fn(() => { cached = undefined; });
+    client.cache = { get: vi.fn(() => cached), invalidate };
+    mockTreeItems(client, { '9007199254740993': { businessId: 'new_id', type: 'Scorecard', name: 'Renamed' } });
+    client.batchEnrich = vi.fn(async (rids: string[]) => {
+      expect(await client.resolveRef(rids[0])).toContain('LIST(t.get("new_id")).filter(str(rid) = "9007199254740993").first()');
+      return { results: { [rids[0]]: { businessId: 'new_id', name: 'Renamed' } } };
+    });
+    await expect(client.lookupIdentity('9007199254740993', { fresh: true })).resolves.toMatchObject({
+      businessId: 'new_id',
+    });
+    expect(invalidate).toHaveBeenCalledWith('9007199254740993');
+  });
+
+  it('supportsLookup === false + cache miss + identity fetch fails → throws', async () => {
+    const { client } = await createClientHarness();
+    client.assumeOldBmp();
+    client.cache = { get: vi.fn(() => undefined) };
+    mockTreeItems(client, {});
+    await expect(client.resolveRef('999')).rejects.toThrow(/Cannot resolve object 999/);
+  });
+
+  it('rejects non-numeric RIDs (EC injection guard)', async () => {
+    const { client } = await createClientHarness();
+    await expect(client.resolveRef('1; evil()')).rejects.toThrow(/Invalid RID/);
+    await expect(client.resolveRef('abc')).rejects.toThrow(/Invalid RID/);
+    await expect(client.resolveRef('')).rejects.toThrow(/Invalid RID/);
+  });
+
+  it('accepts negative RIDs (valid Java long)', async () => {
+    const { client } = await createClientHarness();
+    client.applyVersionFlags('5.6.7.2');
+    const ref = await client.resolveRef('-7302918475028293741');
+    expect(ref).toBe('lookup(-7302918475028293741)');
+  });
+});
+
+describe('BmpClient.applyVersionFlags', () => {
+  it('5.6.3+ enables lookup', async () => {
+    const { client } = await createClientHarness();
+    client.applyVersionFlags('5.6.3.0');
+    expect(client.supportsLookup).toBe(true);
+  });
+
+  it('pre-5.6.3 disables lookup', async () => {
+    const { client } = await createClientHarness();
+    client.applyVersionFlags('5.6.2.99');
+    expect(client.supportsLookup).toBe(false);
+  });
+
+  it('strips leading "v." prefix from version string', async () => {
+    const { client } = await createClientHarness();
+    client.applyVersionFlags('v.5.6.7.2');
+    expect(client.supportsLookup).toBe(true);
+  });
+
+  it('assumeOldBmp() disables lookup', async () => {
+    const { client } = await createClientHarness();
+    client.assumeOldBmp();
+    expect(client.supportsLookup).toBe(false);
+  });
+});
+
+describe('BmpClient.saveCodeViaEc — escaping', () => {
+  async function captureSaveCode(client: any, code: string): Promise<string> {
+    // Mock executeEc to capture the EC string and short-circuit
+    let captured = '';
+    client.executeEc = vi.fn(async (ec: string) => {
+      captured = ec;
+      return { ok: true };
+    });
+    client.applyVersionFlags('5.6.7.2'); // ensure lookup() path is used
+    await client.saveCodeViaEc('1234567890123456789', 'expression', code);
+    return captured;
+  }
+
+  it('escapes backslashes', async () => {
+    const { client } = await createClientHarness();
+    const ec = await captureSaveCode(client, 'path \\ thing');
+    // Each \ in the source code becomes \\\\ in the EC literal
+    expect(ec).toContain('"path \\\\ thing"');
+  });
+
+  it('escapes double quotes', async () => {
+    const { client } = await createClientHarness();
+    const ec = await captureSaveCode(client, 'say "hi"');
+    expect(ec).toContain('"say \\"hi\\""');
+  });
+
+  it('escapes LF (regression: \\n in value must NOT break EC literal)', async () => {
+    const { client } = await createClientHarness();
+    const ec = await captureSaveCode(client, 'line1\nline2');
+    // The EC literal stays single-quoted-line — the inner LF becomes \n
+    expect(ec).toContain('"line1\\nline2"');
+    // The change line itself must still be a single EC statement
+    const changeLine = ec.split('\n').find(l => l.includes('_o.change'))!;
+    expect(changeLine).toContain('line1\\nline2');
+  });
+
+  it('escapes CR', async () => {
+    const { client } = await createClientHarness();
+    const ec = await captureSaveCode(client, 'a\rb');
+    expect(ec).toContain('"a\\rb"');
+  });
+
+  it('escapes tab-indented HTML and script bodies', async () => {
+    const { client } = await createClientHarness();
+    const code = '<div>Text</div>\n<script>\n\tdocument.body.dataset.ready = "yes";\n</script>';
+    const ec = await captureSaveCode(client, code);
+    const changeLine = ec.split('\n').find(l => l.includes('_o.change'))!;
+
+    expect(changeLine).toContain('<script>\\n\\tdocument.body.dataset.ready = \\"yes\\";\\n</script>');
+    expect(changeLine).not.toContain('\t');
+  });
+
+  it('order-of-escapes: backslash escape happens first (no double-escape of injected backslashes)', async () => {
+    const { client } = await createClientHarness();
+    // Single backslash before quote: the user wrote \" — should become \\" in EC
+    const ec = await captureSaveCode(client, '\\"');
+    // Source: \  "    → after \-escape: \\  "  → after "-escape: \\  \"
+    expect(ec).toContain('"\\\\\\""');
+  });
+
+  it('uses lookup(rid) reference under supportsLookup=true', async () => {
+    const { client } = await createClientHarness();
+    const ec = await captureSaveCode(client, 'test');
+    expect(ec).toContain('_o := lookup(1234567890123456789)');
+    expect(ec).toContain('_o.change(expression := "test")');
+  });
+
+  it('uses namespace.bid reference under supportsLookup=false', async () => {
+    const { client } = await createClientHarness();
+    client.assumeOldBmp();
+    client.cache = { get: vi.fn(() => ({ businessId: 'sc_main', type: 'Scorecard' })) };
+
+    let captured = '';
+    client.executeEc = vi.fn(async (ec: string) => { captured = ec; return { ok: true }; });
+    await client.saveCodeViaEc('1234567890123456789', 'expression', 'test');
+
+    expect(captured).toContain('_o := LIST(t.get("sc_main")).filter(str(rid) = "1234567890123456789").first()');
+    expect(captured).toContain('_o.change(expression := "test")');
+  });
+});
+
+describe('BmpClient.saveCodeViaEc — template vs instance routing', () => {
+  // saveCodeViaEc takes the resolved RID directly; the template-vs-instance
+  // decision is made by the *caller* (which uses saveTarget to pick which RID
+  // to pass). We assert that whatever RID is passed is what saveCodeViaEc
+  // writes to.
+  it('writes to whichever RID is passed (instance RID)', async () => {
+    const { client } = await createClientHarness();
+    client.applyVersionFlags('5.6.7.2');
+    let captured = '';
+    client.executeEc = vi.fn(async (ec: string) => { captured = ec; return { ok: true }; });
+
+    await client.saveCodeViaEc('1111', 'expression', 'inst');
+    expect(captured).toContain('_o := lookup(1111)');
+  });
+
+  it('writes to whichever RID is passed (template RID)', async () => {
+    const { client } = await createClientHarness();
+    client.applyVersionFlags('5.6.7.2');
+    let captured = '';
+    client.executeEc = vi.fn(async (ec: string) => { captured = ec; return { ok: true }; });
+
+    await client.saveCodeViaEc('2222', 'expression', 'tmpl');
+    expect(captured).toContain('_o := lookup(2222)');
+  });
+
+  it('uses the property name verbatim (html / javascript / expression)', async () => {
+    const { client } = await createClientHarness();
+    client.applyVersionFlags('5.6.7.2');
+
+    for (const prop of ['expression', 'html', 'javascript']) {
+      let captured = '';
+      client.executeEc = vi.fn(async (ec: string) => { captured = ec; return { ok: true }; });
+      await client.saveCodeViaEc('111', prop, 'x');
+      expect(captured).toContain(`_o.change(${prop} := "x")`);
+    }
+  });
+
+  it('returns { ok: false } with error text when EC fails', async () => {
+    const { client } = await createClientHarness();
+    client.applyVersionFlags('5.6.7.2');
+    client.executeEc = vi.fn(async () => ({ ok: false, error: 'permission denied' }));
+    const result = await client.saveCodeViaEc('111', 'expression', 'x');
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe('permission denied');
+  });
+});
+
+describe('pre-5.6.3 identity lookups share posts (supportsLookup false)', () => {
+  const rids = Array.from({ length: 25 }, (_, i) => String(9007199254740993n + BigInt(i)));
+  const known = Object.fromEntries(rids.map((rid, i) => [rid, { businessId: `obj_${i}`, type: 'Scorecard', name: `Object ${i}` }]));
+  // The badge EC itself is not under test here, only how its refs were resolved.
+  const ok = () => ({ ok: true, log: '', hasError: false, hasWarning: false });
+
+  it('resolves 25 rids with one TreeItem post instead of one per rid', async () => {
+    const { client } = await createClientHarness();
+    client.assumeOldBmp();
+    client.cache = { get: vi.fn((rid: string) => rid === rids[0] ? { businessId: 'cached_0', type: 'Scorecard' } : undefined) };
+    const posts = mockTreeItems(client, known);
+    const refs = await client.resolveRefs(rids);
+    expect(posts).toEqual([rids.slice(1)]);
+    expect(refs.get(rids[0])).toContain(`LIST(t.get("cached_0")).filter(str(rid) = "${rids[0]}")`);
+    for (const [i, rid] of rids.slice(1).entries()) {
+      expect(refs.get(rid)).toContain(`LIST(t.get("obj_${i + 1}")).filter(str(rid) = "${rid}")`);
+    }
+  });
+
+  it('badges need no reference at all: one constant script, the object as the context', async () => {
+    const { client } = await createClientHarness();
+    client.assumeOldBmp();
+    client.cache = { get: vi.fn(() => undefined) };
+    const posts = mockTreeItems(client, known);
+    const calls: Array<[string, string | undefined]> = [];
+    client.executeEc = vi.fn(async (code: string, rid?: string) => { calls.push([code, rid]); return ok(); });
+    await client.batchEnrich(rids);
+    expect(posts).toEqual([]);
+    expect(new Set(calls.map(c => c[0])).size).toBe(1);
+    expect(calls.map(c => c[1]).sort()).toEqual([...rids].sort());
+    expect(calls[0][0]).toContain('_o := this.object');
+  });
+
+  it('isolates an object BMP cannot read and gives it the error a post of its own gives', async () => {
+    const { client } = await createClientHarness();
+    client.assumeOldBmp();
+    client.cache = { get: vi.fn(() => undefined) };
+    const bad = rids[7];
+    const posts = mockTreeItems(client, known, new Set([bad]));
+    const refs = await client.resolveRefs(rids);
+    expect(refs.get(bad)).toBeInstanceOf(Error);
+    expect((refs.get(bad) as Error).message).toBe('ObjectProfileMappingImpl cannot be cast');
+    for (const rid of rids) if (rid !== bad) expect(refs.get(rid)).toContain(`filter(str(rid) = "${rid}")`);
+    // Halving, never a post per rid: well under 25.
+    expect(posts.length).toBeLessThan(rids.length);
+    // Single-rid path agrees with the batched one.
+    await expect(client.resolveRef(bad)).rejects.toThrow('ObjectProfileMappingImpl cannot be cast');
+  });
+
+  it('reports an unknown rid as not found and keeps the others', async () => {
+    const { client } = await createClientHarness();
+    client.assumeOldBmp();
+    client.cache = { get: vi.fn(() => undefined) };
+    mockTreeItems(client, { [rids[0]]: known[rids[0]] });
+    const refs = await client.resolveRefs([rids[0], '424242']);
+    expect(refs.get(rids[0])).toContain('t.get("obj_0")');
+    expect((refs.get('424242') as Error).message).toBe('Cannot resolve object 424242: not found on server');
+  });
+
+  it('fails every rid with the connection error and never splits it', async () => {
+    const { client } = await createClientHarness();
+    client.assumeOldBmp();
+    client.cache = { get: vi.fn(() => undefined) };
+    client.transport.sendCommands = vi.fn(async () => { throw new Error('Cannot reach BMP at https://bmp.test/'); });
+    const refs = await client.resolveRefs(rids.slice(0, 3));
+    expect(client.transport.sendCommands).toHaveBeenCalledTimes(1);
+    for (const rid of rids.slice(0, 3)) expect((refs.get(rid) as Error).message).toBe('Cannot reach BMP at https://bmp.test/');
+  });
+});
+
+describe('BmpClient write outcome when the answer is lost', () => {
+  async function transportError(kind: string, attempts: number) {
+    const { BmpTransportError } = await import('../bmp-transport');
+    return new BmpTransportError(`BMP ${kind}`, kind as never, attempts);
+  }
+
+  it('a transactional run that timed out or lost its connection after sending is outcome-unknown', async () => {
+    const { client, transportMock } = await createClientHarness();
+    transportMock.mockRejectedValueOnce(await transportError('timeout', 1));
+    await expect(client.executeEc('_o.change(x := 1)', undefined, true)).resolves.toMatchObject({ ok: false, errorKind: 'timeout', outcomeUnknown: true });
+    transportMock.mockRejectedValueOnce(await transportError('network', 1));
+    await expect(client.executeEc('_o.change(x := 1)', undefined, true)).resolves.toMatchObject({ ok: false, errorKind: 'network', outcomeUnknown: true });
+  });
+
+  it('a failure before the request left, a read, or a server error is not', async () => {
+    const { client, transportMock } = await createClientHarness();
+    transportMock.mockRejectedValueOnce(await transportError('network', 0));
+    expect((await client.executeEc('x', undefined, true)).outcomeUnknown).toBeUndefined();
+    transportMock.mockRejectedValueOnce(await transportError('timeout', 1));
+    expect((await client.executeEc('x', undefined, false)).outcomeUnknown).toBeUndefined();
+    transportMock.mockRejectedValueOnce(await transportError('http', 1));
+    expect((await client.executeEc('x', undefined, true)).outcomeUnknown).toBeUndefined();
+  });
+
+  it('saveCodeViaEc passes the flag on and still sends the same script', async () => {
+    const { client } = await createClientHarness();
+    let captured = '';
+    (client as any).executeEc = vi.fn(async (ec: string) => { captured = ec; return { ok: false, error: 'timed out', errorKind: 'timeout', outcomeUnknown: true }; });
+    client.applyVersionFlags('5.6.7.2');
+    await expect(client.saveCodeViaEc('9007199254740993', 'expression', '_sum := 2 + 3'))
+      .resolves.toEqual({ ok: false, error: 'timed out', outcomeUnknown: true });
+    expect(captured).toBe('_o := lookup(9007199254740993)\n_o.change(expression := "_sum := 2 + 3")');
+  });
+});
+
+describe('BmpClient.applyIdentityChanges — an ID-only edit', () => {
+  it('previews and writes only the ID: the name is not in the generated command', async () => {
+    const { client } = await createClientHarness();
+    const scripts: Array<[string, boolean]> = [];
+    (client as any).executeEc = vi.fn(async (ec: string, _rid?: string, tx = false) => { scripts.push([ec, tx]); return { ok: true, log: '' }; });
+    client.applyVersionFlags('5.6.7.2');
+    await expect(client.applyIdentityChanges('9007199254740993', { businessId: 'crev_qa_btn_after_b14' })).resolves.toEqual({ ok: true, writeAttempted: true });
+    expect(scripts).toEqual([
+      ['_o := lookup(9007199254740993)\n_o.change(id := "crev_qa_btn_after_b14")', false],
+      ['_o := lookup(9007199254740993)\n_o.change(id := "crev_qa_btn_after_b14")', true],
+    ]);
+  });
+});

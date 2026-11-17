@@ -1,0 +1,53 @@
+/* Side panel rules used by more than one tab (empty states, mono text) and
+ * legacy rules whose class names still appear in src/ outside the pages that
+ * load this sheet. */
+
+/* ── Layout tree (Page tab — TabSet / Tab / Container view) ─────
+ * Renders the layout subtree for any object that owns a grid. Each row
+ * is name + visual 6-col bar + numeric size. The bar doubles as an
+ * inline-edit affordance (click → number input).
+ */
+
+.layout-tree {
+  margin: var(--space-xs) 0 var(--space-3);
+  font-size: var(--text-xs);
+  border: 1px solid var(--surface-3);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  padding: var(--space-1);
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.layout-tree { position: relative; }
+
+.layout-size {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  cursor: ew-resize;
+  padding: 1px var(--space-1);
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+  touch-action: none; /* prevent the browser from interpreting horizontal drags as scroll/zoom */
+  user-select: none;
+}
+
+.layout-size:hover { background: var(--surface-3); }
+
+/* ── Empty state ───────────────────────────────── */
+
+.empty-state {
+  text-align: center;
+  padding: 28px var(--space-4);
+  color: var(--text-2);
+  font-size: var(--text-base);
+}
+
+/* ── Shared object rows and fields (object window, editors) ─── */
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+

@@ -1,0 +1,167 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`sends the same access-test request for a prepared check 1`] = `"{"operation":"trace","request":{"resource_rid":"8000000000000000001","subject_rid":"9000000000000000001","action":"UPDATE","proposed":{"type":"CeRiskAssessment","properties":{"name":"Prepared change"}}}}"`;
+
+exports[`sends the same apply payload for representative policy edits 1`] = `
+"{
+ "roles": [
+  {
+   "rid": "9000000000000000001",
+   "id": "risk_review",
+   "name": "Risk review",
+   "parent": ""
+  }
+ ],
+ "scope": [
+  {
+   "rid": "9000000000000000002",
+   "id": "risk_owners",
+   "name": "Risk owners",
+   "parent": "9000000000000000001",
+   "kind": "RoleAssignment",
+   "source": "CeRiskAssessment",
+   "field": "owners"
+  },
+  {
+   "rid": "9000000000000000003",
+   "id": "related_controls",
+   "name": "Related controls",
+   "parent": "9000000000000000002",
+   "kind": "InwardsReferenceRoleDelegationRule",
+   "source": "",
+   "field": "CeControlMeasure.relatedRisk",
+   "referenceConfig": "9000000000000000901"
+  }
+ ],
+ "policies": [
+  {
+   "rid": "9000000000000000004",
+   "id": "risk_review_policy",
+   "name": "Risk review access",
+   "parent": "",
+   "enabled": false,
+   "content": {
+    "Version": "1.0",
+    "Statement": [
+     {
+      "Effect": "Allow",
+      "Subject": [
+       "role:risk_review"
+      ],
+      "Action": [
+       "Read",
+       "Delete"
+      ],
+      "Resource": {
+       "Any": [
+        {
+         "Condition": {
+          "Left": "resource.type",
+          "Comparison": "=",
+          "Right": "CeRiskAssessment"
+         }
+        },
+        {
+         "Condition": {
+          "Left": "resource.scope",
+          "Comparison": "ContainsAny",
+          "Right": [
+           "ListPropertySetItem:scope_global",
+           "ListPropertySetItem:scope_regional",
+           "ListPropertySetItem:removed"
+          ]
+         }
+        }
+       ]
+      }
+     },
+     {
+      "Effect": "Deny",
+      "Subject": [
+       "role:risk_review"
+      ],
+      "Action": [
+       "Read"
+      ],
+      "Resource": {
+       "All": [
+        {
+         "All": [
+          {
+           "Condition": {
+            "Left": "resource.type",
+            "Comparison": "=",
+            "Right": "CeRiskAssessment"
+           }
+          },
+          {
+           "Condition": {
+            "Left": "resource.scope",
+            "Comparison": "ContainsAny",
+            "Right": [
+             "ListPropertySetItem:scope_global",
+             "ListPropertySetItem:scope_regional",
+             "ListPropertySetItem:removed"
+            ]
+           }
+          }
+         ]
+        },
+        {
+         "Condition": {
+          "Left": "resource.status",
+          "Comparison": "!=",
+          "Right": "Retired",
+          "Extra": [
+           1,
+           "two"
+          ]
+         },
+         "description": "kept here"
+        }
+       ]
+      },
+      "X-Note": {
+       "kept": true
+      }
+     },
+     {
+      "Effect": "Allow",
+      "Subject": [
+       "role:risk_review"
+      ],
+      "Action": [
+       "Read",
+       "Delete"
+      ],
+      "Resource": {
+       "Any": [
+        {
+         "Condition": {
+          "Left": "resource.type",
+          "Comparison": "=",
+          "Right": "CeRiskAssessment"
+         }
+        },
+        {
+         "Condition": {
+          "Left": "resource.scope",
+          "Comparison": "ContainsAny",
+          "Right": [
+           "ListPropertySetItem:scope_global",
+           "ListPropertySetItem:scope_regional",
+           "ListPropertySetItem:removed"
+          ]
+         }
+        }
+       ]
+      }
+     }
+    ]
+   }
+  }
+ ],
+ "globals": [],
+ "folders": []
+}"
+`;
