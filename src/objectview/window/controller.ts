@@ -882,11 +882,14 @@ export class ObjectWindowController {
     if (this.saving || !this.draft.count()) return;
     const objects = this.objects();
     const items = this.draft.items();
-    const tpl = templateRidOf(this.base?.payload?.root);
+    const root = this.base?.payload?.root;
+    const tpl = templateRidOf(root);
     const describe = (rid: string) => {
       const o = objects[rid];
       const kind = o ? (typeInfo(o.type).label || o.type) : '';
-      return { rid, name: o?.name || o?.businessId || '', kind: rid === tpl ? `${kind} · template` : kind };
+      // Where the change is written: the template, or this instance of it.
+      const where = rid === tpl ? ' · template' : tpl && rid === root?.rid ? ' · this instance' : '';
+      return { rid, name: o?.name || o?.businessId || '', kind: `${kind}${where}` };
     };
     const label = (rid: string, prop: string) => {
       const custom = isCustomKey(prop) && objects[rid] ? this.customModel(objects[rid], prop)?.model : undefined;

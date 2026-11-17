@@ -58,3 +58,18 @@ describe('extendedCompletions — namespace prefix suppression', () => {
     expect(r!.options.length).toBeGreaterThan(0);
   });
 });
+
+describe('extendedCompletions: after `root.`', () => {
+  it('offers the root sections before the methods and keeps the list while typing on', () => {
+    const result = completeAfterDot('root.');
+    const labels = result!.options.map(o => o.label);
+    expect(labels.slice(0, 2)).toEqual(['organisation', 'templateCategory']);
+    expect(labels).toContain('ceRiskAssessment');
+    expect(labels).toContain('children');
+    expect((result!.validFor as RegExp).test('organ')).toBe(true);
+  });
+
+  it('offers no root sections after another receiver', () => {
+    expect(completeAfterDot('_x.')!.options.map(o => o.label)).not.toContain('organisation');
+  });
+});

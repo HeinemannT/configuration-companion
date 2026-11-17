@@ -140,3 +140,11 @@ it('bounds principal results and gives exact IDs a separate first pass without d
   expect(result.choices).toHaveLength(80); expect(result.hasMore).toBe(true);
   expect(result.choices[0].id).toBe('user19999');
 });
+it('builds the object search rows per object and joins them once, as plain text', async () => {
+  const { client, calls } = contextClient(code => code.includes('root.organisation.rid') ? [['organisation', '101']] : []);
+  await searchAccessObjects(client, '');
+  const code = calls.find(c => c.rid)!.code;
+  expect(code).toContain('_rs := _m.calculate(');
+  expect(code).toContain('_accessResult := str(_rs.join(""))');
+  expect(code).not.toContain('_out := _out +');
+});

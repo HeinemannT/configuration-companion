@@ -1234,7 +1234,7 @@ export function mountWorkspace({
     const kind = state.kind,
       count = kind === 'role' ? descendants(r.rid).length : 0;
     dialog('Delete ' + kind,
-      `<p>Remove ${esc(r.name)}${count?' and '+count+' assignment/delegation definitions':''} from the unsaved changes?</p>`, 'Delete',
+      `<p>Delete ${esc(r.name)}${count?' and '+count+' assignment/delegation definitions':''}? Nothing changes in BMP until you save.</p>`, 'Delete',
     () => {
         commit(() => {
           if (kind === 'role') {
@@ -2462,7 +2462,8 @@ export function mountWorkspace({
     if (!inTree) {
       popup(anchor, button('edit', 'context-edit-id', 'Edit ID', attr) +
         button('copy', 'context-copy-id', 'Copy ID', attr) + button('copy', 'context-copy-rid', 'Copy RID', attr) +
-        (kind === 'role' ? '<hr>' + button('search', 'context-find', 'Find policies using role', attr) : ''));
+        (kind === 'role' ? '<hr>' + button('search', 'context-find', 'Find policies using role', attr) : '') +
+        '<hr>' + button('copy', 'context-duplicate', 'Duplicate ' + kind, attr) + button('trash', 'context-delete', 'Delete ' + kind, attr));
       return;
     }
     popup(anchor, (kind === 'role' ? button('plus', 'context-new-child', 'New role underneath', attr) + button('fieldAssignment',
@@ -2883,7 +2884,10 @@ export function mountWorkspace({
     const list = xs => xs.join(', ').replace(/, ([^,]*)$/, ' and $1');
     const held = as || globals ? 'Held through ' + [as ? plural(as, 'field assignment', 'field assignments') : '', globals ? plural(globals, 'user or group', 'users or groups') : ''].filter(Boolean).join(' and ') + '.' : isEveryoneRole(r) ? EVERY_USER_HOLDS : 'No one holds this role yet.';
     const granted = [always.length ? 'May ' + list(always) : '', some.length ? (always.length ? '' : 'May ') + list(some) + ' on some objects' : ''].filter(Boolean).join('; ');
-    const may = !granted ? 'Nothing grants it anything.' : granted + (none.length ? '; ' + list(none) + ': Not granted.' : '.');
+    // A role with no statement of its own still gets what is granted to everyone: say so, or a new
+    // role reads as if it had been given access.
+    const onlyEveryone = !!granted && !isEveryoneRole(r) && groups.every(g => g.origin === 'everyone' || !g.rows.some(x => x.counted));
+    const may = !granted ? 'Nothing grants it anything.' : granted + (onlyEveryone ? ', only through grants to everyone' : '') + (none.length ? '; ' + list(none) + ': Not granted.' : '.');
     return `<p class="rp-summary">${esc(held + ' ' + may)}</p>`;
   }
 

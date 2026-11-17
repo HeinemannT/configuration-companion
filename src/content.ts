@@ -17,7 +17,6 @@ import { parseInterceptorMessage } from './lib/validate-inbound';
 import { showToast } from './lib/toast';
 import { installPageShowInLog } from './lib/show-in-log';
 import { copyWithToast } from './lib/copy-feedback';
-import { broadcast, onSync, teardownCrossTab } from './lib/cross-tab';
 import { ensureOverlayStyle, OVERLAY_STYLE_ID } from './content-overlay-style';
 
 import { ContentState } from './content-state';
@@ -197,13 +196,9 @@ function wasInspecting(): boolean {
 
 function setInspectMode(active: boolean) {
   s.inspectActive = active;
-  // Persist only AUTHORITATIVE state (SW push / local toggle), not state driven
-  // by a cross-tab sync. SW inspect state is per-window but the crev_sync_inspect
-  // broadcast is per-origin, so a window-A toggle can flip a same-origin tab in
-  // window B (whose SW says off). Persisting that would make the optimistic
-  // boot-restore repaint the wrong state after a re-injection; skipping the
-  // persist lets window B's SW reconcile to its real (off) state instead.
-  if (!s.fromSync) persistInspect(active);
+  // Inspect is per window: the service worker is the only source of this state (it pushes to every
+  // page of the toggled window), so pages do not sync it between themselves.
+  persistInspect(active);
   if (active) {
     injectStyles();
     syncInspectSurface();
@@ -416,7 +411,6 @@ onPortMessage((msg: InspectorMessage) => {
   switch (msg.type) {
     case 'INSPECT_STATE':
       setInspectMode(msg.active);
-      if (!s.fromSync) broadcast('crev_sync_inspect', { active: msg.active });
       break;
     // Blueprint: BLUEPRINT_STATE arrives via the one-shot channel (oneShotMessageListener), and
     // LAYOUT_LOAD/APPLY are request/response via sendRequest (content-blueprint/service.ts) — neither
@@ -482,16 +476,6 @@ onReconnect(() => {
   // Don't syncOverlays here — the SW sends INSPECT_STATE on port connect,
   // which triggers setInspectMode() → syncOverlays(). Calling it here
   // would race against the message and run with stale s.inspectActive.
-});
-
-// ── Cross-tab sync ───────────────────────────────────────────────
-
-onSync('crev_sync_inspect', (data) => {
-  const d = data as { active: boolean };
-  if (d.active !== s.inspectActive) {
-    s.fromSync = true;
-    try { setInspectMode(d.active); } finally { s.fromSync = false; }
-  }
 });
 
 // ── Context menu RID tracking ────────────────────────────────────
@@ -730,12 +714,11 @@ function resetContentState() {
  *  ContentState + lifetime-bound document listeners; the rest tears down
  *  the module-scoped registrations that resetContentState() can't see
  *  (they live in other modules' closures): the one-shot message listener,
- *  the reconnecting port, and the cross-tab storage subscriptions. */
+ *  and the reconnecting port. */
 function teardown() {
   resetContentState();
   try { chrome.runtime.onMessage.removeListener(oneShotMessageListener); } catch (e) { log.swallow('content:teardown:onMessage', e); }
   try { disconnectPort(); } catch (e) { log.swallow('content:teardown:port', e); }
-  try { teardownCrossTab(); } catch (e) { log.swallow('content:teardown:crossTab', e); }
 }
 
 // Guard against double injection. A re-injection re-runs this file in the

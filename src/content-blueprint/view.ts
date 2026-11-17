@@ -870,7 +870,7 @@ function moveMenu(widgetId: string, r: Rect): HTMLElement {
   const panel = document.createElement('div'); panel.className = 'bp-pick bp-move';
   panel.style.left = `${Math.min(Math.max(4, r.left), window.innerWidth - 280)}px`;
   panel.style.top = `${Math.min(Math.max(40, r.top - 8), window.innerHeight - 360)}px`;
-  const head = document.createElement('div'); head.className = 'bp-pick-h'; head.textContent = `Move "${cur?.node.name ?? ''}" to`;
+  const head = document.createElement('div'); head.className = 'bp-pick-h'; head.textContent = `Move "${cur?.node.name ?? ''}" to the end of`;
   const list = document.createElement('div'); list.className = 'bp-pick-list';
   const dragged = cur?.node ?? null;
   for (const tab of m.tabs) {
@@ -896,6 +896,7 @@ function addDest(list: HTMLElement, dest: LNode, label: string, widgetId: string
   const isTab = dest.kind === 'tab';
   const row = pickRow(label, isTab ? 'tab' : 'container', () => moveTo(widgetId, dest.id));
   // Hierarchy: tabs are the headers; nested containers are smaller, lighter, and indented under them.
+  row.title = `Puts it last in ${label}. Drag it afterwards for another place.`;
   row.classList.add(isTab ? 'bp-mv-tab' : 'bp-mv-cont');
   if (!isTab) row.style.paddingLeft = `${10 + depth * 13}px`;
   list.appendChild(row);

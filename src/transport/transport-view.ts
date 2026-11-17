@@ -62,7 +62,7 @@ export const DEPTH_CAP = 6;
 /** The one sentence above the comparison script. */
 export const PROBE_LEAD = 'Run each part with Preview on the target, then paste the whole answer of every part below.';
 /** The empty transport. */
-export const EMPTY_TRANSPORT = 'Nothing in the transport yet. Tick objects under Find.';
+export const EMPTY_TRANSPORT = 'Nothing in the transport yet. Tick objects under Find. A transport carries objects from this workspace to another one: choose a target and compare. Nothing is written to the target until you apply.';
 /** The target picker's choices without a connection. */
 export const PASTE_TARGET = 'Another workspace: compare by pasted script';
 export const ANY_TARGET = 'Another workspace: scripts only, no comparison';

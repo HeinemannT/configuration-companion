@@ -278,7 +278,9 @@ async function finishHits(port: NameCommandPort, caps: CommandCapabilities, q: s
   }
   const objects = route.command.flatMap(t => byType.get(t) ?? []);
   const notes = [
-    ...(cut ? [`Showing the first ${objects.length}. Type more to narrow.`] : []),
+    // No number: the cut is per type, and the list also holds rows from other sources, so a count
+    // here would not match the count the list shows.
+    ...(cut ? ['More objects match than are listed. Type more to narrow.'] : []),
     ...(idsFailed ? ['IDs could not be read, so the list shows names only.'] : []),
   ];
   return { objects, catalogTypes: route.catalog, ...(notes.length ? { notice: notes.join(' ') } : {}) };

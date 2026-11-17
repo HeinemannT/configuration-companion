@@ -568,11 +568,11 @@ export function renderChip(ctx: BlueprintCtx, pending: number): HTMLElement {
   trayB.classList.add('bp-pending'); if (pending) trayB.classList.add('has');
   trayB.setAttribute('aria-label', trayB.title); trayB.setAttribute('aria-expanded', String(bp.trayOpen));
   if (bp.trayOpen) trayB.classList.add('on'); c.appendChild(trayB);
-  // Discard is a two-step confirm on the SAME button: first click arms ("Sure?"), a second within a few
+  // Discard is a two-step confirm on the SAME button: first click arms, a second within a few
   // seconds discards. Non-intrusive — no modal — and it auto-disarms. A zero-pending render clears any arm.
   if (pending === 0 && bp.discardArm) disarmDiscard();
   const armed = bp.discardArm;
-  const discardB = mkBtn(armed ? 'Sure?' : 'Discard', armed ? discard : armDiscard);
+  const discardB = mkBtn(armed ? 'Click again to discard' : 'Discard', armed ? discard : armDiscard);
   const applyPhase = bp.applySession?.state.phase;
   const applyBusy = applyPhase === 'preparing' || applyPhase === 'applying';
   discardB.disabled = pending === 0 || applyBusy;

@@ -16,7 +16,6 @@ describe('ContentState', () => {
     expect(s.inspectActive).toBe(false);
     expect(s.enrichMode).toBe('widgets');
     expect(s.styleInjected).toBe(false);
-    expect(s.fromSync).toBe(false);
     expect(s.prevConnDisplay).toBeNull();
     expect(s.lastDetection).toBeNull();
     expect(s.enrichments.size).toBe(0);
@@ -89,7 +88,6 @@ describe('ContentState', () => {
       s.inspectActive = true;
       s.enrichMode = 'widgets';
       s.styleInjected = true;
-      s.fromSync = true;
       s.prevConnDisplay = 'connected';
       s.lastDetection = { confidence: 0.9, signals: ['test'], isBmp: true };
       s.enrichments.set('rid1', { type: 'Scorecard' });
@@ -105,7 +103,6 @@ describe('ContentState', () => {
       expect(s.inspectActive).toBe(false);
       expect(s.enrichMode).toBe('widgets');
       expect(s.styleInjected).toBe(false);
-      expect(s.fromSync).toBe(false);
       expect(s.prevConnDisplay).toBeNull();
       expect(s.lastDetection).toBeNull();
       expect(s.enrichments.size).toBe(0);

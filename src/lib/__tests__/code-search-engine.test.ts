@@ -418,8 +418,8 @@ describe('code index by root', () => {
     await syncCodeIndex(client, store, 'e', { signal: new AbortController().signal, now: () => 1, listRows: 1 });
     expect(await store.get('e', '1000')).toMatchObject({ path: ['100'] });
     expect(await store.get('e', '1002')).toMatchObject({ path: ['100', '110'] });
-    expect(client.posts.flat().some(c => c.includes('_g := lookup(100)') && c.includes('organisation = _g') && c.includes('.forEach(_o:'))).toBe(true);
-    expect(client.posts.flat().some(c => c.includes('_g := lookup(110)') && c.includes('.forEach(_o:'))).toBe(true);
+    expect(client.posts.flat().some(c => c.includes('_g := lookup(100)') && c.includes('organisation = _g') && c.includes('_l.calculate('))).toBe(true);
+    expect(client.posts.flat().some(c => c.includes('_g := lookup(110)') && c.includes('_l.calculate('))).toBe(true);
   });
 });
 

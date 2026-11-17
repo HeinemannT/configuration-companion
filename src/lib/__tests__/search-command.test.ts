@@ -451,7 +451,7 @@ describe('object-name search: command first, catalogs as the fallback', () => {
     const f = fakeClient({ command: 'ok', extraHits: 40 });
     const r = await ask(f.client, 'risk');
     // The command's rows are counted; the catalogs add Report's.
-    expect(r.notice).toBe(`Showing the first ${r.objects.filter(o => o.type !== 'Report').length}. Type more to narrow.`);
+    expect(r.notice).toBe('More objects match than are listed. Type more to narrow.');
     expect(r.objects.filter(o => o.type === 'InputView')).toHaveLength(25);
     // "x_risk" matches only by ID and is ranked with the name prefixes.
     expect(r.objects.map(o => o.rid)).toContain(ABOVE_2_53);

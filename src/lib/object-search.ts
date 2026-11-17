@@ -299,7 +299,7 @@ export interface ObjectSearchSources {
   /** What the index held when `local` answered (for the coverage line). */
   indexInfo?(): { objects: number; at: number | null } | null;
   /** The server search's line for the user after `server` answered (a cut:
-   *  "Showing the first 200. Type more to narrow."). */
+   *  "More objects match than are listed. Type more to narrow."). */
   serverNotice?(): string | null;
 }
 

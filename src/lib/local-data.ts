@@ -123,7 +123,6 @@ export const STORED_KEYS: readonly StoredKey[] = [
   // content scripts) and Companion pages' localStorage. Tab- or view-only state.
   { key: 'crev_bp_resume', match: 'exact', area: 'page', onProfile: 'keep', onReset: 'keep', what: 'Blueprint resume flag (page sessionStorage, one reload)' },
   { key: 'crev_inspect', match: 'exact', area: 'page', onProfile: 'keep', onReset: 'keep', what: 'Inspect on/off (page sessionStorage)' },
-  { key: 'crev_sync_inspect', match: 'exact', area: 'page', onProfile: 'keep', onReset: 'keep', what: 'Inspect sync between tabs (page localStorage)' },
 ];
 
 /** `crev_` text in the source that is not a storage key. */

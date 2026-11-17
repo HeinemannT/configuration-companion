@@ -7,8 +7,12 @@
 import { CompletionContext, CompletionResult, snippetCompletion } from '@codemirror/autocomplete'
 import type { ViewUpdate } from '@codemirror/view'
 import { EditorView } from '@codemirror/view'
-import { ID_SPACE_PREFIXES } from '../../lib/ec-grammar'
+import { CE_ROOT_SECTIONS, ID_SPACE_PREFIXES } from '../../lib/ec-grammar'
 import { LAMBDA_BIND_RE, isElementContext } from './typeInference'
+
+/** Sections of the model under `root`. */
+const ROOT_SECTIONS = ['organisation', 'templateCategory', 'page', 'portal', 'user', 'group', 'role', 'accessPolicy', 'classConfig', ...CE_ROOT_SECTIONS]
+
 
 interface CompletionDef {
   label: string
@@ -247,9 +251,17 @@ export function extendedCompletions(context: CompletionContext): CompletionResul
     const receiver = /(?:^|[^\w.])([A-Za-z]\w*)$/.exec(before)?.[1]
     if (receiver && ID_SPACE_PREFIXES.has(receiver)) return null
 
+    // `root.`: the sections of the model come first; the methods follow.
+    const sections = receiver === 'root'
+      ? ROOT_SECTIONS.map(label => ({ label, detail: 'root section', type: 'property', boost: 2 }))
+      : []
+
     return {
       from: pos,
+      // Typing on after the dot narrows this list instead of replacing it with the word list.
+      validFor: /^\w*$/,
       options: [
+        ...sections,
         ...READ_METHODS.map(m => ({ label: m.label, detail: m.detail, info: m.info, type: 'method' })),
         ...TABLE_METHODS.map(m => ({ label: m.label, detail: m.detail, info: m.info, type: 'method' })),
         ...TRANSACTIONAL_METHODS.map(m => ({ label: m.label, detail: m.detail, info: m.info, type: 'method' })),

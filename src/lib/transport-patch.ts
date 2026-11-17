@@ -28,7 +28,6 @@
  *    none.
  */
 
-import { EC_CHUNK } from './ec-parser';
 import { ecString } from './ec-guards';
 import {
   addressKey, argumentPairs, BUNDLE_PART_LIMIT, checkAddress, createSetsValues, createStatement, creationErrorDetail, ecSingleQuoted, exactTextEc, guardOf, idOfAddress, leftOutAndWarningLines,
@@ -328,35 +327,26 @@ function listingStart(address: string): string {
  *
  *     U <Class> <system> <size>:<ID> <size>:<parent ID> <size>:<name>
  *
- * then `K <count>`, or `K -1` when there is no object at `start`. Lines are gathered in a chunk flushed every 20,
- * so a long listing is not copied once per line.
+ * then `K <count>`, or `K -1` when there is no object at `start`. One line per object, joined once, so a
+ * long listing is not copied once per line.
  */
 function listingStatement(start: string): string {
-  const i1 = INDENT, i2 = INDENT.repeat(2), i3 = INDENT.repeat(3);
+  const i1 = INDENT, i2 = INDENT.repeat(2);
   const framed = (v: string) => `str(${v}.size()) + ":" + ${v}`;
   return [
-    `${EC_CHUNK} := ""`,
-    '_k := 0',
-    '_j := 0',
     `IF ${start} = MISSING THEN`,
     `${i1}_r := _r + ${ecString('\nK -1')}`,
     'ELSE',
-    `${i1}${start}.descendants().first(${LISTING_CAP + 1}).forEach(_i:`,
+    `${i1}_ls := ${start}.descendants().first(${LISTING_CAP + 1}).calculate(`,
+    `${i2}_i := self`,
     `${i2}_a := str(_i.id.whenMissing(""))`,
     `${i2}_b := str(_i.parent.id.whenMissing(""))`,
     `${i2}_n := str(_i.name.whenMissing(""))`,
-    `${i2}${EC_CHUNK} := ${EC_CHUNK} + (${ecString('\nU ')} + str(_i.className) + " " + str(_i.systemObject.whenMissing(false)) + " " + ${framed('_a')} + " " + ${framed('_b')} + " " + ${framed('_n')})`,
-    `${i2}_k := _k + 1`,
-    `${i2}_j := _j + 1`,
-    `${i2}IF _j >= 20 THEN`,
-    `${i3}_r := _r + ${EC_CHUNK}`,
-    `${i3}${EC_CHUNK} := ""`,
-    `${i3}_j := 0`,
-    `${i2}ELSE ""`,
-    `${i2}ENDIF`,
+    `${i2}(${ecString('\nU ')} + str(_i.className) + " " + str(_i.systemObject.whenMissing(false)) + " " + ${framed('_a')} + " " + ${framed('_b')} + " " + ${framed('_n')})`,
     `${i1})`,
-    `${i1}_r := _r + ${EC_CHUNK}`,
-    `${i1}${EC_CHUNK} := ""`,
+    `${i1}_k := _ls.size()`,
+    `${i1}_r := _r + _ls.join("").whenMissing("")`,
+    `${i1}_ls := ""`,
     `${i1}_r := _r + ${ecString('\nK ')} + str(_k)`,
     'ENDIF',
   ].join('\n');

@@ -33,7 +33,7 @@ describe('the scope listing', () => {
     expect(ec).toContain('_o := lookup(42)');
     // The input set is a reference, not a child: listed with what is under it.
     expect(ec).toContain('_s := _o.inputSet');
-    expect(ec).toContain('_ld := SELECT ButtonInput FROM _s\n     _ld.forEach(_d:');
+    expect(ec).toContain('_ld := SELECT ButtonInput FROM _s\n     _x := _ld.calculate(\n          _d := self');
     expect(ec).toContain('_lb := SELECT ButtonInput FROM _s\n     _lb.forEach(_b:');
     expect(ec).toContain('_a := _b.actionObject');
     expect(ec).toContain('str(output(_b.buttonType.whenMissing("")))');

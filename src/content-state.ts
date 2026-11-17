@@ -34,7 +34,6 @@ export class ContentState {
   inspectActive = false;
   enrichMode: EnrichMode = 'widgets';
   styleInjected = false;
-  fromSync = false;
   prevConnDisplay: string | null = null;
   connectionEpochsSeen = false;
   lastIncidentEpoch = 0;
@@ -157,7 +156,6 @@ export class ContentState {
     this.inspectActive = false;
     this.enrichMode = 'widgets';
     this.styleInjected = false;
-    this.fromSync = false;
     this.prevConnDisplay = null;
     this.connectionEpochsSeen = false;
     this.lastIncidentEpoch = 0;

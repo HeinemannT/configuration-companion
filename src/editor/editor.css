@@ -464,6 +464,12 @@ body {
   color: var(--text-error);
 }
 
+.editor-output-pill.warn {
+  background: color-mix(in srgb, var(--support-warn) 20%, var(--bg));
+  color: var(--text-warn);
+  cursor: help;
+}
+
 .editor-output-pill svg { width: 11px; height: 11px; }
 
 .editor-output-pill-dur {

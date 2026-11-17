@@ -64,6 +64,8 @@ export const EC_DONE_LITERAL = `"${EC_FRAME.done}"`;
  *  - append a row in parentheses, so the long string is copied once per row;
  *  - collect rows of a few objects in a short chunk (`EC_CHUNK`) and add the
  *    chunk to the result every few objects.
+ * A list that can run into the thousands is better built with `list.calculate( … row )` and one
+ * `.join("")`, which is linear.
  */
 export const EC_CHUNK = '_rc';
 

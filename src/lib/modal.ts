@@ -100,7 +100,8 @@ export function confirmModal(opts: ConfirmOpts): Promise<boolean> {
     const previouslyFocused = document.activeElement as HTMLElement | null;
     document.body.appendChild(backdrop);
     document.addEventListener('keydown', onKey, true);
-    requestAnimationFrame(() => confirmBtn.focus());
+    // A destructive confirm starts on Cancel, so a stray Enter (or a shortcut that ends in Enter) keeps the work.
+    requestAnimationFrame(() => (variant === 'danger' ? cancelBtn : confirmBtn).focus());
   });
 }
 

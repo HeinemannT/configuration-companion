@@ -110,22 +110,24 @@ function lengthLines(type: string, map: CodePropMap, indent: string): string[] {
  */
 export function buildSourceListEc(types: readonly string[], map: CodePropMap = STATIC_CODE_PROPS, from: string = CONTEXT_OBJECT): string {
   checkSource(from);
-  const lines = [`_g := ${from}`, '_r := ""', `${EC_CHUNK} := ""`, '_k := 0'];
+  // Per type: one row per object (empty without code), joined once. The result text grows once per
+  // type, not once per row or per chunk of rows.
+  const lines = [`_g := ${from}`, '_r := ""', `${EC_CHUNK} := ""`];
   for (const type of types) {
     checkType(type, map);
     lines.push(
       `_l := SELECT ${type} FROM _g`,
-      '_l.forEach(_o:',
+      '_x := _l.calculate(',
+      '     _o := self',
       ...lengthLines(type, map, '     '),
+      '     _row := ""',
       '     IF _len > 0 THEN',
-      ...appendRowEc(EC_CHUNK, ['"L"', `"${type}"`, 'str(_o.rid)', '_o.lastModifiedDate.whenMissing("")', '_len'], '          '),
-      '          _k := _k + 1',
-      '          IF _k >= 40 THEN',
-      ...flushChunkEc().map(l => `               ${l}`),
-      '               _k := 0',
-      '          ENDIF',
+      ...appendRowEc('_row', ['"L"', `"${type}"`, 'str(_o.rid)', '_o.lastModifiedDate.whenMissing("")', '_len'], '          '),
       '     ENDIF',
+      '     _row',
       ')',
+      '_r := _r + _x.join("").whenMissing("")',
+      '_x := ""',
       '_l := ""',
     );
   }
@@ -279,14 +281,16 @@ function hitScanLines(type: string, props: readonly string[], prefilter: Prefilt
   });
   else if (prefilter.kind === 'wildcard') lines.push(`_p := "${prefilter.pattern}"`);
   else throw new Error('Nothing to narrow on the server');
-  lines.push('_r := ""', self ? '_l := LIST(this.object)' : `_l := SELECT ${type} FROM this.object`, '_l.forEach(_o:', '_h := 0');
+  // One value per object (its RID, or nothing), joined once: with a common term the hits run into the
+  // thousands, and a text grown hit by hit is copied on every `+` (ec-parser.ts).
+  lines.push(self ? '_l := LIST(this.object)' : `_l := SELECT ${type} FROM this.object`, '_rs := _l.calculate(', '_o := self', '_h := 0');
   for (const p of props) {
     if (!PROP_NAME.test(p)) throw new Error(`Invalid property ${p}`);
     lines.push(`_w := output(_o.${p})`, '_w := _w.whenMissing("")');
     if (prefilter.kind === 'wildcard') lines.push('IF _w = _p THEN _h := 1 ENDIF');
     else prefilter.needles.forEach((_, i) => lines.push(`IF _w.indexOf(_q${i}).whenMissing(-1) >= 0 THEN _h := 1 ENDIF`));
   }
-  lines.push('IF _h = 1 THEN _r := _r + str(_o.rid) + "," ENDIF', ')', '_r + "#END"');
+  lines.push('(IF _h = 1 THEN str(_o.rid) + "," ELSE "" ENDIF)', ')', '_rs.join("") + "#END"');
   return lines;
 }
 

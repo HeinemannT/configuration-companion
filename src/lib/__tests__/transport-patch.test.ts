@@ -774,8 +774,8 @@ describe('the listing: objects only the target has, deletes and ID changes', () 
     expect(probe.entries.every(e => e.part < part.index)).toBe(true);
     expect(part.text).not.toContain('genedit');
     expect(part.text).toContain(`IF ${START} = MISSING THEN`);
-    expect(part.text).toContain(`${START}.descendants().first(${LISTING_CAP + 1}).forEach(_i:`);
-    expect(part.text).toContain('_rc := _rc + ("\\nU " + str(_i.className) + " " + str(_i.systemObject.whenMissing(false)) + " " + str(_a.size()) + ":" + _a + " " + str(_b.size()) + ":" + _b + " " + str(_n.size()) + ":" + _n)');
+    expect(part.text).toContain(`_ls := ${START}.descendants().first(${LISTING_CAP + 1}).calculate(`);
+    expect(part.text).toContain('("\\nU " + str(_i.className) + " " + str(_i.systemObject.whenMissing(false)) + " " + str(_a.size()) + ":" + _a + " " + str(_b.size()) + ":" + _b + " " + str(_n.size()) + ":" + _n)');
     expect(part.text).toContain('_r := _r + "\\nK " + str(_k)\n');
     expect(part.text).toContain('_r := _r + "\\nK -1"');
     expect(part.text).not.toContain('description');

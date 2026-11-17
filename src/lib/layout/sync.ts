@@ -850,12 +850,14 @@ export interface FlowRefListItem { id: string; rid: string; className: string; c
  *  picker-open). `refClass` is a closed union, so it's injection-safe in the SELECT. */
 export function buildFlowRefListEc(refClass: 'InputSet' | 'EditPage'): string {
   return constantScript('buildFlowRefListEc', [
-    `_r := ""`,
+    // One row per object, joined once: a large portal holds thousands of these, and a text grown row
+    // by row is copied on every `+` (ec-parser.ts).
     `_list := SELECT ${refClass} FROM root.portal`,
-    `_list.forEach(_x:`,
-    `     _r := _r + "${FLOW_LIST_MARKER}" + _x.id.whenMissing("") + "|" + _x.rid + "|" + _x.className.whenMissing("") + "|" + ${safeWireTextEc('_x.parent.name.whenMissing("")')} + "|" + ${safeWireTextEc('_x.name.whenMissing("")')} + "\\n"`,
+    `_rows := _list.calculate(`,
+    `     _x := self`,
+    `     "${FLOW_LIST_MARKER}" + _x.id.whenMissing("") + "|" + _x.rid + "|" + _x.className.whenMissing("") + "|" + ${safeWireTextEc('_x.parent.name.whenMissing("")')} + "|" + ${safeWireTextEc('_x.name.whenMissing("")')} + "\\n"`,
     `)`,
-    `_r`,
+    `_rows.join("")`,
   ].join('\n'));
 }
 

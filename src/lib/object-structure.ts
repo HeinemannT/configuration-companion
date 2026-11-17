@@ -36,13 +36,21 @@ const MAX_DEPTH = 4;
 /** Build the read-only EC that lists a root's structure as `rid|||parent` rows. */
 export function buildStructureEc(ref: string, rule: StructureRule): string {
   const depth = Math.max(0, Math.min(MAX_DEPTH, Math.floor(rule.depth)));
-  const lines = [`_o := ${ref}`, '_r := ""'];
+  // The script stops adding rows one past the cap (the extra row tells the reader the list was cut):
+  // an object can have many thousands of children, and every row added copies the text built so far.
+  const lines = [`_o := ${ref}`, '_r := ""', '_n := 0'];
+  const cap = STRUCTURE_MAX_NODES + 1;
   const walk = (parentVar: string, level: number, indent: string): string[] => {
     if (level > depth) return [];
     const v = `_c${level}`;
     return [
       `${indent}${parentVar}.children().forEach(${v}:`,
-      `${indent}  _r := _r + ${v}.rid + "|||" + ${parentVar}.rid + "\\n"`,
+      `${indent}  IF _n < ${cap} THEN`,
+      `${indent}    _r := _r + (${v}.rid + "|||" + ${parentVar}.rid + "\\n")`,
+      `${indent}    _n := _n + 1`,
+      `${indent}  ELSE`,
+      `${indent}    _n := _n`,
+      `${indent}  ENDIF`,
       ...walk(v, level + 1, `${indent}  `),
       `${indent})`,
     ];

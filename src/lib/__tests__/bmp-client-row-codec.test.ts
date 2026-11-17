@@ -21,20 +21,25 @@ describe('buildAccessSubjectsEc (golden)', () => {
     // Old golden 728 characters (random frame per call outside tests); new
     // 620 characters, the same text on every call.
     expect(buildAccessSubjectsEc()).toBe([
-      '_out := ""',
-      'root.user.descendants.filter(className = "User").forEach(_u:',
+      '_us := root.user.descendants.filter(className = "User").calculate(',
+      '     _u := self',
+      '     _row := ""',
       '     _f1 := str(_u.rid)',
       '     _f2 := str(_u.id.whenMissing(""))',
       '     _f3 := str(_u.name.whenMissing(""))',
-      '     _out := _out + ("~CREV_R~4:user" + str(_f1.size()) + ":" + _f1 + str(_f2.size()) + ":" + _f2 + str(_f3.size()) + ":" + _f3)',
+      '     _row := _row + ("~CREV_R~4:user" + str(_f1.size()) + ":" + _f1 + str(_f2.size()) + ":" + _f2 + str(_f3.size()) + ":" + _f3)',
+      '     _row',
       ')',
-      'root.role.descendants.filter(className = "Role").forEach(_r:',
+      '_rs := root.role.descendants.filter(className = "Role").calculate(',
+      '     _r := self',
+      '     _row := ""',
       '     _f1 := str(_r.rid)',
       '     _f2 := str(_r.id.whenMissing(""))',
       '     _f3 := str(_r.name.whenMissing(""))',
-      '     _out := _out + ("~CREV_R~4:role" + str(_f1.size()) + ":" + _f1 + str(_f2.size()) + ":" + _f2 + str(_f3.size()) + ":" + _f3)',
+      '     _row := _row + ("~CREV_R~4:role" + str(_f1.size()) + ":" + _f1 + str(_f2.size()) + ":" + _f2 + str(_f3.size()) + ":" + _f3)',
+      '     _row',
       ')',
-      '_out + "~CREV_D~"',
+      '_us.join("") + _rs.join("") + "~CREV_D~"',
     ].join('\n'));
   });
 });

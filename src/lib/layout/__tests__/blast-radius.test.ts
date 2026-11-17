@@ -11,7 +11,7 @@ describe('instance fan-out', () => {
   it('builds an rref(linkedTo) probe with a SELF row', () => {
     const ec = buildInstanceFanoutEc('t.crev_demo_complex');
     expect(ec).toContain('_p := t.crev_demo_complex');
-    expect(ec).toContain('_p.rref(linkedTo).forEach');
+    expect(ec).toContain('_p.rref(linkedTo).calculate(');
     expect(ec).toContain('SELF|');
   });
 
@@ -82,11 +82,11 @@ describe('buildInstanceFanoutEc / buildContainerBlastEc (golden, plan 014)', () 
   it('emits the exact SELF + INST row EC as before the ec-row-codec migration', () => {
     expect(buildInstanceFanoutEc('t.crev_demo_complex')).toBe([
       '_p := t.crev_demo_complex',
-      `_r := "${SEP}SELF|" + _p.rid.whenMissing("") + "|" + _p.linkedTo.rid.whenMissing("") + "\\n"`,
-      '_p.rref(linkedTo).forEach(_i:',
-      `     _r := _r + "${SEP}INST|" + _i.rid.whenMissing("") + "|" + _i.id.whenMissing("") + "|" + (IF _i.name.whenMissing("") = "*<<<CREV_*" THEN "[reserved CREV marker]" ELSE _i.name.whenMissing("") ENDIF) + "\\n"`,
+      '_rows := _p.rref(linkedTo).calculate(',
+      '     _i := self',
+      `     "${SEP}INST|" + _i.rid.whenMissing("") + "|" + _i.id.whenMissing("") + "|" + (IF _i.name.whenMissing("") = "*<<<CREV_*" THEN "[reserved CREV marker]" ELSE _i.name.whenMissing("") ENDIF) + "\\n"`,
       ')',
-      '_r',
+      `"${SEP}SELF|" + _p.rid.whenMissing("") + "|" + _p.linkedTo.rid.whenMissing("") + "\\n" + _rows.join("")`,
     ].join('\n'));
   });
 

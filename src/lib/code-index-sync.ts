@@ -644,7 +644,9 @@ export function buildBucketInventoryEc(bucket: Bucket, types: readonly string[],
   // same comparison, verified on BMP 5.6.17) and the organisation the
   // context: the script is constant.
   const conds = [...(bucket.own ? ['organisation = _g'] : []), ...(since ? [onContext ? 'lastModifiedDate >= _since' : `lastModifiedDate >= date("${opts.since}")`] : [])];
-  const lines = ['_r := ""', `${EC_CHUNK} := ""`, `_g := ${fromOf(bucket, onContext)}`, '_k := 0', ...(since && onContext ? ['_since := this.end'] : [])];
+  // Per type: one row per object, joined once (the result text grows once per type, not per row
+  // or per chunk of rows; see buildSourceListEc).
+  const lines = ['_r := ""', `_g := ${fromOf(bucket, onContext)}`, ...(since && onContext ? ['_since := this.end'] : [])];
   for (const type of types) {
     if (!TYPE_NAME.test(type)) throw new Error(`Not a type: ${type}`);
     const fields = opts.ridsOnly
@@ -652,21 +654,21 @@ export function buildBucketInventoryEc(bucket: Bucket, types: readonly string[],
       : ['"O"', `"${type}"`, 'str(_o.rid)', 'str(_o.lastModifiedDate.whenMissing(""))', org ? 'str(_o.organisation.rid.whenMissing(""))' : '""'];
     // Objects without an organisation of their own (a visualization's data
     // input): kept when an organisation's list is split by organisation.
-    const keep = opts.orglessOnly ? ['     IF str(_o.organisation.rid.whenMissing("")) = "" THEN', ...appendRowEc(EC_CHUNK, fields, '          '), '     ENDIF'] : appendRowEc(EC_CHUNK, fields, '     ');
+    const keep = opts.orglessOnly ? ['     IF str(_o.organisation.rid.whenMissing("")) = "" THEN', ...appendRowEc('_row', fields, '          '), '     ENDIF'] : appendRowEc('_row', fields, '     ');
     lines.push(
       `_l := SELECT ${type} FROM _g${conds.length ? ` WHERE ${conds.join(' AND ')}` : ''}`,
-      '_l.forEach(_o:',
+      '_x := _l.calculate(',
+      '     _o := self',
+      '     _row := ""',
       ...keep,
-      '     _k := _k + 1',
-      `     IF _k >= ${INVENTORY_CHUNK} THEN`,
-      ...flushChunkEc().map(l => `          ${l}`),
-      '          _k := 0',
-      '     ENDIF',
+      '     _row',
       ')',
+      '_r := _r + _x.join("").whenMissing("")',
+      '_x := ""',
       '_l := ""',
     );
   }
-  lines.push(...flushChunkEc(), `_r + ${EC_DONE_LITERAL}`);
+  lines.push(`_r + ${EC_DONE_LITERAL}`);
   const constant = (bucket.org == null || onContext) && (!since || onContext);
   return constant ? constantScript('buildBucketInventoryEc', lines.join('\n')) : varyingScript('buildBucketInventoryEc', lines.join('\n'));
 }

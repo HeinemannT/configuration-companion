@@ -64,6 +64,9 @@ import { failedNote, failureBlock, unreadValue } from '../../lib/failure-form';
 import { describeFailure } from '../../lib/connection-copy';
 import { attrs, btn as button, el, icon, type Kid } from '../../lib/dom';
 
+/** How long after a landing each new render scrolls to the landing line again. */
+const LANDING_REVEAL_MS = 3000;
+
 type Kids = Kid[];
 
 export interface WindowHint {
@@ -438,6 +441,8 @@ export class ObjectWindowView {
   private readonly searchWrap: HTMLElement;
   /** Landing already scrolled into view (its seq). */
   private focusShown = -1;
+  /** Until when a render after the landing scrolls to the line again. */
+  private focusRevealUntil = 0;
   private readonly accessBtn: HTMLButtonElement;
   private readonly head: HTMLElement;
   private readonly body: HTMLElement;
@@ -1900,15 +1905,20 @@ export class ObjectWindowView {
     return blk;
   }
 
-  /** The landing line of a search: tinted, and scrolled into view once. */
+  /** The landing line of a search: tinted, and scrolled into view. */
   private markLanding(code: HTMLElement, f: NonNullable<WindowModel['focus']>): void {
     const row = [...code.querySelectorAll<HTMLElement>(':scope > .ow-ln')].find(r => r.querySelector('.n')?.textContent === String(f.line));
     if (!row) return;
     row.classList.add('hot');
     row.setAttribute('aria-current', 'location');
-    if (this.focusShown === f.seq) return;
-    this.focusShown = f.seq;
+    // The window renders again while the object loads (each time with a new row), so the line is
+    // revealed on every render for a short while after the landing, not only on the first.
+    if (this.focusShown !== f.seq) {
+      this.focusShown = f.seq;
+      this.focusRevealUntil = Date.now() + LANDING_REVEAL_MS;
+    } else if (Date.now() > this.focusRevealUntil) return;
     requestAnimationFrame(() => {
+      if (!row.isConnected) return;
       row.scrollIntoView({ block: 'center' });
       // The code box scrolls inside the pane too.
       const box = row.closest<HTMLElement>('.ow-code');
@@ -2184,13 +2194,16 @@ export class ObjectWindowView {
     const st = this.state()!;
     const shown = curatedProps(info, obj);
     const overState = this.overrideOf(obj);
-    const keys = Object.keys(obj.props).filter(k => !shown.has(k));
+    // Every property, also the ones the Properties block shows: the heading and its count say "all",
+    // and the filter must find a property wherever else it appears. The override tag and Reset of
+    // those stay in the Properties block only.
+    const keys = Object.keys(obj.props);
     const rows = keys.map(k => {
       const v = obj.props[k];
       const label = propLabel(obj, k, this.model?.labels, this.model?.summaries);
       const empty = isEmptyValue(v);
       const text = v.kind === 'enum' ? v.text : displayValue(v);
-      const over = overrides(obj, k, overState);
+      const over = !shown.has(k) && overrides(obj, k, overState);
       return { k, v, label, empty, text, over, hay: `${k} ${label} ${text || v.cls || ''}`.toLowerCase() };
     }).sort((a, b) => a.label.localeCompare(b.label));
     const total = Object.keys(obj.props).length;
@@ -2202,7 +2215,8 @@ export class ObjectWindowView {
       const q = st.propFilter.trim().toLowerCase();
       let any = 0;
       for (const row of list.children as HTMLCollectionOf<HTMLElement>) {
-        const hide = (st.hideEmpty && row.dataset.empty === 'true') || (!!q && !(row.dataset.hay ?? '').includes(q));
+        // A typed filter also finds empty properties: "Hide empty" only trims the unfiltered list.
+        const hide = q ? !(row.dataset.hay ?? '').includes(q) : st.hideEmpty && row.dataset.empty === 'true';
         row.hidden = hide;
         if (!hide) any++;
       }

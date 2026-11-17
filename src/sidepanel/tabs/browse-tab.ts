@@ -492,7 +492,7 @@ export class BrowseTab implements Tab {
       cache: this.src.cache, live: withConfig(this.src.live, this.src.config, q), resolved: this.src.resolvedQuery === q ? this.src.resolved : null,
       avail: this.avail(),
     });
-    // A cut of the configuration search ("Showing the first 200 …").
+    // A cut of the configuration search ("More objects match than are listed. …").
     return this.src.configQuery === q && this.src.configNotice ? { ...r, searchNote: this.src.configNotice } : r;
   }
 

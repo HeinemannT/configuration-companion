@@ -213,6 +213,12 @@ function rowEc(kind: string, v: string): string {
   ], SEP)} + "\\n"`;
 }
 
+/** Lines that add one value per element of `list` to `_r`: calculated per element and joined once,
+ *  so a template with thousands of instances does not copy the result once per row. */
+function joinedEc(list: string, v: string, value: string, indent = ''): string[] {
+  return [`${indent}_x := ${list}.calculate(`, `${indent}  ${v} := self`, `${indent}  ${value}`, `${indent})`, `${indent}_r := _r + _x.join("").whenMissing("")`];
+}
+
 /**
  * One read-only EC call for the picker's offers: the other instances of
  * the object's template, the instances of the object itself (when it is a
@@ -221,15 +227,14 @@ function rowEc(kind: string, v: string): string {
  * an ID-space reference from BmpClient.resolveRef).
  */
 export function buildSuggestEc(ref: string, opts: { templateRef?: string; parentRef?: string }): string {
-  const lines = [`_o := ${ref}`, '_r := ""', '_cls := _o.className'];
-  if (opts.templateRef) {
-    lines.push(`_t := ${opts.templateRef}`, 'IF _t != MISSING THEN', '  _t.rref(linkedTo).forEach(_i:',
-      `    IF _i.rid != _o.rid THEN _r := _r + ${rowEc('instance', '_i')} ENDIF`, '  )', 'ENDIF');
-  }
-  lines.push('_o.rref(linkedTo).forEach(_j:', `  _r := _r + ${rowEc('instance', '_j')}`, ')');
+  // The instances of the template and of the object are one list with one row expression: the
+  // script is a varying one and must stay within its size limit (script-kinds.ts).
+  const lines = [`_o := ${ref}`, '_r := ""', '_cls := _o.className', '_ins := _o.rref(linkedTo)'];
+  if (opts.templateRef) lines.push(`_t := ${opts.templateRef}`, 'IF _t != MISSING THEN', '  _ins := _t.rref(linkedTo).union(_ins)', 'ENDIF');
+  lines.push(...joinedEc('_ins', '_i', `(IF _i.rid != _o.rid THEN ${rowEc('instance', '_i')} ELSE "" ENDIF)`));
   if (opts.parentRef) {
-    lines.push(`_p := ${opts.parentRef}`, 'IF _p != MISSING THEN', '  _p.children().forEach(_s:',
-      `    IF _s.className = _cls AND _s.rid != _o.rid THEN _r := _r + ${rowEc('sibling', '_s')} ENDIF`, '  )', 'ENDIF');
+    lines.push(`_p := ${opts.parentRef}`, 'IF _p != MISSING THEN',
+      ...joinedEc('_p.children()', '_s', `(IF _s.className = _cls AND _s.rid != _o.rid THEN ${rowEc('sibling', '_s')} ELSE "" ENDIF)`, '  '), 'ENDIF');
   }
   lines.push('_r');
   // The fallback for a client without the context path (buildSuggestPartEc).
@@ -246,9 +251,9 @@ export function buildSuggestEc(ref: string, opts: { templateRef?: string; parent
  */
 export function buildSuggestPartEc(part: 'template' | 'object' | 'parent'): string {
   const lines = ['_o := this.object', '_r := ""'];
-  if (part === 'template') lines.push('_o.rref(linkedTo).forEach(_i:', `  _r := _r + ${rowEc('instance', '_i')}`, ')');
-  if (part === 'object') lines.push(`_r := _r + "cls${SEP}" + _o.className.whenMissing("") + "\\n"`, '_o.rref(linkedTo).forEach(_j:', `  _r := _r + ${rowEc('instance', '_j')}`, ')');
-  if (part === 'parent') lines.push('_o.children().forEach(_s:', `  _r := _r + ${rowEc('sibling', '_s')}`, ')');
+  if (part === 'template') lines.push(...joinedEc('_o.rref(linkedTo)', '_i', `(${rowEc('instance', '_i')})`));
+  if (part === 'object') lines.push(`_r := _r + "cls${SEP}" + _o.className.whenMissing("") + "\\n"`, ...joinedEc('_o.rref(linkedTo)', '_j', `(${rowEc('instance', '_j')})`));
+  if (part === 'parent') lines.push(...joinedEc('_o.children()', '_s', `(${rowEc('sibling', '_s')})`));
   lines.push('_r');
   return constantScript('buildSuggestPartEc', lines.join('\n'));
 }

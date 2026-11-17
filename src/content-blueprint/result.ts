@@ -336,7 +336,8 @@ function insertNodes(el: HTMLElement, node: LNode, parentId: string | null): voi
   const b = document.createElement('button');
   b.className = 'bp-ins ' + (node.kind === 'container' ? 'bp-ins-b' : 'bp-ins-r');
   setIcon(b, ICON_PLUS);
-  b.title = node.kind === 'container' ? `Add after ${node.name}` : `Add beside ${node.name}`;
+  // A widget added after a full-width one wraps to the next row, so the label does not promise "beside".
+  b.title = node.kind === 'container' ? `Add after ${node.name}` : `Add after ${node.name} (beside it when the row has room)`;
   b.setAttribute('aria-label', b.title);
   b.style.position = 'absolute'; b.style.zIndex = '4';
   b.addEventListener('mousedown', (e) => { e.stopPropagation(); openPicker(parentId, { afterId: node.id, at: { x: e.clientX, y: e.clientY } }); });

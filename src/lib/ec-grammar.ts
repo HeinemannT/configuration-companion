@@ -202,6 +202,9 @@ export const KNOWN_PROPERTIES: ReadonlySet<string> = new Set([
  *
  *  Includes the platform prefixes (t/o/d/k/r/c/n/u/g/p/nt/ap/ndi) plus
  *  the live GRC ID spaces from this BMP install (ceven, cetas, etc.). */
+/** The enterprise-object sections under `root` on the standard platform (a server can lack some). */
+export const CE_ROOT_SECTIONS: readonly string[] = ['ceRiskAssessment', 'ceControlMeasure', 'ceIssue', 'ceIncident', 'ceTask', 'ceAsset', 'ceVendor', 'ceIndicator', 'cePolicy', 'ceProject', 'ceContract', 'ceQuestionnaire', 'ceRegulation', 'ceWorkflow', 'cePrivacy', 'ceProcedure', 'ceService', 'ceProduct', 'ceComplianceRequirement', 'ceInquiry', 'ceDPIA', 'ceComment', 'ceAttachment', 'ceDistribution', 'ceAssuranceActivity', 'ceTIA', 'cePreScreening'];
+
 export const ID_SPACE_PREFIXES: ReadonlySet<string> = new Set([
   // platform
   't', 'o', 'd', 'k', 'r', 'c', 'n', 'u', 'g', 'p',

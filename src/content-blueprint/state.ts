@@ -50,7 +50,7 @@ export interface BpState {
   propertySchemaErrors: Map<string, string>;
   applySession: ApplySession | null; // the frozen review-to-commit attempt
   applyOutcome: ApplyOutcome | null; // non-null → a persistent stale/partial/failed outcome panel is docked (cleared on dismiss / new apply / discard / reset)
-  discardArm: boolean;          // Discard button armed ("Sure?"): first click arms, second discards; auto-disarms after a few seconds
+  discardArm: boolean;          // Discard button armed ("Click again to discard"): first click arms, second discards; auto-disarms after a few seconds
   discardTimer: number;         // setTimeout id auto-disarming Discard (0 = none)
   actionMenuOpen: boolean;      // the canvas-top-right action-menu dropdown is expanded (collapsed by default, like BMP's own Actions button, so it never covers the canvas until opened)
   settingsOpen: boolean;        // compact Blueprint settings panel, opened from the command header

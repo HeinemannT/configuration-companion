@@ -88,17 +88,24 @@ function selfLines(v: string, kind: string, parent: string, types: readonly stri
 function descendantLines(v: string, listVar: string, loopVar: string, kind: string, parent: string, types: readonly string[], map: CodePropMap, frame: EcFrame, indent: string): string[] {
   const lines: string[] = [];
   for (const t of types) {
+    // One row per object, joined once per type: the chunk gets a type's rows in one piece, so
+    // neither it nor the result is copied once per row.
     lines.push(
       `${indent}${listVar} := SELECT ${t} FROM ${v}`,
-      `${indent}${listVar}.forEach(${loopVar}:`,
+      `${indent}_x := ${listVar}.calculate(`,
+      `${indent}     ${loopVar} := self`,
       ...lengthLines(loopVar, t, map, `${indent}     `),
-      ...row(`${indent}     `, kind, `${loopVar}.rid`, parent, `"${t}"`, lenStamp(loopVar)),
-      `${indent}     _k := _k + 1`,
-      `${indent}     IF _k >= 40 THEN`,
-      ...flushChunkEc().map(l => `${indent}          ${l}`),
-      `${indent}          _k := 0`,
-      `${indent}     ENDIF`,
+      `${indent}     _row := ""`,
+      ...appendRowEc('_row', [`"${kind}"`, `${loopVar}.rid`, parent, `"${t}"`, lenStamp(loopVar)], `${indent}     `),
+      `${indent}     _row`,
       `${indent})`,
+      `${indent}${EC_CHUNK} := ${EC_CHUNK} + _x.join("").whenMissing("")`,
+      `${indent}_x := ""`,
+      `${indent}_k := _k + 1`,
+      `${indent}IF _k >= 40 THEN`,
+      ...flushChunkEc().map(l => `${indent}     ${l}`),
+      `${indent}     _k := 0`,
+      `${indent}ENDIF`,
     );
   }
   return lines;

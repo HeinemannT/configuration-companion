@@ -217,14 +217,21 @@ export function parsePropertyApplicationsResult(log: string): {
  *  exact EC string in. */
 export function buildAccessSubjectsEc(_frame: EcFrame = STATIC_EC_FRAME): string {
   return constantScript('buildAccessSubjectsEc', [
-    '_out := ""',
-    'root.user.descendants.filter(className = "User").forEach(_u:',
-    ...appendRowEc('_out', ['"user"', '_u.rid', '_u.id.whenMissing("")', '_u.name.whenMissing("")'], '     '),
+    // One row per object, joined once: a server can hold many thousands of users, and appending
+    // every row to one growing text copies that text per row (see ec-parser.ts).
+    '_us := root.user.descendants.filter(className = "User").calculate(',
+    '     _u := self',
+    '     _row := ""',
+    ...appendRowEc('_row', ['"user"', '_u.rid', '_u.id.whenMissing("")', '_u.name.whenMissing("")'], '     '),
+    '     _row',
     ')',
-    'root.role.descendants.filter(className = "Role").forEach(_r:',
-    ...appendRowEc('_out', ['"role"', '_r.rid', '_r.id.whenMissing("")', '_r.name.whenMissing("")'], '     '),
+    '_rs := root.role.descendants.filter(className = "Role").calculate(',
+    '     _r := self',
+    '     _row := ""',
+    ...appendRowEc('_row', ['"role"', '_r.rid', '_r.id.whenMissing("")', '_r.name.whenMissing("")'], '     '),
+    '     _row',
     ')',
-    `_out + ${EC_DONE_LITERAL}`,
+    `_us.join("") + _rs.join("") + ${EC_DONE_LITERAL}`,
   ].join('\n'));
 }
 
@@ -363,7 +370,8 @@ export function buildColorSetsEc(): string {
     '     IF _cv != MISSING THEN',
     '          _set := _col.parent',
     '          _folder := _set.parent',
-    `          _r := _r + "R${COLOR_FIELD}" + _set.id.whenMissing("") + "${COLOR_FIELD}" + _set.name.whenMissing("") + "${COLOR_FIELD}" + _folder.id.whenMissing("") + "${COLOR_FIELD}" + _col.id.whenMissing("") + "${COLOR_FIELD}" + _col.name.whenMissing("") + "${COLOR_FIELD}" + _cv + "${COLOR_ROW}"`,
+    // In parentheses: the result text is copied once per colour, not once per field.
+    `          _r := _r + ("R${COLOR_FIELD}" + _set.id.whenMissing("") + "${COLOR_FIELD}" + _set.name.whenMissing("") + "${COLOR_FIELD}" + _folder.id.whenMissing("") + "${COLOR_FIELD}" + _col.id.whenMissing("") + "${COLOR_FIELD}" + _col.name.whenMissing("") + "${COLOR_FIELD}" + _cv + "${COLOR_ROW}")`,
     '          _count := _count + 1',
     '     ELSE',
     '          _r := _r',

@@ -87,11 +87,12 @@ export function buildInstanceFanoutEc(pageRef: string): string {
   // by intent, so the user's kind (script-kinds.ts).
   return userScript([
     `_p := ${pageRef}`,
-    `_r := "${SEP}SELF|" + ${selfRow} + "\\n"`,
-    `_p.rref(linkedTo).forEach(_i:`,
-    `     _r := _r + "${SEP}INST|" + ${instRow} + "\\n"`,
+    // Instances as one row each, joined once: a master page can have thousands of them.
+    `_rows := _p.rref(linkedTo).calculate(`,
+    `     _i := self`,
+    `     "${SEP}INST|" + ${instRow} + "\\n"`,
     `)`,
-    `_r`,
+    `"${SEP}SELF|" + ${selfRow} + "\\n" + _rows.join("")`,
   ].join('\n'));
 }
 

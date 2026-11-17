@@ -3,6 +3,7 @@ import { ecString, validateEcIdentifier, validateRid } from '../ec-guards';
 import { emptyModel, type AccessSnapshot, type AccessChoice, type AccessProperty, type AccessRecord } from './model';
 import { readTypeFields } from './requests';
 import { pMap } from '../util';
+import { CE_ROOT_SECTIONS } from '../ec-grammar';
 import { completedValue } from './response';
 import { appendRowEc, splitFramedRows } from '../ec-parser';
 import { constantScript, SCRIPT_LIMITS, varyingScript } from '../script-kinds';
@@ -51,7 +52,9 @@ function wrap(code: string, how: ReadKind): string {
   // Constant: the body's length is checked exactly, and the last marker is
   // followed only by digits, so stored text cannot end the body early.
   const lines = code.split('\n'), last = lines.pop()!;
-  const wrapped = [...lines, '_accessResult := ' + last, `${literal(MARKER)} + _accessResult + ${literal(MARKER)} + str(_accessResult.size())`].join('\n');
+  // str(): text joined with a value that holds HTML tags (an object named `a <b>c</b>`) is no longer
+  // plain text on the server, and `.size()` then fails ("Method size can only be on a list, text or map").
+  const wrapped = [...lines, '_accessResult := str(' + last + ')',`${literal(MARKER)} + _accessResult + ${literal(MARKER)} + str(_accessResult.size())`].join('\n');
   return how.kind === 'constant' ? constantScript(how.builder, wrapped) : varyingScript(how.builder, wrapped);
 }
 function unwrap(value: string): string {
@@ -238,7 +241,7 @@ export async function readSchema(client: BmpClient, type: string, signal?: Abort
     return { ...p, reference: field?.reference === true, multiselect: field?.multiselect === true, targets: '[' + targets.join(', ') + ']', principal: field?.reference === true && targets.length > 0 && targets.every(t => allowed.includes(t.split('.').at(-1)!)) };
   });
 }
-export const ROOTS = ['organisation', 'templateCategory', 'ceRiskAssessment', 'ceControlMeasure', 'ceIssue', 'ceIncident', 'ceTask', 'ceAsset', 'ceVendor', 'ceIndicator', 'cePolicy', 'ceProject', 'ceContract', 'ceQuestionnaire', 'ceRegulation', 'ceWorkflow', 'cePrivacy', 'ceProcedure', 'ceService', 'ceProduct', 'ceComplianceRequirement', 'ceInquiry', 'ceDPIA', 'ceComment', 'ceAttachment', 'ceDistribution', 'ceAssuranceActivity', 'ceTIA', 'cePreScreening'];
+export const ROOTS = ['organisation', 'templateCategory', ...CE_ROOT_SECTIONS];
 /** The RIDs of the access roots that exist on the server, read once per
  *  client with one constant script. */
 const accessRootRids = new WeakMap<BmpClient, Promise<Map<string, string>>>();
@@ -288,13 +291,15 @@ export async function searchAccessObjects(client: BmpClient, query: string, type
   // The query is written once; the passes are one list (the exact matches,
   // then the others: they never overlap), so the row is written once.
   const filtered = (predicate: string, cap: number) => `_d.filter(${type ? `className = ${literal(type)} AND ` : ''}(${predicate})).first(${cap})`;
-  const script = (cap: number) => [`_q := ${literal(query)}`, '_qw := "*" + _q + "*"', '_out := ""',
+  // Rows are calculated per object and joined once: appending each row to one growing text copies
+  // that text per row (ec-parser.ts).
+  const script = (cap: number) => [`_q := ${literal(query)}`, '_qw := "*" + _q + "*"',
     `_d := ${containers ? 'LIST(this.object).union(this.object.descendants)' : 'this.object.descendants'}`,
     `_m := ${passes.map(p => filtered(p, cap)).join('.union(')}${')'.repeat(passes.length - 1)}`,
     // Which pass a row is from, by the server's own comparison.
-    '_m.forEach(_n:', ...(query ? ['_pt := (IF _n.id = _q OR str(_n.rid) = _q THEN "0" ELSE "1" ENDIF)'] : []),
-    f.row([f.start, query ? '_pt' : '"0"', '_n.rid', '_n.id', '_n.name', '_n.className', '_n.parent.name']), ')',
-    '_out'].join('\n');
+    '_rs := _m.calculate(', '_n := self', ...(query ? ['_pt := (IF _n.id = _q OR str(_n.rid) = _q THEN "0" ELSE "1" ENDIF)'] : []),
+    f.row([f.start, query ? '_pt' : '"0"', '_n.rid', '_n.id', '_n.name', '_n.className', '_n.parent.name'], false), '_row', ')',
+    '_rs.join("")'].join('\n');
   const rids = await rootRidsOf(client, signal);
   const roots = orderedSource.filter(r => rids.has(r)).map(r => rids.get(r)!);
   type Row = { pass: number; rid: string; id: string; name: string; type: string; path: string };

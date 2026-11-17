@@ -1174,7 +1174,7 @@ function buildActionRow(): HTMLElement {
         class: 'btn btn-accent editor-run-execute',
         id: 'btn-execute',
         disabled: !previewDone,
-        title: previewDone ? 'Execute the previewed code' : 'Preview successfully first to unlock',
+        title: previewDone ? 'Execute the previewed code. This writes its changes to BMP.' : 'Preview first to unlock. Execute writes the changes to BMP.',
         onClick: () => { if (previewDone) void doRun() },
       },
         svg(ICON_LIGHTNING), ' Execute',
@@ -1552,7 +1552,10 @@ function renderBottomContentInner() {
 
   if (bottomMode === 'output') {
     const modeLabel = lastMode === 'save' ? 'Saved' : lastMode === 'execute' ? 'Executed' : 'Preview'
-    const cls = lastOutputOk ? 'ok' : 'error'
+    // BMP reports many script problems (a missing object, a missing value) as warnings and still runs
+    // the code, so a preview with warnings is not shown as a clean success.
+    const warned = lastOutputOk && lastMode !== 'save' && lastOutputEntries.some(e => e.logType.toUpperCase() === 'WARNING')
+    const cls = !lastOutputOk ? 'error' : warned ? 'warn' : 'ok'
     const timing = lastDuration != null ? formatRunTiming(lastDuration, lastBmpMs) : null
     const htmlOutput = lastOutputOk
       ? extractHtmlOutput(lastOutputEntries, lastOutputText, decodePreview)
@@ -1570,9 +1573,9 @@ function renderBottomContentInner() {
         : h('div', { class: 'editor-output-content error' }, lastOutputText)
     renderDom(container,
       h('div', { class: 'editor-output-header' },
-        h('span', { class: `editor-output-pill ${cls}` },
-          svg(lastOutputOk ? ICON_CHECK : ICON_X),
-          h('span', null, ` ${modeLabel}`),
+        h('span', { class: `editor-output-pill ${cls}`, ...(warned ? { title: 'BMP reported warnings. Read the output before you execute.' } : {}) },
+          svg(!lastOutputOk ? ICON_X : warned ? ICON_WARNING : ICON_CHECK),
+          h('span', null, ` ${modeLabel}${warned ? ', with warnings' : ''}`),
           timing ? h('span', { class: 'editor-output-pill-dur', title: timing.title }, timing.text) : null,
         ),
         // "Stale" pill when the editor's code has diverged from what

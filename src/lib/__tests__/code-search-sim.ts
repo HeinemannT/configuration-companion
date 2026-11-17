@@ -184,7 +184,7 @@ export function server(objects: SimObject[], opts: { lookup?: boolean; failType?
           return { ok: true, log: `${out.join('')}${F.done}` };
         }
         const g = /_g := (\S+)\n/.exec(code);
-        if (g && code.includes('.forEach(_o:')) {
+        if (g && code.includes('_x := _l.calculate(')) {
           const ridsOnly = !code.includes('lastModifiedDate.whenMissing');
           const out: string[] = [];
           for (const m of code.matchAll(/_l := SELECT (\w+) FROM _g(?: WHERE ([^\n]+))?\n/g)) {

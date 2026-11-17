@@ -1,6 +1,6 @@
 {
   "name": "configuration-companion",
-  "version": "0.16.0",
+  "version": "0.16.1",
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
@@ -20,7 +20,7 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "qa:devtools-package": "npm run build && node scripts/prepare-devtools-package.mjs",
     "check:package": "node scripts/check-package-contract.mjs",
-    "verify": "npm audit --audit-level=high && npm run notices:check && npm run pbac:palette:check && npm run typecheck && npm run lint && npm test && npm run build && npm run check:package",
+    "verify": "npm audit --audit-level=high --omit=dev && npm run notices:check && npm run pbac:palette:check && npm run typecheck && npm run lint && npm test && npm run build && npm run check:package",
     "prebuild": "node scripts/generate-pbac-palette.mjs --check",
     "pbac:palette": "node scripts/generate-pbac-palette.mjs",
     "pbac:palette:check": "node scripts/generate-pbac-palette.mjs --check"

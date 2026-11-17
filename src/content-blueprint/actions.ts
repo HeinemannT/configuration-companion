@@ -575,12 +575,12 @@ export function redo(): void {
 export function discard(): void { disarmDiscard(); if (bp.baseline) { bp.history = new History(bp.baseline); bp.selectedId = null; render(); } }
 
 /** Two-step Discard confirm (non-intrusive: the SAME button just changes label). First click ARMS it —
- *  the button reads "Sure?" for a few seconds; a second click within that window actually discards. It
+ *  the button reads "Click again to discard" for a few seconds; a second click within that window actually discards. It
  *  auto-disarms on the timer so a stray arm never lingers. */
 export function armDiscard(): void {
   if (bp.discardTimer) clearTimeout(bp.discardTimer);
   bp.discardArm = true;
-  bp.discardTimer = window.setTimeout(() => { bp.discardArm = false; bp.discardTimer = 0; render(); }, 3500);
+  bp.discardTimer = window.setTimeout(() => { bp.discardArm = false; bp.discardTimer = 0; render(); }, 6000);
   render();
 }
 export function disarmDiscard(): void {
@@ -722,7 +722,8 @@ export function onKeydown(e: KeyboardEvent): void {
   installBlueprintLayers();
   const typing = isTypingIn(e);
   if (matchesCombo(e, 'Escape')) {
-    if (typing && !isCheatSheetOpen()) return;
+    // A picker's own search field has the focus while it is open: Escape still closes the picker.
+    if (typing && !isCheatSheetOpen() && !bp.picker && !bp.movePicker && !bp.flowPicker) return;
     // The page still sees the key (no stopPropagation), as before.
     if (escapeLayers().escape(e)) e.preventDefault();
     return;
