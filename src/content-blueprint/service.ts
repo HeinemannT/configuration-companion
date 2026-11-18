@@ -177,13 +177,13 @@ export const applySessionIO: ApplySessionIO = {
  *  is gone) — so caching for the session is safe and skips re-running the SELECT on every picker open.
  *  Mirrors the colour-set cache (colors.ts). Cleared on a profile switch and on a manual sidebar Reset
  *  (resetFlowRefsCache, driven by RESET_OVERLAY_CACHES). */
-const flowRefsCache = new Map<'InputSet' | 'EditPage', FlowRefListItem[]>();
+const flowRefsCache = new Map<'InputSet' | 'EditPage' | 'ObjectType', FlowRefListItem[]>();
 
 /** Drop the cached wire-to-existing lists so the next picker-open re-fetches. Called on profile switch
  *  and on a manual sidebar Reset — the two points where the workspace's InputSets may have changed. */
 export function resetFlowRefsCache(): void { flowRefsCache.clear(); }
 
-export async function fetchFlowRefs(refClass: 'InputSet' | 'EditPage'): Promise<void> {
+export async function fetchFlowRefs(refClass: 'InputSet' | 'EditPage' | 'ObjectType'): Promise<void> {
   const cached = flowRefsCache.get(refClass);
   if (cached) { bp.flowRefList = cached; render(); return; } // served from the session cache
   const g = bp.gen;
@@ -194,7 +194,7 @@ export async function fetchFlowRefs(refClass: 'InputSet' | 'EditPage'): Promise<
     const refs = res?.ok ? (res.refs ?? []) : [];
     if (res?.ok) flowRefsCache.set(refClass, refs); // cache only a successful list
     bp.flowRefList = refs;
-    if (!res?.ok) blueprintFailure(`Blueprint could not list the existing ${refClass}s`, res?.error);
+    if (!res?.ok) blueprintFailure(refClass === 'ObjectType' ? 'Blueprint could not list the object types' : `Blueprint could not list the existing ${refClass}s`, res?.error);
     render();
   } catch {
     if (sameSession(g) && bp.flowPicker?.wireExisting) { bp.flowRefList = []; render(); }

@@ -855,3 +855,59 @@ describe('renameFlowObject', () => {
     expect(renameFlowObject(flowModel(), '50851', '   ')).toBeNull();
   });
 });
+
+describe('object type of a create view', () => {
+  const risk = { id: 'default_riskinstance', rid: '6935556136354115450', name: 'Risk Instance', className: 'CeRiskAssessment' };
+  const cov = (extra: Partial<FlowProjection> = {}): LModel => {
+    const base = flowModel();
+    base.flows!['50842'] = { ownerId: '50842', ownerRid: 'r_cov0', ownerClass: 'CreateObjectView', kind: 'editpage', createMode: 'ADD', children: [], ...extra };
+    return base;
+  };
+
+  it('stages the choice, survives a clone, and compiles to one change on the view', async () => {
+    const { setObjectType, objectTypeClassOf } = await import('../flow');
+    const base = cov();
+    const m = setObjectType(base, '50842', risk);
+    expect(objectTypeClassOf(m, '50842')).toBe('CeRiskAssessment');
+    expect(cloneModel(m).flowEdits?.['50842']?.objectTypeRef).toEqual({ targetId: 'default_riskinstance', targetRid: '6935556136354115450', targetName: 'Risk Instance', className: 'CeRiskAssessment' });
+    expect(flowChangeCount(m)).toBe(1);
+    expect(compile(flowDiff(base, m), m).script).toBe('t.50842.change(objectType := lookup(6935556136354115450))'); // by RID: the type is not in the t. namespace
+  });
+
+  it('clears the staged change when the view already has that type', async () => {
+    const { setObjectType } = await import('../flow');
+    const base = cov({ objectType: 'Risk Instance', objectTypeClass: 'CeRiskAssessment' });
+    expect(setObjectType(base, '50842', risk).flowEdits ?? {}).toEqual({});
+  });
+
+  it('gives a new edit page staged for the same view its type, in either order', async () => {
+    const { setObjectType } = await import('../flow');
+    const base = cov();
+    const pageFirst = stageNewFlowContainer(base, '50842', 'editPage', 'Create risk');
+    const typed = setObjectType(pageFirst.model, '50842', risk);
+    expect(typed.flowEdits?.[pageFirst.id]?.newContainer?.editPageType).toBe('CeRiskAssessment');
+    const typeFirst = stageNewFlowContainer(setObjectType(base, '50842', risk), '50842', 'editPage', 'Create risk');
+    expect(typeFirst.model.flowEdits?.[typeFirst.id]?.newContainer?.editPageType).toBe('CeRiskAssessment');
+    const script = compile(flowDiff(base, typed), typed).script;
+    expect(script).toContain('types := list(CeRiskAssessment)');
+    expect(script).toContain('t.50842.change(objectType := lookup(6935556136354115450))');
+  });
+});
+
+describe('object type list', () => {
+  it('keeps one entry per object and reads the class and the category', async () => {
+    const { parseObjectTypeList, buildObjectTypeListEc, buildObjectTypeSiblingsEc } = await import('../sync');
+    const M = '<<<CREV_FLST>>>';
+    const rows = parseObjectTypeList(`${M}default_ceService|146|CeService|129|Defaults|Enterprise service\n${M}default_ceService|146|CeService|129|Defaults|Enterprise service\n${M}|||||\n${M}default_risk|693|CeRiskAssessment|129|Defaults|Risk | Instance\n`);
+    expect(rows).toEqual([
+      { id: 'default_ceService', rid: '146', className: 'CeService', category: 'Defaults', parentRid: '129', name: 'Enterprise service' },
+      { id: 'default_risk', rid: '693', className: 'CeRiskAssessment', category: 'Defaults', parentRid: '129', name: 'Risk | Instance' },
+    ]);
+    // The cut is on its own line (a cut straight on a SELECT does not parse), and both reads are capped.
+    expect(buildObjectTypeListEc()).toContain('_all := SELECT CreateObjectView FROM root\n_list := _all.first(500)');
+    const siblings = buildObjectTypeSiblingsEc(['129', 'not-a-rid', '130', '131', '132', '133']);
+    expect(siblings).toContain('lookup(129)');
+    expect(siblings).not.toContain('not-a-rid');
+    expect(siblings.match(/children\(\)\.first\(200\)/g)).toHaveLength(4);
+  });
+});

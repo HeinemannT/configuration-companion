@@ -336,6 +336,16 @@ export function compile(
         const mode = s.setCreateMode ? `, createMode := "EDITORADD"` : '';
         const tgt = s.targetName ?? s.targetId;
         const owner = flowOwner(s.id);
+        if (s.prop === 'objectType') {
+          // The object a create view makes copies of. It is addressed by RID: these objects are not
+          // in the `t.` namespace, so `t.<id>` gives "Missing value" and the write is skipped (seen
+          // on a real apply). Without a RID the step is not emitted as a silent no-op but fails loudly.
+          emit({ verb: 'update', id: s.id, text: `Set the object type to "${tgt}"`,
+            action: 'Change', object: owner?.name ?? s.id, objectType: owner?.className,
+            detail: `objectType → "${tgt}"`,
+            ec: `${fref(s.id, s.rid)}.change(objectType := lookup(${ecRid(s.targetRid ?? '')}))` });
+          break;
+        }
         emit({ verb: 'update', id: s.id, text: `Wire ${s.prop} to "${tgt}"`,
           action: 'Change', object: owner?.name ?? s.id, objectType: owner?.className,
           detail: `${s.prop} → "${tgt}"${s.setCreateMode ? ' · createMode → EDITOR ADD' : ''}`,

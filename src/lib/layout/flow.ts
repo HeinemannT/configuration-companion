@@ -126,7 +126,7 @@ function withFlowEdit(m: LModel, key: string, fn: (e: FlowEdit) => void): LModel
   fn(e);
   // Drop an entry that ended up empty (e.g. a flag toggled back to its projection value).
   if (!e.adds?.length && !e.removes?.length && !e.order && e.displayOnActionMenu === undefined && e.displayOnAllTabs === undefined
-    && !e.newContainer && !e.wireRef && e.rename === undefined && e.propertyMapping === undefined) delete edits[key];
+    && !e.newContainer && !e.wireRef && !e.objectTypeRef && e.rename === undefined && e.propertyMapping === undefined) delete edits[key];
   return c;
 }
 
@@ -232,7 +232,7 @@ export function isStagedActionButtonAdd(key: string, e: FlowEdit): boolean {
 export function stageNewFlowContainer(m: LModel, widgetId: string, prop: 'inputSet' | 'editPage', name: string): { model: LModel; id: string } {
   const id = tempId('flowset');
   const className = prop === 'inputSet' ? 'InputSet' as const : 'EditPage' as const;
-  const editPageType = prop === 'editPage' ? m.flows?.[widgetId]?.objectTypeClass : undefined;
+  const editPageType = prop === 'editPage' ? objectTypeClassOf(m, widgetId) : undefined;
   let next = withFlowEdit(m, id, e => {
     e.newContainer = { className, name, ...(editPageType ? { editPageType } : {}) };
   });
@@ -240,6 +240,23 @@ export function stageNewFlowContainer(m: LModel, widgetId: string, prop: 'inputS
     e.wireRef = { prop, targetId: id, targetClass: className, targetName: name, ...(needsModeFlip(m, widgetId, prop) ? { setCreateMode: true } : {}) };
   });
   return { model: next, id };
+}
+
+/** The class a create view creates: its staged object type, else the one it has. */
+export function objectTypeClassOf(m: LModel, widgetId: string): string | undefined {
+  return m.flowEdits?.[widgetId]?.objectTypeRef?.className ?? m.flows?.[widgetId]?.objectTypeClass;
+}
+
+/** Stage the object type of a create view. Choosing the one it already has clears the staged
+ *  change. A new edit page staged for the same view takes the class as its type. */
+export function setObjectType(m: LModel, widgetId: string, target: { id: string; rid: string; name: string; className: string }): LModel {
+  const next = withFlowEdit(m, widgetId, e => {
+    if (m.flows?.[widgetId]?.objectTypeClass === target.className && m.flows?.[widgetId]?.objectType === target.name) delete e.objectTypeRef;
+    else e.objectTypeRef = { targetId: target.id, targetRid: target.rid, targetName: target.name, className: target.className };
+  });
+  const page = next.flowEdits?.[widgetId]?.wireRef?.targetId;
+  if (!page || !next.flowEdits?.[page]?.newContainer || next.flowEdits[page].newContainer!.className !== 'EditPage') return next;
+  return withFlowEdit(next, page, e => { e.newContainer = { ...e.newContainer!, editPageType: target.className }; });
 }
 
 /** Stage wiring a flow widget to an EXISTING InputSet/EditPage (the "wire to existing" picker).
@@ -435,6 +452,13 @@ export function flowDiff(_baseline: LModel, desired: LModel): PlanStep[] {
       });
     }
     // The widget's staged reference wire (emitted last, after every create).
+    if (e.objectTypeRef) {
+      const proj = desired.flows?.[key];
+      wires.push({
+        kind: 'flowWire', id: key, prop: 'objectType', targetId: e.objectTypeRef.targetId, targetRid: e.objectTypeRef.targetRid,
+        targetName: e.objectTypeRef.targetName, ...(proj?.ownerRid ? { rid: proj.ownerRid } : {}),
+      });
+    }
     if (e.wireRef) {
       const proj = desired.flows?.[key];
       wires.push({

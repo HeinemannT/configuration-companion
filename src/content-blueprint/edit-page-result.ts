@@ -4,6 +4,7 @@ import { effectiveFlowChildren } from '../lib/layout/flow';
 import { intersectTypeSchemas } from '../lib/type-schema-utils';
 import { propertyPicker } from '../lib/property-picker';
 import {
+  ICON_ARROW_OUT,
   ICON_COLUMNS,
   ICON_INFO,
   ICON_PENCIL,
@@ -83,6 +84,11 @@ export function editPageFieldLabel(node: FlowNode, property?: TypeSchemaProp): s
     return property?.label || node.prop.replace(/[_-]+/g, ' ').toUpperCase();
   }
   return node.name || node.className;
+}
+
+/** What stands for the object on the canvas: its ID, or its name while it is new and has none. */
+function shownId(node: FlowNode): string {
+  return isTempId(node.id) ? node.name || node.className : node.id;
 }
 
 function activate(element: HTMLElement, action: () => void): void {
@@ -181,16 +187,20 @@ function selectionToolbar(
 
   const id = document.createElement('code');
   id.className = 'bp-ep-object-id';
-  id.textContent = node.id;
+  id.textContent = shownId(node);
   id.dataset.bprename = node.id;
   toolbar.appendChild(id);
 
   if (node.className === 'EditField') toolbar.appendChild(propertySelector(node, pageId, schema));
-  toolbar.appendChild(iconButton(ICON_PENCIL, `Rename ${node.id}`, () => beginRename(node.id)));
+  toolbar.appendChild(iconButton(ICON_PENCIL, `Rename ${shownId(node)}`, () => beginRename(node.id)));
+  // What Blueprint does not set here (label, required, read-only, code) is one click away.
+  if (node.rid && !isTempId(node.id)) {
+    toolbar.appendChild(iconButton(ICON_ARROW_OUT, 'Open in the object window for its other settings', () => inspectMappedProperty(node.rid!)));
+  }
   if (!protectedNode) {
     const remove = iconButton(
       ICON_TRASH,
-      isTempId(node.id) ? 'Cancel staged add' : `Delete ${node.id}`,
+      isTempId(node.id) ? `Remove this new ${node.className === 'EditPageBreak' ? 'page' : 'element'}` : `Delete ${node.id}`,
       () => doDeleteFlowChild(pageId, node.id),
     );
     remove.classList.add('is-delete');
@@ -223,7 +233,9 @@ function selectable(
     selectEditPageField(node.id, node.className === 'EditField' ? types : []);
   });
   element.addEventListener('keydown', event => {
-    if (event.key !== 'Enter' && event.key !== ' ') return;
+    // Only keys on the element itself: Enter and Space typed into its name field or its property
+    // search belong there (a space in a new name was swallowed here).
+    if (event.target !== element || (event.key !== 'Enter' && event.key !== ' ')) return;
     event.preventDefault();
     selectEditPageField(node.id, node.className === 'EditField' ? types : []);
   });
@@ -259,8 +271,8 @@ function fieldCard(
   card.appendChild(flowBadge(node.className, isTempId(node.id), true));
   const identity = document.createElement('code');
   identity.className = 'bp-ep-field-id';
-  identity.textContent = node.id;
-  identity.title = node.name || node.className;
+  identity.textContent = shownId(node);
+  identity.title = isTempId(node.id) ? 'New: it gets its ID when the changes are applied' : node.name || node.className;
   card.appendChild(identity);
 
   if (node.className === 'EditField') {
@@ -272,7 +284,9 @@ function fieldCard(
       : 'No property';
     mapping.title = node.prop
       ? `${property?.label || node.prop} · propertyMapping`
-      : 'This EditField has no property mapping';
+      : schema.state === 'unavailable'
+        ? 'No property yet. The create view has no object type, so there are no properties to choose from.'
+        : 'No property yet. Select the field to choose one.';
     card.appendChild(mapping);
   } else if (node.className === 'EditPageInfo') {
     const icon = document.createElement('span');
@@ -305,7 +319,7 @@ function columnObject(
   const object = selectable(node, pageId, [], schema, 'bp-ep-column-object');
   object.appendChild(flowBadge(node.className, isTempId(node.id), true));
   const id = document.createElement('code');
-  id.textContent = node.id;
+  id.textContent = shownId(node);
   object.appendChild(id);
   const icon = document.createElement('span');
   icon.className = 'bp-ep-structural-icon bp-ep-column-icon';
@@ -345,6 +359,15 @@ function editPageSurface(m: LModel, options: EditPageSurfaceOptions): HTMLElemen
   const frame = document.createElement('section');
   frame.className = `bp-editpage${embedded ? ' is-embedded' : ' is-standalone'}`;
   frame.setAttribute('aria-label', 'Edit page Blueprint');
+  // Inside a create view's box: a press here belongs to the edit page. Left to bubble, the box would
+  // select itself on release and redraw, and the click on a field or a page would never arrive.
+  if (embedded) frame.addEventListener('mousedown', event => event.stopPropagation());
+  if (embedded && !types.length) {
+    const note = document.createElement('p');
+    note.className = 'bp-ep-note';
+    note.textContent = 'This create view has no object type yet, so its fields cannot be linked to properties. Choose the object type above first.';
+    frame.appendChild(note);
+  }
 
   if (!embedded) {
     const context = document.createElement('div');

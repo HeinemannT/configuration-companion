@@ -18,12 +18,12 @@
  */
 import type { LModel, LNode, FlowNode, FlowProjection } from '../lib/layout/types';
 import { isTempId } from '../lib/layout/model';
-import { effectiveFlowChildren, effectiveRef, findFlowContainer, trayButtons, isStagedActionButtonAdd } from '../lib/layout/flow';
+import { effectiveFlowChildren, effectiveRef, findFlowContainer, objectTypeClassOf, trayButtons, isStagedActionButtonAdd } from '../lib/layout/flow';
 import { flowDotTitle } from '../lib/widget-metadata';
 import { ICON_PLUS, ICON_LIGHTNING, ICON_ARROW_RIGHT, ICON_PENCIL, ICON_TABS, ICON_LAYOUT, ICON_TRAY, ICON_ARROW_UNDO, ICON_X } from '../lib/icons';
 import { setIcon } from './geometry';
 import { bp } from './state';
-import { openFlowPicker, toggleFlowFold, toggleTrayCard, toggleActionMenu, setActionButtonFlag, openPicker, cancelFlowAdd, stageNewRef, openWireExisting, doUnwire, beginRename } from './actions';
+import { openFlowPicker, toggleFlowFold, toggleTrayCard, toggleActionMenu, setActionButtonFlag, openPicker, cancelFlowAdd, stageNewRef, openWireExisting, openObjectTypePicker, doUnwire, beginRename } from './actions';
 import { armFlowRow } from './gestures';
 import { flowBadge } from './flow-badge';
 import { embeddedEditPage } from './edit-page-result';
@@ -137,6 +137,28 @@ function childRows(m: LModel, children: FlowNode[], key: string, grid: boolean, 
       into.appendChild(nest);
     }
   }
+}
+
+/** What a create view creates, with the way to choose it: without an object type its edit fields
+ *  have no properties to link to. A staged choice is marked until it is applied. */
+function objectTypeBand(m: LModel, widgetId: string): HTMLElement {
+  const staged = m.flowEdits?.[widgetId]?.objectTypeRef, live = m.flows?.[widgetId];
+  const band = document.createElement('div'); band.className = 'bp-fband bp-fband-type';
+  const lbl = document.createElement('span'); lbl.className = 'lbl'; lbl.textContent = 'Object type';
+  band.appendChild(lbl);
+  const name = staged?.targetName ?? live?.objectType, cls = staged?.className ?? live?.objectTypeClass;
+  const value = document.createElement('span'); value.className = name ? 'mono' : 'none';
+  value.textContent = name ? `${name}${cls ? ` · ${cls}` : ''}` : 'none yet';
+  band.appendChild(value);
+  if (staged) { const tag = document.createElement('span'); tag.className = 'bp-fnewtag'; tag.textContent = 'NEW'; tag.title = 'Set on Apply'; band.appendChild(tag); }
+  const end = document.createElement('span'); end.className = 'end';
+  const pick = document.createElement('button'); pick.className = 'bp-fwire';
+  pick.textContent = name ? 'Change' : 'Choose';
+  pick.title = 'Choose the object this view creates. Its type gives the edit fields their properties.';
+  onTap(pick, (e) => openObjectTypePicker(widgetId, { x: e.clientX, y: e.clientY }));
+  end.appendChild(pick);
+  band.appendChild(end);
+  return band;
 }
 
 const CREATE_MODE_LABEL: Record<string, string> = { ADD: 'ADD', EDITORADD: 'EDITOR ADD', EDITOREDIT: 'EDITOR EDIT' };
@@ -284,6 +306,7 @@ export function flowPanel(m: LModel, node: LNode): HTMLElement | null {
   const p = m.flows?.[node.id];
   const wrap = document.createElement('div'); wrap.className = 'bp-fpanel';
   if (p?.ownerClass === 'CreateObjectView') wrap.appendChild(covBand(p));
+  if (node.className === 'CreateObjectView') wrap.appendChild(objectTypeBand(m, node.id));
   if (p?.ownerClass === 'ActionButton') {
     const staged = m.flowEdits?.[p.ownerId]?.displayOnActionMenu;
     wrap.appendChild(actionBand(p, staged));
@@ -311,7 +334,7 @@ export function flowPanel(m: LModel, node: LNode): HTMLElement | null {
         ? embeddedEditPage(m, {
           pageId: ref.id,
           pageName: ref.name,
-          objectTypeClass: p?.objectTypeClass ?? m.flowEdits?.[ref.id]?.newContainer?.editPageType,
+          objectTypeClass: objectTypeClassOf(m, node.id) ?? m.flowEdits?.[ref.id]?.newContainer?.editPageType,
         })
         : null;
       if (editPage) {

@@ -26,6 +26,7 @@ import { ensureOverlayStyle } from './content-overlay-style';
 import { resetObjectPreview } from './lib/object-chip';
 import { blueprintFontFaceCss } from './content-blueprint/font-face';
 import { rememberTarget, rememberedTarget } from './content-blueprint/resume-note';
+import { isTempId } from './lib/layout/model';
 import { clearDockRoom } from './content-blueprint/bar-place';
 
 export { isBlueprintActive };
@@ -182,7 +183,10 @@ export function enableBlueprint(): void {
       if (handlePageNav()) return; // a different PAGE is showing (link-nav/back-forward) → reloaded; stop
       if (!bp.baseline) return;
       const sig = ridSignature();
-      if (sig !== bp.ridSig) { bp.ridSig = sig; bp.viewTabId = null; render(); } // same page → canvas follows the tab switch
+      // Same page: the canvas follows the tab switch. A tab that is new and not on the page yet has
+      // no live tab to follow, so it stays shown (the page lazily drawing widgets used to throw the
+      // view back to the first tab while the new one was being filled).
+      if (sig !== bp.ridSig) { bp.ridSig = sig; if (!bp.viewTabId || !isTempId(bp.viewTabId)) bp.viewTabId = null; render(); }
     });
   });
   bp.observer.observe(document.body, { childList: true, subtree: true });

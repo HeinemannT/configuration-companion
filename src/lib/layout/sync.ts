@@ -875,6 +875,76 @@ export function parseFlowRefList(log: string): FlowRefListItem[] {
   return out;
 }
 
+/** Create views read for the object type list, and types listed per category of defaults. */
+export const OBJECT_TYPE_VIEWS = 500;
+export const OBJECT_TYPE_SIBLINGS = 200;
+const OBJECT_TYPE_ROW = (v: string): string =>
+  `"${FLOW_LIST_MARKER}" + ${v}.id.whenMissing("") + "|" + str(${v}.rid.whenMissing("")) + "|" + ${v}.className.whenMissing("") + "|" + str(${v}.parent.rid.whenMissing("")) + "|" + ${safeWireTextEc(`${v}.parent.name.whenMissing("")`)} + "|" + ${safeWireTextEc(`${v}.name.whenMissing("")`)} + "\\n"`;
+
+/** EC listing the object type of the workspace's create views: the objects a create view's
+ *  `objectType` points at (bid|rid|class|parentRid|parentName|name). Capped; one row per view,
+ *  joined once. The same object comes back once per view that uses it; the parser keeps one. */
+export function buildObjectTypeListEc(): string {
+  return constantScript('buildObjectTypeListEc', [
+    // The cut goes on its own line: `.first()` straight on a SELECT does not parse.
+    `_all := SELECT CreateObjectView FROM root`,
+    `_list := _all.first(${OBJECT_TYPE_VIEWS})`,
+    `_rows := _list.calculate(`,
+    `     _x := self.objectType`,
+    `     ${OBJECT_TYPE_ROW('_x')}`,
+    `)`,
+    `_rows.join("").whenMissing("")`,
+  ].join('\n'));
+}
+
+/** EC listing what else sits beside the used object types: the children of their parent categories
+ *  (where a workspace keeps its default objects), so a type no create view uses yet can be chosen. */
+export function buildObjectTypeSiblingsEc(parentRids: readonly string[]): string {
+  // At most four categories: the text grows four times, not once per row.
+  const lines = ['_acc := ""'];
+  parentRids.filter(rid => /^-?\d{1,20}$/.test(rid)).slice(0, 4).forEach((rid, i) => {
+    lines.push(`_p${i} := lookup(${rid})`);
+    lines.push(`_s${i} := _p${i}.children().first(${OBJECT_TYPE_SIBLINGS}).calculate(`);
+    lines.push('     _x := self');
+    lines.push(`     ${OBJECT_TYPE_ROW('_x')}`);
+    lines.push(')');
+    lines.push(`_acc := _acc + _s${i}.join("").whenMissing("")`);
+  });
+  lines.push('_acc');
+  return varyingScript('buildObjectTypeSiblingsEc', lines.join('\n'));
+}
+
+/** Parse the object type rows; one entry per object, in the order first seen. */
+export function parseObjectTypeList(log: string): Array<FlowRefListItem & { parentRid?: string }> {
+  const out = new Map<string, FlowRefListItem & { parentRid?: string }>();
+  for (const line of markerLines(log, FLOW_LIST_MARKER)) {
+    const parts = line.split('|');
+    if (parts.length < 6) continue;
+    const [id, rid, className, parentRid, category] = parts;
+    const name = parts.slice(5).join('|');
+    if (!rid || !className || out.has(rid)) continue;
+    out.set(rid, { id, rid, className, ...(category ? { category } : {}), ...(parentRid ? { parentRid } : {}), name: name || id || rid });
+  }
+  return [...out.values()];
+}
+
+/** The object types a create view can be given: those the workspace's create views already use,
+ *  then the other objects in the same categories. Two reads, both capped. */
+export async function loadObjectTypeList(io: LayoutIO): Promise<FlowRefListItem[]> {
+  const used = await io.exec(buildObjectTypeListEc());
+  if (!used.ok) throw new Error(used.error || 'object type list fetch failed');
+  const first = parseObjectTypeList(used.log ?? '');
+  const parents = [...new Set(first.flatMap(t => t.parentRid ? [t.parentRid] : []))].slice(0, 4);
+  let rest: ReturnType<typeof parseObjectTypeList> = [];
+  if (parents.length) {
+    const more = await io.exec(buildObjectTypeSiblingsEc(parents));
+    // The second read only widens the choice: without it the used types are still offered.
+    if (more.ok) rest = parseObjectTypeList(more.log ?? '').filter(t => t.className !== 'Category');
+  }
+  const seen = new Set(first.map(t => t.rid));
+  return [...first, ...rest.filter(t => !seen.has(t.rid))].map(({ parentRid: _parent, ...item }) => item);
+}
+
 /** Fetch the wire-to-existing list (SW-side; the content script reaches it via LAYOUT_FLOW_REFS). */
 export async function loadFlowRefList(io: LayoutIO, refClass: 'InputSet' | 'EditPage'): Promise<FlowRefListItem[]> {
   const res = await io.exec(buildFlowRefListEc(refClass));

@@ -15,7 +15,7 @@
 import type { BmpClient } from './bmp-client';
 import { AI_LAYOUT_EC_TIMEOUT, LAYOUT_EC_TIMEOUT } from './constants';
 import type { LayoutIO, BlueprintCtx, LoadResult, StructureLoadResult, ApplyResult, FlowRefListItem } from './layout/sync';
-import { loadModel, loadEditPageModel, loadStructureModel, applyModel, resolvePageContext, loadFlowRefList, loadFlowRefChildren as loadFlowRefChildrenCore } from './layout/sync';
+import { loadModel, loadEditPageModel, loadStructureModel, applyModel, resolvePageContext, loadFlowRefList, loadObjectTypeList, loadFlowRefChildren as loadFlowRefChildrenCore } from './layout/sync';
 import type { LModel, FlowNode } from './layout/types';
 import { preflightPortableIdRequests, type PortableIdPlan, type PortableIdRequest } from './layout/portable-ids';
 import { validateBusinessId, validateRid } from './ec-guards';
@@ -155,7 +155,8 @@ export async function preflightPortableIds(
 
 /** The flow "wire to existing" list: every InputSet or EditPage under root.portal (lean fields only).
  *  Fetched at picker-open — never part of the main layout fetch (pitfall #3: no fetch-size creep). */
-export async function loadFlowRefs(client: BmpClient, refClass: 'InputSet' | 'EditPage'): Promise<FlowRefListItem[]> {
+export async function loadFlowRefs(client: BmpClient, refClass: 'InputSet' | 'EditPage' | 'ObjectType'): Promise<FlowRefListItem[]> {
+  if (refClass === 'ObjectType') return loadObjectTypeList(makeLayoutIO(client));
   return loadFlowRefList(makeLayoutIO(client), refClass);
 }
 

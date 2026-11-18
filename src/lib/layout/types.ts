@@ -315,6 +315,10 @@ export interface FlowEdit {
    *  also folds `createMode := "EDITORADD"` into the same change() — a COV in ADD mode ignores its
    *  editPage otherwise (change(createMode) round-trip execute-verified on t.50842, 2026-07-12). */
   wireRef?: { prop: 'inputSet' | 'editPage'; targetId: string; targetClass: string; targetName?: string; setCreateMode?: boolean };
+  /** Staged object type of a CreateObjectView: `<widget>.change(objectType := <target>)`. The target
+   *  is the object the view creates copies of; `className` is its class, which gives a new edit page
+   *  its type and the edit fields their properties. */
+  objectTypeRef?: { targetId: string; targetRid: string; targetName: string; className: string };
 }
 
 /** One step of an apply plan (the diff between baseline and desired). */
@@ -362,7 +366,7 @@ export type PlanStep =
   // reference wire on a flow widget: `<widget>.change(<prop> := <target>)` (+ createMode := "EDITORADD"
   // when setCreateMode). Emitted AFTER every flow create so a staged-new target's var exists; the
   // widget itself may be a staged layout add (its `_n<k>` var resolves through the same vars map).
-  | { kind: 'flowWire'; id: string; rid?: string; prop: 'inputSet' | 'editPage'; targetId: string; targetName?: string; setCreateMode?: boolean };
+  | { kind: 'flowWire'; id: string; rid?: string; prop: 'inputSet' | 'editPage' | 'objectType'; targetId: string; targetRid?: string; targetName?: string; setCreateMode?: boolean };
 
 /** The subject node's model id for any plan step — `create`/`flowCreate` carry it on `node`, every
  *  other kind carries it directly. The one place that knows this shape (call sites used to branch on

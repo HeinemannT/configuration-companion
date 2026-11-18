@@ -12,11 +12,12 @@ import { isTypingIn, matchesCombo, matchesShortcut, whichShortcut } from '../lib
 import { cancelDrag } from './gestures';
 import { isCheatSheetOpen, toggleCheatSheet, type CheatSheetOptions } from '../lib/cheat-sheet';
 import { typeInfo } from '../lib/object-window-table';
+import { flowChildPalette } from '../lib/layout/constraints';
 import { findNode, findTabOf, isResultTab, editableTabsets, walk } from '../lib/layout/model';
 import { bandInsertIndex, describePlacement } from '../lib/layout/placement';
 import { resize, setHeight, rename, remove, restoreNode, addWidget, addContainer, moveInto, swap, insertRelative, addTab, createTabset, toggleReset, setStyle, setDescriptionViewType, setDescriptionViewProperties } from '../lib/layout/edit';
 import { diff, summarizeChanges } from '../lib/layout/diff';
-import { addFlowChild, reorderFlowChild, removeFlowAdd, deleteFlowChild, setActionFlag, addActionButton, flowChangeCount, stageNewFlowContainer, wireFlowRef, unwireFlowRef, renameFlowObject, setEditFieldProperty } from '../lib/layout/flow';
+import { effectiveFlowChildren, flowDiff, setObjectType, addFlowChild, reorderFlowChild, removeFlowAdd, deleteFlowChild, setActionFlag, addActionButton, flowChangeCount, stageNewFlowContainer, wireFlowRef, unwireFlowRef, renameFlowObject, setEditFieldProperty } from '../lib/layout/flow';
 import { History } from '../lib/layout/history';
 import { maskStyle, type Breakpoint, type LModel, type NodeStyle } from '../lib/layout/types';
 import { sendToSW } from '../lib/content-port';
@@ -130,6 +131,17 @@ export function viewTab(id: string): void {
     }
   }
   bp.viewTabId = id; bp.selectedId = id; render();
+  showCanvasTop();
+}
+/** Bring the top of the canvas into view after the shown tab changed: a tab with little or nothing in
+ *  it starts there, and from further down the page it would look like a blank canvas. */
+function showCanvasTop(): void {
+  setTimeout(() => {
+    const canvas = bp.layer?.querySelector<HTMLElement>('.bp-result');
+    if (!bp.active || !canvas) return;
+    const top = canvas.getBoundingClientRect().top;
+    if (top < 0 || top > window.innerHeight * 0.6) canvas.scrollIntoView({ block: 'start' });
+  }, 0);
 }
 export function setWidth(id: string, n: number, screen: Breakpoint = 'L'): void { const m = model(); if (m) mutate(resize(m, id, screen, n)); }
 /** F2: stage/unstage a reset of one overridden property back to the template (the blue revert arrow). */
@@ -322,9 +334,11 @@ export function addTabTo(tabsetId: string): void {
   if (destinations.length && !destinations.some(t => t.id === tabsetId)) return;
   const r = addTab(m, tabsetId, 'New Tab');
   bp.tabsetPickerOpen = false;
+  bp.viewTabId = r.id; // the new tab is shown, so what is added next lands in it
   nameNew(r.id);
   mutate(r.model);
   announcePlacement(r.id, 'Added');
+  showCanvasTop();
 }
 
 // ── flow editing (blueprint flow layer) ────────────────────────────────────────
@@ -342,7 +356,23 @@ export function addFlowFromPicker(className: string): void {
   const m = model(); const p = bp.flowPicker;
   if (!m || !p) return;
   bp.flowPicker = null;
-  mutate(addFlowChild(m, p.key, className, undefined, p.afterId).model);
+  const added = addFlowChild(m, p.key, className, newFlowName(m, p.key, p.className, className), p.afterId);
+  if (p.className === 'EditPage') {
+    // On an edit page the new element is where the work goes on: a new page opens, anything else is
+    // selected, so an edit field shows its property choice at once.
+    if (className === 'EditPageBreak') bp.editPageViewKeys.set(p.key, added.id);
+    bp.selectedId = added.id;
+  }
+  mutate(added.model);
+}
+/** The name a new element starts with, in the words of the add list: "Edit field" as BMP names its
+ *  own (the canvas then shows the property instead), "Page 3" for the third page, the type's label for
+ *  the rest. Never the class name with "New" in front. */
+export function newFlowName(m: LModel, key: string, containerClass: string, className: string): string {
+  if (className === 'EditField') return 'Edit field';
+  if (className === 'EditPageBreak') return `Page ${effectiveFlowChildren(m, key).filter(n => n.className === 'EditPageBreak').length + 2}`;
+  const listed = flowChildPalette(containerClass).find(entry => entry.key === className)?.name;
+  return listed || typeInfo(className).label || `New ${className}`;
 }
 /** Tray "Add action": stage a new page-level menu button (born displayOnActionMenu, bound to the
  *  viewed tab — RESULT when the page renders its buttons through the shared Result tab). */
@@ -375,7 +405,10 @@ export function setActionButtonFlag(id: string, prop: 'displayOnActionMenu' | 'd
  *  Children stage underneath immediately (the empty row list renders with its Add-element row). */
 export function stageNewRef(widgetId: string, prop: 'inputSet' | 'editPage'): void {
   const m = model(); if (!m) return;
-  const name = prop === 'inputSet' ? 'New InputSet' : 'New EditPage';
+  // Named after the widget it belongs to, so it can be told apart in BMP later.
+  const owner = findNode(m, widgetId)?.node.name?.trim();
+  const kind = prop === 'inputSet' ? 'input set' : 'edit page';
+  const name = owner ? `${owner} ${kind}` : kind.charAt(0).toUpperCase() + kind.slice(1);
   mutate(stageNewFlowContainer(m, widgetId, prop, name).model);
 }
 /** Open the "wire to existing" picker for a reference-less flow widget; the workspace list fetches at
@@ -390,9 +423,22 @@ export function openWireExisting(widgetId: string, prop: 'inputSet' | 'editPage'
 /** Wire the picker's widget to the chosen existing InputSet/EditPage. When the target isn't on this
  *  page (no projection references it), fetch its real children on demand so the cell shows the current
  *  contents instead of an "unknown contents" note (FIX 2). */
-export function wireExistingFromPicker(targetId: string, targetClass: string, targetName?: string): void {
+/** Open the list of object types for a create view (the objects create views make copies of). */
+export function openObjectTypePicker(widgetId: string, at?: { x: number; y: number }): void {
+  bp.flowPicker = { key: widgetId, className: 'ObjectType', wireExisting: true, ...(at ? { at } : {}) };
+  bp.picker = null; bp.pickerOpts = null;
+  render();
+  void fetchFlowRefs('ObjectType');
+}
+export function wireExistingFromPicker(targetId: string, targetClass: string, targetName?: string, targetRid = ''): void {
   const m = model(); const p = bp.flowPicker;
   if (!m || !p?.wireExisting) return;
+  if (p.className === 'ObjectType') {
+    bp.flowPicker = null; bp.flowRefList = null;
+    void fetchPropertySchemas([targetClass]); // the edit fields choose from this class's properties
+    mutate(setObjectType(m, p.key, { id: targetId, rid: targetRid, name: targetName || targetId, className: targetClass }));
+    return;
+  }
   const prop = p.className === 'InputSet' ? 'inputSet' as const : 'editPage' as const;
   bp.flowPicker = null; bp.flowRefList = null;
   mutate(wireFlowRef(m, p.key, prop, targetId, targetClass, targetName));
@@ -563,7 +609,7 @@ function pendingLabel(m: LModel): string {
 export function pendingCount(): number {
   const m = model();
   if (!bp.baseline || !m) return 0;
-  return summarizeChanges(diff(bp.baseline, m), m).changes + flowChangeCount(m);
+  return Math.max(summarizeChanges([...diff(bp.baseline, m), ...flowDiff(bp.baseline, m)], m).changes, flowChangeCount(m) ? 1 : 0);
 }
 
 /** The one exit check. Resolves true when Blueprint may close (nothing unsaved, or the user chose

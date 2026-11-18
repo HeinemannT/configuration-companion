@@ -122,7 +122,7 @@ import { renderEditPage } from './edit-page-result';
 import { actionMenuTrigger, actionMenuPanel } from './result-flow';
 import { flowBadge } from './flow-badge';
 import { flowChildPalette } from '../lib/layout/constraints';
-import { flowChangeCount } from '../lib/layout/flow';
+import { flowChangeCount, flowDiff } from '../lib/layout/flow';
 import { mascotArt } from '../lib/empty-state';
 import { exitPromptElement } from './exit-confirm';
 
@@ -148,7 +148,8 @@ function pendingCount(base: LModel, m: LModel): number {
   // this count, so omitting flow left a flow-only session ("0 pending") unable to apply. Mirrors
   // actions.ts:pendingLabel, which already sums both. The memo is still valid: every flow edit goes
   // through mutate()→history.push(), bumping `rev` and invalidating the cache.
-  const changes = summarizeChanges(diff(base, m), m).changes + flowChangeCount(m);
+  // The same count as the list of unsaved changes shows: one plan over layout and flow.
+  const changes = Math.max(summarizeChanges([...diff(base, m), ...flowDiff(base, m)], m).changes, flowChangeCount(m) ? 1 : 0);
   pendCache = { base, rev, changes };
   return changes;
 }
@@ -288,7 +289,9 @@ export function render(): void {
     mountActionTray(layer, m, viewedId); // floats at the canvas top-right (mirrors BMP's action menu), if the page has flows
     if (oldRects) flipFrom(layer, oldRects); // animate moved/reordered cells to their new positions
     ensureScrollRoom(layer.querySelector('.bp-result')); // let the page scroll to a panel taller than BMP's content
-    restoreFocus(layer, focus);
+    // A name field that just opened keeps the focus: giving it back to the button that opened it
+    // (an edit page's Rename) closed the field at once.
+    if (!bp.renaming) restoreFocus(layer, focus);
     if (!enteredCanvas) {
       enteredCanvas = true;
       const ae = document.activeElement;
@@ -822,7 +825,7 @@ function flowPickerPanel(): HTMLElement {
   if (p.wireExisting) {
     // "Wire to existing": the workspace's InputSets/EditPages, fetched lean at picker-open
     // (bp.flowRefList; null while the SW round-trip is in flight). Picking stages the reference wire.
-    head.textContent = `Wire to an existing ${p.className}`;
+    head.textContent = p.className === 'ObjectType' ? 'Object type of this create view' : `Wire to an existing ${p.className}`;
     const search = document.createElement('input'); search.className = 'bp-pick-s'; search.placeholder = 'Search…';
     const list = document.createElement('div'); list.className = 'bp-pick-list';
     const fill = (q: string): void => {
@@ -843,7 +846,7 @@ function flowPickerPanel(): HTMLElement {
           meta.append(document.createTextNode(' · '), par);
         }
         row.append(nm, meta);
-        row.addEventListener('mousedown', (e) => { e.stopPropagation(); wireExistingFromPicker(it.id, it.className, it.name); });
+        row.addEventListener('mousedown', (e) => { e.stopPropagation(); wireExistingFromPicker(it.id, it.className, it.name, it.rid); });
         list.appendChild(row);
       }
       if (!list.children.length) { const e = document.createElement('div'); e.className = 'bp-pick-grp'; e.textContent = 'no match'; list.appendChild(e); }

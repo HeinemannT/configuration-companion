@@ -36,8 +36,10 @@ export function placeBar(bar: HTMLElement, bandBottom = portalBandBottom()): voi
 
 // ── Docked bar ──────────────────────────────────────────────────────────────────────────────────
 // Where the portal has a top band with page content in flow below it, the bar is a full-width strip
-// directly under the band and the page gets the same height as room below the band. Nothing of the
-// page is covered then, at the top of the page or scrolled. Without such a band the bar floats.
+// at the very top of the window, over the band: while Blueprint is on it is the page's top bar, as in
+// any editor. The Blueprint canvas scrolls over the portal's band anyway, so a bar under the band
+// left a strip of moving page above it. The page gets as much room as the bar is taller than the
+// band, so nothing of the page is covered. Without such a band the bar floats.
 
 /** The portal's fixed or sticky top band at the top centre of the viewport, ignoring Companion's
  *  own elements; null when there is none. */
@@ -90,9 +92,9 @@ export function dockBar(bar: HTMLElement, band: HTMLElement | null = portalBand(
     return clearDockRoom();
   }
   bar.classList.add('bp-docked');
-  const top = `${Math.round(band.getBoundingClientRect().bottom)}px`;
+  const top = '0px';
   Object.assign(bar.style, { top, left: '0', right: '0' });
-  const px = Math.ceil(bar.getBoundingClientRect().height);
+  const px = Math.max(0, Math.ceil(bar.getBoundingClientRect().height - band.getBoundingClientRect().bottom));
   if (room && room.el === target && room.px === px && target.style.marginTop === `${room.base + px}px`) { room.top = top; return false; }
   if (room && room.el !== target) clearDockRoom();
   if (!room) {

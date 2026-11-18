@@ -295,7 +295,9 @@ function buildLabel(node: LNode, state: CellState): HTMLElement {
   const over = node.overrides ?? [];
   const nm = document.createElement('span'); nm.className = 'bp-rnm'; nm.textContent = node.name; nm.dataset.bprename = node.id; lab.appendChild(nm);
   if (over.includes('name')) lab.appendChild(revertArrow(node, 'name', 'name'));
-  const wd = document.createElement('span'); wd.className = 'bp-rwd'; wd.textContent = node.cols.L >= 6 ? '6 col' : `${node.cols.L} col`; lab.appendChild(wd);
+  const wd = document.createElement('span'); wd.className = 'bp-rwd'; wd.textContent = (node.cols.L >= 6 ? '6 col' : `${node.cols.L} col`)
+    // A width of its own on a smaller screen is said too: the canvas draws the large screen only.
+    + (node.cols.M != null ? ` · M ${node.cols.M}` : '') + (node.cols.S != null ? ` · S ${node.cols.S}` : ''); lab.appendChild(wd);
   if (over.includes('columnsLargeScreen')) lab.appendChild(revertArrow(node, 'columnsLargeScreen', 'width'));
   if (over.includes('chartHeight')) lab.appendChild(revertArrow(node, 'chartHeight', 'height'));
   if (state !== 'same') {

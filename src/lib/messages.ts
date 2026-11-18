@@ -903,7 +903,7 @@ export type LayoutMessage =
     }
   // Flow "wire to existing" picker: the workspace's InputSets/EditPages (lean list — bid/rid/class/
   // category/name only), fetched at picker-open, never in the main layout fetch.
-  | { type: 'LAYOUT_FLOW_REFS'; refClass: 'InputSet' | 'EditPage' }
+  | { type: 'LAYOUT_FLOW_REFS'; refClass: 'InputSet' | 'EditPage' | 'ObjectType' }
   | { type: 'LAYOUT_FLOW_REFS_RESULT'; ok: boolean; refs?: FlowRefListItem[]; error?: string }
   // Wire-to-existing follow-up: the on-demand children of ONE existing off-page InputSet/EditPage the
   // user just wired to (the main fetch never projected it). Same shape as the main flow projection's

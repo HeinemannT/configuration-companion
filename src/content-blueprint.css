@@ -1322,3 +1322,13 @@
 #crev-blueprint-layer .bp-header.bp-docked{width:auto;max-width:none;margin:0;border:0;border-bottom:1px solid var(--bp-line-2);border-radius:0;box-shadow:0 1px 0 rgba(15,23,42,.04),0 6px 14px -10px rgba(15,23,42,.28)}
 #crev-blueprint-layer .bp-header.bp-docked .bp-header-main{flex:1 1 auto;min-width:0}
 #crev-blueprint-layer .bp-header.bp-docked .bp-chip,#crev-blueprint-layer .bp-header.bp-docked .bp-tabs{padding-left:16px;padding-right:16px}
+/* embedded edit page without an object type: why the fields have no property choice */
+#crev-blueprint-layer .bp-ep-note{margin:6px 8px 2px;font:400 11px/1.4 'BPInter',system-ui,sans-serif;color:var(--bp-muted)}
+/* create view: what it creates, and the button to choose it */
+#crev-blueprint-layer .bp-fband-type .lbl{font-weight:600;color:var(--bp-muted)}
+#crev-blueprint-layer .bp-fband-type .none{color:var(--bp-muted);font-style:italic}
+/* edit page inside a create view: the pages wrap instead of scrolling sideways, so a selected page's
+   bar (Rename, Remove) above it is not clipped away */
+#crev-blueprint-layer .bp-editpage.is-embedded .bp-ep-pages{overflow:visible;flex-wrap:wrap;row-gap:2px}
+/* scrolled to on a tab switch: stop below the bar at the top of the window */
+#crev-blueprint-layer .bp-result{scroll-margin-top:140px}
