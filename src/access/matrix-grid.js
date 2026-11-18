@@ -5,15 +5,39 @@
 import { PBAC_ACTIONS } from './pbac-syntax';
 import { roleAncestry } from './role-lookup.js';
 import { UNDECIDED, UNDECIDED_GLYPH } from './access-terms';
+import { ANY_TYPE } from './matrix-model';
+import { isEveryoneRole } from './everyone-role';
+
+/** The row of statements that name no type, and its name on screen. */
+export { ANY_TYPE };
+export const ANY_TYPE_NAME = 'Any type';
+export const typeName = id => id === ANY_TYPE ? ANY_TYPE_NAME : id;
 
 export const BANDS = ['Structure', 'Enterprise objects', 'Interface objects', 'Other types'];
 export const MARKS = {
   granted: { glyph: 'check', word: 'Granted', legend: 'Allowed' },
   inherited: { glyph: 'check', word: 'Inherited', legend: 'Inherited' },
-  conditional: { glyph: 'C', word: 'Conditional', legend: 'Conditional' },
+  conditional: { glyph: 'C', word: 'Under a condition', legend: 'Under a condition' },
   unresolved: { glyph: UNDECIDED_GLYPH, word: UNDECIDED, legend: UNDECIDED },
   none: { glyph: '', word: 'Not granted', legend: 'Not granted' },
 };
+/** The kinds of condition (matrix-evaluation CONDITION_KINDS), in words. */
+export const KINDS = {
+  own: { short: 'own', word: 'own objects', title: 'only objects that name the user, such as the owner' },
+  related: { short: 'related', word: 'through a related object', title: 'only with access to, or a role on, a related object' },
+  model: { short: 'model', word: 'in certain models', title: 'only objects in certain models' },
+  some: { short: 'certain', word: 'certain objects', title: 'only objects with certain field values, or certain named objects' },
+};
+export const kindWords = kinds => (kinds ?? []).map(k => KINDS[k]?.word ?? k).join(', ');
+/** The kinds of condition a conditional operation hangs on. */
+export const cellKinds = (index, rid, type, action) => index.summary(rid, type).kinds?.[action] ?? [];
+/** Granted through a parent role or Everyone, not by a statement that names the role. A role's
+ *  own conditional grant does not make a full grant from above its own. */
+export function cellInherited(index, rid, type, action) {
+  if (!index.own || isEveryoneRole(index.roles.find(r => r.rid === rid))) return false; // statements for everyone (*) are Everyone's own
+  const own = index.own(rid, type), full = !index.summary(rid, type).conditionalActions.includes(action);
+  return !(own.actions.includes(action) && !(full && own.conditionalActions.includes(action)));
+}
 const GRANTS = new Set(['granted', 'inherited', 'conditional']);
 export const grants = mark => GRANTS.has(mark);
 
@@ -27,7 +51,7 @@ export function cellMark(index, rid, type, action) {
   const cell = index.summary(rid, type);
   if (cell.actions.includes(action)) {
     if (cell.conditionalActions.includes(action)) return 'conditional';
-    return index.own && !index.own(rid, type).actions.includes(action) ? 'inherited' : 'granted';
+    return cellInherited(index, rid, type, action) ? 'inherited' : 'granted';
   }
   if (cell.unresolvedActions.includes(action)) return 'unresolved';
   return 'none';
@@ -47,6 +71,15 @@ export function lensMark(index, rid, type, lens) {
 /** A definite answer for the lens: a grant. "?" and no mark are not. */
 export function resolvedMark(index, rid, type, lens) {
   return (lens === 'All' ? PBAC_ACTIONS : [lens]).some(a => { const m = cellMark(index, rid, type, a); return grants(m); });
+}
+
+/** A grant for the lens that comes from a statement naming this type (or these objects). A
+ *  statement that names no type applies everywhere and has its own row: it does not make every
+ *  type's row worth showing. */
+export function typedGrant(index, rid, type, lens) {
+  if (!index.typed) return resolvedMark(index, rid, type, lens);
+  const cell = index.typed(rid, type);
+  return (lens === 'All' ? PBAC_ACTIONS : [lens]).some(a => cell.actions.includes(a));
 }
 
 /** Roles in hierarchy order: Everyone first, then the roots with most heirs, each followed by its children. */
@@ -89,6 +122,9 @@ export function transposeMatrix(index, s, { pending = false } = {}) {
   let roles = orderRoles(index.roles).filter(r => !roleQ || (r.name + ' ' + r.id).toLowerCase().includes(roleQ));
   if (s.role) roles = index.roles.filter(r => r.rid === s.role);
   const bands = [], rows = [];
+  // First row: what the statements that name no type grant, on every type.
+  if ((!typeQ || ANY_TYPE_NAME.toLowerCase().includes(typeQ)) && roles.some(r => lensMark(index, r.rid, ANY_TYPE, s.lens) !== 'none'))
+    rows.push({ kind: 'type', id: ANY_TYPE, group: '', any: true });
   for (const group of BANDS) {
     const all = index.columns.filter(t => t.group === group);
     if (!all.length) continue;
@@ -103,7 +139,7 @@ export function transposeMatrix(index, s, { pending = false } = {}) {
       counts.set(role.rid, { granted, unresolved, total: all.length, pending, text: countText({ granted, unresolved, total: all.length, pending }) });
     }
     // Hide empty keeps a row only when some shown role has a definite answer for the lens.
-    const types = s.hideEmpty ? matching.filter(t => roles.some(r => resolvedMark(index, r.rid, t.id, s.lens))) : matching;
+    const types = s.hideEmpty ? matching.filter(t => roles.some(r => typedGrant(index, r.rid, t.id, s.lens))) : matching;
     const open = !s.closed.includes(group);
     const band = { kind: 'band', group, total: all.length, shown: types.length, open, counts };
     bands.push(band); rows.push(band);
@@ -129,16 +165,12 @@ export function nothingGranted(rows) {
   return rows.every(r => !r.granted && !r.unresolved && !r.pending);
 }
 
-/** Short words for why a cell is "?", once per reason. */
+/** Short words for why a cell is "?", once per reason. Conditions are not listed here:
+ *  they are marks on the letter (KINDS). */
 const REASONS = [
-  [/object or submitted field values/i, 'depends on object values'],
-  [/User test/i, 'depends on the user'],
-  [/Related-object access/i, 'depends on access to a related object'],
-  [/Role membership/i, 'depends on role membership on a related object'],
-  [/Model-restricted/i, 'depends on the object’s model'],
   [/Object reference/i, 'a referenced object is not loaded'],
   [/Type inheritance/i, 'the type hierarchy is not loaded'],
-  [/submitted changes/i, 'depends on the submitted change'],
+  [/Unsupported|Ambiguous|Invalid|engine evaluation/i, 'the statement uses something the matrix cannot read'],
 ];
 export function unresolvedWords(reasons) {
   return [...new Set((reasons ?? []).map(r => REASONS.find(([re]) => re.test(r))?.[1] ?? r))];
@@ -166,7 +198,8 @@ export function cellWhy(index, rid, type) {
     const rules = cell.rules.filter(r => r.actions.includes(action));
     const unresolved = (cell.unresolvedRules ?? []).filter(r => r.unresolvedActions?.includes(action));
     return { action, mark: marks[action],
-      rules: rules.map(rule => ({ rule, ...ruleVia(rule, index.roles, rid), conditional: rule.conditionalActions?.includes(action) })),
+      rules: rules.map(rule => ({ rule, ...ruleVia(rule, index.roles, rid), conditional: rule.conditionalActions?.includes(action), kinds: rule.kinds?.[action] ?? [] })),
+      kinds: cellKinds(index, rid, type, action), inherited: marks[action] !== 'none' && cellInherited(index, rid, type, action),
       unresolved: unresolved.map(rule => ({ rule, ...ruleVia(rule, index.roles, rid), reasons: rule.unresolvedReasons })) };
   });
 }

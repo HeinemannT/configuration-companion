@@ -26,6 +26,7 @@ import { ensureOverlayStyle } from './content-overlay-style';
 import { resetObjectPreview } from './lib/object-chip';
 import { blueprintFontFaceCss } from './content-blueprint/font-face';
 import { rememberTarget, rememberedTarget } from './content-blueprint/resume-note';
+import { clearDockRoom } from './content-blueprint/bar-place';
 
 export { isBlueprintActive };
 
@@ -168,8 +169,13 @@ export function enableBlueprint(): void {
   // Watch BMP content for a tab switch (SPA — no reload): when the set of visible widget rids changes,
   // re-render so the overlay follows to the newly-shown tab. Gated by the rid signature so the overlay's
   // OWN mutations (its nodes carry no data-rid) never re-trigger it, and coalesced to one rAF.
-  bp.observer = new MutationObserver(() => {
+  bp.observer = new MutationObserver((records) => {
     if (bp.mutRaf || !bp.active) return;
+    // Blueprint's own redraw (its layer, its scroll spacer) is not a change of the page: skip the
+    // page-wide scan it would otherwise cause after every render.
+    const own = (n: Node): boolean => !!bp.layer?.contains(n) || n === bp.scrollSpacer;
+    if (records.every(r => own(r.target) || (r.target === document.body
+      && [...r.addedNodes, ...r.removedNodes].every(n => n === bp.layer || n === bp.scrollSpacer)))) return;
     bp.mutRaf = requestAnimationFrame(() => {
       bp.mutRaf = 0;
       if (!bp.active || bp.dragging || bp.renaming) return;
@@ -284,6 +290,7 @@ export function disableBlueprint(): void {
   // into normal page flow at the bottom of the BMP page.
   resetObjectPreview();
   bp.layer?.remove();
+  clearDockRoom(); // the page gets back the room the docked bar took
   bp.scrollSpacer?.remove(); // drop the page-scroll-extension spacer (it lives on body, outside the layer)
   document.getElementById(STYLE_ID)?.remove(); // don't leak the injected stylesheet past teardown
   resetColorSets(); // colour ids are workspace-scoped; never carry a cache into the next session/profile

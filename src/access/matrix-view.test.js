@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 /* global performance, console */
 import { expect, it, vi } from 'vitest';
-import { mountMatrix, matrixState } from './matrix-view.js';
+import { mountMatrix, matrixState, slotHTML } from './matrix-view.js';
 import { createMatrixIndex } from './matrix-model';
 
 const c = (Left, Comparison, Right) => ({ Condition: { Left, Comparison, Right } });
@@ -20,7 +20,7 @@ const model = {
 const mount = (state = matrixState(), options = {}) => {
   document.body.innerHTML = '<div id="matrix" style="height:600px"></div>';
   const host = document.querySelector('#matrix');
-  const index = createMatrixIndex(model, classes, {}, metadata(Object.keys(classes)));
+  const index = createMatrixIndex(options.model ?? model, classes, {}, metadata(Object.keys(classes)));
   const props = { index, state, changed: vi.fn(), canOpen: () => true, openRule: vi.fn(), test: vi.fn(), ...options };
   return { host, state, props, view: mountMatrix(host, props) };
 };
@@ -30,14 +30,24 @@ it('puts types down in bands and roles across, with marks, counts and an honest 
   const { host, view } = mount({ ...matrixState(), hideEmpty: false }, { retryEvidence: retry, moreEvidence: more, hasDraftChanges: true, metadataStatus: '1 reference unavailable' });
   expect([...host.querySelectorAll('.mh [data-matrix-role] b')].map(el => el.textContent)).toEqual(['Risk management', 'Risk owner']);
   expect([...host.querySelectorAll('.mb b')].map(el => el.textContent)).toEqual(['Structure', 'Enterprise objects', 'Other types']);
-  expect([...host.querySelectorAll('.mr .nm')].map(el => el.textContent)).toEqual(['Scorecard', 'CeIssue', 'CeRisk', 'Note']);
+  expect([...host.querySelectorAll('.mr .nm')].map(el => el.textContent)).toEqual(['Any type', 'Scorecard', 'CeIssue', 'CeRisk', 'Note']);
   const owner = host.querySelector('[data-matrix-cell="2"][data-type="CeRisk"]');
-  expect([...owner.querySelectorAll('.m')].map(el => el.className)).toEqual(['m none', 'm inherited', 'm conditional', 'm none']);
-  expect(owner.getAttribute('aria-label')).toBe('Risk owner, CeRisk: Create not granted, Read inherited, Update conditional, Delete not granted');
-  expect(host.querySelector('[data-matrix-cell="1"][data-type="CeIssue"] .m.unresolved')).not.toBeNull();
-  // Counts never turn unresolved evidence into zero.
-  expect([...host.querySelectorAll('.mb')][1].querySelectorAll('.mc.cnt')[1].textContent).toBe('1 + 1? of 2');
-  expect([...host.querySelectorAll('.mb')][0].querySelectorAll('.mc.cnt')[0].textContent).toBe('? of 1');
+  // One letter per operation: bold for all objects (faded when inherited), marked for a condition, empty for none.
+  expect([...owner.querySelectorAll('.m')].map(el => el.className)).toEqual(['m none', 'm granted inh', 'm conditional', 'm none']);
+  expect([...owner.querySelectorAll('.m')].map(el => el.textContent)).toEqual(['', 'R', 'U', '']);
+  expect([...owner.querySelectorAll('.m.conditional .mk')].map(el => el.getAttribute('class'))).toEqual(['mk some']);
+  expect(owner.getAttribute('aria-label')).toBe('Risk owner, CeRisk: Create not granted, Read inherited, Update under a condition (certain objects), Delete not granted');
+  // HasAccessTo is a known condition, not a "?".
+  const issue = host.querySelector('[data-matrix-cell="1"][data-type="CeIssue"]');
+  expect([...issue.querySelectorAll('.m')].map(el => el.className)).toEqual(['m none', 'm conditional inh', 'm none', 'm none']);
+  expect(issue.querySelector('.m.conditional .mk').getAttribute('class')).toBe('mk related');
+  expect(host.querySelector('.mscroll .m.unresolved')).toBeNull();
+  expect(host.querySelector('.mnote')).toBeNull();
+  expect([...host.querySelectorAll('.mb')][1].querySelectorAll('.mc.cnt')[1].textContent).toBe('2 of 2');
+  // The legend: all objects, one entry per kind with its words, inherited, then "?" as unknown.
+  const legend = host.querySelector('.legend');
+  expect([...legend.querySelectorAll(':scope > span:not(.spacer):not(.mfoot)')].map(el => el.textContent))
+    .toEqual(['Rall objects', 'Rown objects', 'Rthrough a related object', 'Rin certain models', 'Rcertain objects', 'Rinherited', '?unknown']);
   expect(host.querySelector('.legend').textContent).toContain('Saved policies · Unsaved changes are not included. No mark: not granted.');
   expect(host.querySelector('.legend').textContent).not.toMatch(/Deny|⊘/);
   expect(host.querySelector('.m.deny, .lw.deny')).toBeNull();
@@ -50,7 +60,12 @@ it('uses words for one operation, filters one role with a Granted by column, and
   const { host, state } = mount();
   host.querySelector('[data-matrix-lens="Update"]').click();
   expect(state.lens).toBe('Update');
-  expect(host.querySelector('[data-matrix-cell="2"][data-type="CeRisk"]').textContent).toBe('Conditional');
+  // One operation, in words: the kind of condition, not "Conditional".
+  const cell = host.querySelector('[data-matrix-cell="2"][data-type="CeRisk"]');
+  // Short in the cell (the column is narrow), in full in the tooltip.
+  expect(cell.textContent).toBe('certain');
+  expect(cell.querySelector('.lw.conditional').title).toBe('Update: certain objects');
+  expect(cell.querySelector('.lw.conditional .mk.some')).not.toBeNull();
   host.querySelector('[data-matrix-role="2"]').click();
   expect(state.role).toBe('2');
   expect(host.querySelectorAll('.mh [data-matrix-role]')).toHaveLength(1);
@@ -63,6 +78,43 @@ it('uses words for one operation, filters one role with a Granted by column, and
   expect(state.closed).toEqual(['Enterprise objects']);
   expect(host.querySelector('[data-matrix-band="Enterprise objects"]').getAttribute('aria-expanded')).toBe('false');
   expect(host.querySelector('[data-type="CeRisk"]')).toBeNull();
+});
+
+it('keeps "?" for a statement that cannot be read, with the reason, and leaves a condition as a letter', () => {
+  const gapModel = { ...model, policies: [{ rid: '8', name: 'Gap', enabled: true, content: { Statement: [
+    { Subject: ['role:management'], Effect: 'Allow', Action: ['Read'], Resource: c('resource.linkedTo', '=', 'Scorecard:missing') },
+  ] } }] };
+  const { host } = mount({ ...matrixState(), hideEmpty: false }, { model: gapModel });
+  expect([...host.querySelector('[data-matrix-cell="1"][data-type="CeRisk"]').querySelectorAll('.m')].map(el => el.className)).toEqual(['m none', 'm unresolved', 'm none', 'm none']);
+  expect(host.querySelector('[data-matrix-cell="1"][data-type="CeRisk"] .m.unresolved').textContent).toBe('?');
+  expect(host.querySelector('.mnote').textContent).toBe('? means Companion could not read or load what it needs to tell. Select the cell for the reason.');
+  expect([...host.querySelectorAll('.mb')][1].querySelectorAll('.mc.cnt')[0].textContent).toBe('? of 2');
+  host.querySelector('[data-matrix-cell="1"][data-type="CeRisk"]').click();
+  const side = host.querySelector('.mside');
+  expect(side.textContent).toContain('Why here: a referenced object is not loaded.');
+  expect(side.textContent).toContain('Unknown: Companion could not read or load what it needs to tell.');
+  expect([...side.querySelectorAll('.wy')].find(w => w.querySelector('.wh b').textContent === 'Read').querySelector('.st2').textContent).toBe('unknown');
+});
+
+it('draws one operation as a slot: bold letter, marked letter, faded when inherited, empty, or "?"', () => {
+  const html = (...args) => { const t = document.createElement('div'); t.innerHTML = slotHTML(...args); return t.firstElementChild; };
+  const granted = html('Read', 'granted');
+  expect(granted.outerHTML).toBe('<span class="m granted" title="Read: all objects">R</span>');
+  const two = html('Update', 'conditional', ['own', 'related', 'some']);
+  expect(two.className).toBe('m conditional');
+  expect(two.firstChild.textContent).toBe('U');
+  // Three kinds: the first and a plus; all three are in the tooltip.
+  expect([...two.querySelectorAll('svg')].map(el => el.getAttribute('class'))).toEqual(['mk own', 'mk more']);
+  expect([...html('Update', 'conditional', ['own', 'related']).querySelectorAll('svg')].map(el => el.getAttribute('class'))).toEqual(['mk own', 'mk related']);
+  expect(two.getAttribute('title')).toBe('Update: own objects, through a related object, certain objects');
+  expect(html('Delete', 'conditional', ['model']).querySelectorAll('svg')).toHaveLength(1);
+  expect(html('Read', 'conditional', []).querySelectorAll('svg')).toHaveLength(0);
+  const inherited = html('Read', 'inherited', [], true);
+  expect(inherited.className).toBe('m granted inh');
+  expect(inherited.getAttribute('title')).toBe('Read: all objects, inherited');
+  expect(html('Read', 'conditional', ['own'], true).className).toBe('m conditional inh');
+  expect(slotHTML('Create', 'none')).toBe('<span class="m none"></span>');
+  expect(slotHTML('Create', 'unresolved')).toBe('<span class="m unresolved" title="Create: unknown">?</span>');
 });
 
 it('renders a cell matched only by a Deny statement as not granted, with no Deny mark or rule', () => {
@@ -87,8 +139,15 @@ it('explains a selected cell by operation, with inherited-via and actions', () =
   const side = host.querySelector('.mside');
   expect(side.textContent).toContain('Risk owner on CeRisk');
   expect(side.textContent).toContain('inherited via Risk management');
-  expect(side.textContent).toContain('depends on the object');
-  expect(side.textContent).toContain('Why here: depends on access to a related object.');
+  const wy = name => [...side.querySelectorAll('.wy')].find(w => w.querySelector('.wh b').textContent === name);
+  expect(wy('Update').querySelector('.st2').textContent).toBe('only certain objects');
+  expect(wy('Update').querySelector('.m.conditional .mk.some')).not.toBeNull();
+  expect(wy('Update').querySelector('.gl .why').textContent).toMatch(/ · only certain objects$/);
+  expect(wy('Read').querySelector('.st2').textContent).toBe('inherited');
+  expect([...wy('Read').querySelectorAll('.gl .why')].map(el => el.textContent)).toContainEqual(expect.stringMatching(/ · only through a related object$/));
+  expect(side.textContent).toContain('Under a condition: the statement grants it for some objects of this type only.');
+  // Nothing here is unreadable, so there is no "Why here" reason.
+  expect(side.textContent).not.toContain('Why here');
   host.querySelector('[data-matrix-open="9"][data-statement="1"]').click();
   expect(props.openRule).toHaveBeenCalledWith('9', 1);
   const op = host.querySelector('select[data-matrix-action]'); op.value = 'Update'; op.dispatchEvent(new Event('change', { bubbles: true }));

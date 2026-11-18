@@ -823,3 +823,33 @@ button.chip:hover { background: var(--brand-bg); }
 .band-toggle .ct, .mc.why, .legend { font-size: var(--ui-fs-sm); }
 .mc.cnt { font: 400 var(--ui-fs-sm) var(--font-ui); font-variant-numeric: tabular-nums; }
 :root { --mx-role: 148px; }
+
+/* Matrix cells: a letter per operation. Bold: all objects. Regular with a mark: under a
+   condition, the mark and its soft colour naming the kind. Faded: inherited. */
+.mk-sprite { position: absolute; }
+.slots .m, .legend .m, .wh .m { display: inline-flex; align-items: center; justify-content: flex-start; width: 24px; padding-left: 3px; font: 500 var(--ui-fs-sm) var(--font-ui); color: var(--text-primary); }
+.legend .m, .wh .m { width: auto; min-width: 14px; padding-left: 0; margin-right: 3px; }
+.m.granted { font-weight: 700; color: var(--text-primary); }
+.m.conditional { font-weight: 500; color: var(--text-primary); }
+.m.inh, .lw.inh { opacity: .5; }
+.m.unresolved { color: var(--text-error); font: 600 var(--ui-fs-sm) var(--font-ui); }
+.slots .m.none { justify-content: flex-start; }
+.mk { flex: none; width: 7px; height: 7px; }
+/* the marks of one letter: a column of at most two. One mark sits raised; two share the height. */
+.mks { display: inline-flex; flex-direction: column; justify-content: flex-start; gap: 2px; height: 16px; margin-left: 2px; }
+.mks.two { justify-content: center; }
+.mk.own { color: color-mix(in srgb, var(--support-ok) 80%, var(--text-secondary)); }
+.mk.related { color: var(--text-primary); }
+.mk.model { color: color-mix(in srgb, var(--support-info) 75%, var(--text-secondary)); }
+.mk.some { color: color-mix(in srgb, var(--text-brand) 80%, var(--text-secondary)); }
+.lw.conditional { display: inline-flex; align-items: center; gap: 3px; color: var(--text-primary); min-width: 0; max-width: 100%; }
+.lw.conditional .lwt { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.lw.conditional .mk { margin: 0; }
+/* the row of statements that name no type: set apart from the type rows below it */
+.mr.any .nm { font-style: italic; color: var(--text-secondary); }
+.mr.any { border-bottom: 1px solid var(--border-subtle); border-radius: 0; }
+/* While a search is active a row carries its ID, the match and the role's path under the name:
+ * it grows to fit them instead of drawing them over the next row. */
+.explorer .tree-row:has(.tree-label small) { height: auto; min-height: var(--row-h); padding-top: 4px; padding-bottom: 4px; align-items: flex-start; }
+.explorer .tree-row:has(.tree-label small) > .caret, .explorer .tree-row:has(.tree-label small) > svg { margin-top: 2px; }
+.mk.more { color: var(--text-secondary); }

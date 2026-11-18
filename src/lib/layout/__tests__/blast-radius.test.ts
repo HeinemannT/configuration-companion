@@ -11,7 +11,9 @@ describe('instance fan-out', () => {
   it('builds an rref(linkedTo) probe with a SELF row', () => {
     const ec = buildInstanceFanoutEc('t.crev_demo_complex');
     expect(ec).toContain('_p := t.crev_demo_complex');
-    expect(ec).toContain('_p.rref(linkedTo).calculate(');
+    expect(ec).toContain('_l := _p.rref(linkedTo)');
+    expect(ec).toContain('_l.first(20).calculate(');
+    expect(ec).toContain('COUNT|');
     expect(ec).toContain('SELF|');
   });
 
@@ -44,8 +46,8 @@ describe('shared flow-container blast', () => {
       { id: 'risk_page', className: 'EditPage', ref: 't.risk_page' },
       { id: 'risk_inputs', className: 'InputSet', ref: 't.risk_inputs' },
     ]);
-    expect(ec).toContain('_f0.rref(editPage).forEach');
-    expect(ec).toContain('_f1.rref(inputSet).forEach');
+    expect(ec).toContain('_f0.rref(editPage).first(300).calculate(');
+    expect(ec).toContain('_f1.rref(inputSet).first(300).calculate(');
   });
 
   it('reports only containers referenced by more than one view', () => {
@@ -82,11 +84,12 @@ describe('buildInstanceFanoutEc / buildContainerBlastEc (golden, plan 014)', () 
   it('emits the exact SELF + INST row EC as before the ec-row-codec migration', () => {
     expect(buildInstanceFanoutEc('t.crev_demo_complex')).toBe([
       '_p := t.crev_demo_complex',
-      '_rows := _p.rref(linkedTo).calculate(',
+      '_l := _p.rref(linkedTo)',
+      '_rows := _l.first(20).calculate(',
       '     _i := self',
       `     "${SEP}INST|" + _i.rid.whenMissing("") + "|" + _i.id.whenMissing("") + "|" + (IF _i.name.whenMissing("") = "*<<<CREV_*" THEN "[reserved CREV marker]" ELSE _i.name.whenMissing("") ENDIF) + "\\n"`,
       ')',
-      `"${SEP}SELF|" + _p.rid.whenMissing("") + "|" + _p.linkedTo.rid.whenMissing("") + "\\n" + _rows.join("")`,
+      `"${SEP}SELF|" + _p.rid.whenMissing("") + "|" + _p.linkedTo.rid.whenMissing("") + "\\n" + "${SEP}COUNT|" + str(_l.size()) + "\\n" + _rows.join("").whenMissing("")`,
     ].join('\n'));
   });
 
@@ -94,10 +97,13 @@ describe('buildInstanceFanoutEc / buildContainerBlastEc (golden, plan 014)', () 
     expect(buildContainerBlastEc(['t.cont_a'])).toBe([
       '_r := ""',
       '_c0 := t.cont_a',
-      '_c0.rref(container).forEach(_w:',
+      '_l0 := _c0.rref(container)',
+      '_x0 := _l0.first(300).calculate(',
+      '     _w := self',
       '     _sc := _w.scorecard',
-      `     _r := _r + "${SEP}" + _sc.rid.whenMissing("") + "|" + _sc.linkedTo.rid.whenMissing("") + "|" + (IF _sc.name.whenMissing("") = "*<<<CREV_*" THEN "[reserved CREV marker]" ELSE _sc.name.whenMissing("") ENDIF) + "\\n"`,
+      `     "${SEP}" + _sc.rid.whenMissing("") + "|" + _sc.linkedTo.rid.whenMissing("") + "|" + (IF _sc.name.whenMissing("") = "*<<<CREV_*" THEN "[reserved CREV marker]" ELSE _sc.name.whenMissing("") ENDIF) + "\\n"`,
       ')',
+      `_r := _r + _x0.join("").whenMissing("") + (IF _l0.size() > 300 THEN "${SEP}MORE|" + "\\n" ELSE "" ENDIF)`,
       '_r',
     ].join('\n'));
   });
@@ -150,5 +156,26 @@ describe('shared-structure blast', () => {
     expect(blast.families).toEqual([
       { rid: '500', name: `Real ${injected}`, isMaster: true },
     ]);
+  });
+});
+
+describe('instance fan-out count', () => {
+  it('takes the count of all instances from the COUNT row, past the listed ones', () => {
+    const f = parseInstanceFanout(`${SEP}SELF|6921|\n${SEP}COUNT|3400\n${SEP}INST|451|4957|One\n`);
+    expect(f.total).toBe(3400);
+    expect(f.instances).toHaveLength(1);
+    expect(f.isMaster).toBe(true);
+  });
+
+  it('is not a master without instances', () => {
+    expect(parseInstanceFanout(`${SEP}SELF|6921|\n${SEP}COUNT|0\n`)).toMatchObject({ isMaster: false, total: 0 });
+  });
+});
+
+describe('a container with more users than the probe lists', () => {
+  it('says so instead of reporting no other page', () => {
+    const blast = parseContainerBlast(`${SEP}6921||Own page\n${SEP}MORE|\n`, '6921');
+    expect(blast).toEqual({ otherFamilies: 0, families: [], truncated: true });
+    expect(parseContainerBlast(`${SEP}6921||Own page\n`, '6921')).not.toHaveProperty('truncated');
   });
 });

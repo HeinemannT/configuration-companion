@@ -252,8 +252,6 @@ const BOUNDED_LOOPS: Record<string, Record<string, string>> = {
   },
   buildTransportCreationEc: { '_o.rref(linkedTo).forEach(_i:': 'the class links of one property definition (asked only for a MethodConfig)' },
   buildStudioChildrenEc: { '_c.children().forEach(_ch:': 'the children of one object' },
-  buildContainerBlastEc: { '_N.rref(container).forEach(_w:': 'the widgets of one container' },
-  buildFlowContainerBlastEc: { '_N.rref(inputSet).forEach(_w:': 'the forms that use one input set or edit page' },
   buildPortableIdOccupancyEc: { '_ids.forEach(_id:': 'the IDs written into the script' },
   buildContextQueryEc: { '_items.as(className).distinct().forEach(_class:': 'the distinct class names of the result' },
 };

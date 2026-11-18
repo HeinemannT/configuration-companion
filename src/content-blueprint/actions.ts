@@ -11,13 +11,14 @@ import { escapeLayers, type EscapeLayerKind } from '../lib/escape-layers';
 import { isTypingIn, matchesCombo, matchesShortcut, whichShortcut } from '../lib/shortcuts';
 import { cancelDrag } from './gestures';
 import { isCheatSheetOpen, toggleCheatSheet, type CheatSheetOptions } from '../lib/cheat-sheet';
+import { typeInfo } from '../lib/object-window-table';
 import { findNode, findTabOf, isResultTab, editableTabsets, walk } from '../lib/layout/model';
 import { bandInsertIndex, describePlacement } from '../lib/layout/placement';
 import { resize, setHeight, rename, remove, restoreNode, addWidget, addContainer, moveInto, swap, insertRelative, addTab, createTabset, toggleReset, setStyle, setDescriptionViewType, setDescriptionViewProperties } from '../lib/layout/edit';
 import { diff, summarizeChanges } from '../lib/layout/diff';
 import { addFlowChild, reorderFlowChild, removeFlowAdd, deleteFlowChild, setActionFlag, addActionButton, flowChangeCount, stageNewFlowContainer, wireFlowRef, unwireFlowRef, renameFlowObject, setEditFieldProperty } from '../lib/layout/flow';
 import { History } from '../lib/layout/history';
-import { maskStyle, type LModel, type NodeStyle } from '../lib/layout/types';
+import { maskStyle, type Breakpoint, type LModel, type NodeStyle } from '../lib/layout/types';
 import { sendToSW } from '../lib/content-port';
 import { openObject } from '../lib/open-object';
 import { showToast } from '../lib/toast';
@@ -130,7 +131,7 @@ export function viewTab(id: string): void {
   }
   bp.viewTabId = id; bp.selectedId = id; render();
 }
-export function setWidth(id: string, n: number): void { const m = model(); if (m) mutate(resize(m, id, 'L', n)); }
+export function setWidth(id: string, n: number, screen: Breakpoint = 'L'): void { const m = model(); if (m) mutate(resize(m, id, screen, n)); }
 /** F2: stage/unstage a reset of one overridden property back to the template (the blue revert arrow). */
 export function toggleResetProp(id: string, prop: string): void { const m = model(); if (m) mutate(toggleReset(m, id, prop)); }
 export function setH(id: string, px: number): void { const m = model(); if (m) mutate(setHeight(m, id, px)); }
@@ -265,6 +266,13 @@ export function openPicker(containerId: string, opts?: { afterId?: string; cols?
   bp.picker = containerId; bp.pickerOpts = opts ?? null; bp.selectedId = null; render();
 }
 export function closePicker(): void { bp.picker = null; bp.pickerOpts = null; render(); }
+/** A new object is selected and its name opens as a field with the text selected: typing replaces the
+ *  name, Enter or a click elsewhere keeps it, Escape keeps the default. No extra step to add one. */
+function nameNew(id: string): void {
+  bp.selectedId = id;
+  // After the click that added it: the click's own focus change would close a field opened now.
+  setTimeout(() => { if (bp.active && bp.selectedId === id && !bp.renaming) beginRename(id); }, 0);
+}
 export function addFromPicker(className: string): void {
   const m = model(); const cid = bp.picker;
   if (!m || !cid) return;
@@ -273,9 +281,10 @@ export function addFromPicker(className: string): void {
   // Band-correct insertion: after the gap's anchor when that slot is band-legal, else the nearest
   // position BMP can actually render it at (widgets always flow after all containers).
   const { index } = bandInsertIndex(kids, bp.pickerOpts?.afterId, 'widget'); // a remapped slot is explained by announcePlacement
-  const added = addWidget(m, cid, index, className, undefined, bp.pickerOpts?.cols ?? 6);
+  // Named after its type, in the type's own words, and opened for typing at once (see nameNew).
+  const added = addWidget(m, cid, index, className, typeInfo(className).label || undefined, bp.pickerOpts?.cols ?? 6);
   bp.picker = null; bp.pickerOpts = null;
-  bp.selectedId = added.id;
+  nameNew(added.id);
   mutate(added.model);
   announcePlacement(added.id, 'Added');
 }
@@ -313,7 +322,7 @@ export function addTabTo(tabsetId: string): void {
   if (destinations.length && !destinations.some(t => t.id === tabsetId)) return;
   const r = addTab(m, tabsetId, 'New Tab');
   bp.tabsetPickerOpen = false;
-  bp.selectedId = r.id;
+  nameNew(r.id);
   mutate(r.model);
   announcePlacement(r.id, 'Added');
 }
@@ -443,7 +452,7 @@ export function addContainerTo(parentId: string): void {
   const { index } = bandInsertIndex(kids, bp.pickerOpts?.afterId, 'container');
   const r = addContainer(m, parentId, index, bp.pickerOpts?.cols ?? 6);
   bp.picker = null; bp.pickerOpts = null;
-  bp.selectedId = r.id;
+  nameNew(r.id);
   mutate(r.model);
 }
 

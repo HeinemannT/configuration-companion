@@ -234,7 +234,7 @@ export function previewModal(review: ApplyReview, ctx: BlueprintCtx, applying = 
   const impact = review.impact.status === 'ready' ? review.impact.value : null;
   const fanout = impact?.fanout;
   if (fanout?.isMaster) {
-    const n = fanout.instances.length;
+    const n = fanout.total;
     warn(`This is a shared template; ${n} linked scorecard${n === 1 ? ' inherits' : 's inherit'} from it. `
       + 'Widget edits propagate to them; tab or container edits change every one.');
   } else if (shared) {
@@ -243,8 +243,11 @@ export function previewModal(review: ApplyReview, ctx: BlueprintCtx, applying = 
   const xfam = impact?.blast;
   if (xfam && xfam.otherFamilies > 0) {
     const names = xfam.families.map(f => f.name).filter(Boolean).slice(0, 2).join(', ');
-    warn(`Some containers here are shared with ${xfam.otherFamilies} page${xfam.otherFamilies === 1 ? '' : 's'} `
+    warn(`Some containers here are shared with ${xfam.truncated ? 'at least ' : ''}${xfam.otherFamilies} page${xfam.otherFamilies === 1 ? '' : 's'} `
       + `outside this template${names ? ` (${names}${xfam.otherFamilies > 2 ? ', …' : ''})` : ''}. Your structural changes affect them too.`);
+  } else if (xfam?.truncated) {
+    // More users than the check lists: say so instead of staying silent about other pages.
+    warn('Some containers here are used in more places than could be checked. Your structural changes may affect other pages.');
   }
   const flowBlast = impact?.flowBlast;
   if (flowBlast && flowBlast.sharedContainers > 0) {
@@ -543,7 +546,7 @@ export function renderChip(ctx: BlueprintCtx, pending: number): HTMLElement {
     const seg = document.createElement('div'); seg.className = 'bp-target';
     const tBtn = document.createElement('button');
     tBtn.className = 'bp-target-b' + (bp.editingTemplate ? ' on' : '');
-    tBtn.textContent = 'Template';
+    tBtn.textContent = 'Shared template';
     tBtn.title = `Editing the shared template ${ctx.templateId}. Changes affect every instance.`;
     tBtn.addEventListener('click', () => setEditTarget(true));
     const iBtn = document.createElement('button');

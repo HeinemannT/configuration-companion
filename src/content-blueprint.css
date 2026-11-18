@@ -1310,3 +1310,15 @@
 #crev-blueprint-layer .bp-modal .bp-ba{flex:0 1 auto;max-width:60%}
 #crev-blueprint-layer .bp-modal .bp-ba-b,#crev-blueprint-layer .bp-modal .bp-ba-a{flex:0 1 auto;max-width:none}
 #crev-blueprint-layer .bp-modal .bp-ba-v{max-width:24ch}
+/* the shared template is the target: amber, unlike "This instance" (ink), so the wider reach shows */
+#crev-blueprint-layer .bp-header .bp-chip .bp-target-b:first-child.on{background:var(--bp-amber);border-color:var(--bp-amber);color:#161616}
+/* width per screen size: L M S, the chosen one inked; a dot marks a size with its own width */
+#crev-blueprint-layer .bp-screens{display:inline-flex;margin-right:3px;border:1px solid #c6cbd4;border-radius:var(--bp-r);overflow:hidden}
+#crev-blueprint-layer .bp-colstep .bp-screens .bp-screen{position:relative;width:20px;height:20px;border:0;border-radius:0;background:#fff;font:600 10px var(--bp-mono);color:var(--bp-muted)}
+#crev-blueprint-layer .bp-colstep .bp-screens .bp-screen.on{background:var(--bp-ink);color:#fff}
+#crev-blueprint-layer .bp-colstep .bp-screens .bp-screen.set::after{content:"";position:absolute;top:2px;right:2px;width:4px;height:4px;border-radius:50%;background:var(--bp-amber)}
+/* docked: a full-width strip under the portal's band (top, left and right are set inline by dockBar).
+   Flat against the band, one hairline below, controls on the page's own left edge, Exit at the far right. */
+#crev-blueprint-layer .bp-header.bp-docked{width:auto;max-width:none;margin:0;border:0;border-bottom:1px solid var(--bp-line-2);border-radius:0;box-shadow:0 1px 0 rgba(15,23,42,.04),0 6px 14px -10px rgba(15,23,42,.28)}
+#crev-blueprint-layer .bp-header.bp-docked .bp-header-main{flex:1 1 auto;min-width:0}
+#crev-blueprint-layer .bp-header.bp-docked .bp-chip,#crev-blueprint-layer .bp-header.bp-docked .bp-tabs{padding-left:16px;padding-right:16px}

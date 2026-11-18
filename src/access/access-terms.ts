@@ -2,7 +2,8 @@
 // repeating literals, so a renamed idea changes everywhere at once.
 //
 // statement   one entry of a policy (never "rule")
-// undecided   what the matrix cannot decide from the policies alone ("?" in cells)
+// undecided   what the matrix could not read or load ("?" in cells). A grant under a
+//             condition is not undecided: it shows its letter with a mark for the kind.
 // unsaved     local changes that are not on the server yet
 // Who/Can/On  the three parts of a statement
 
@@ -17,9 +18,9 @@ export const statementLabel = (index: number) => 'Statement ' + (index + 1);
 export const statementCount = (n: number) => n + ' ' + (n === 1 ? STATEMENT : STATEMENTS);
 
 /** What the matrix cannot decide. The glyph stays in matrix cells. */
-export const UNDECIDED = 'Undecided';
+export const UNDECIDED = 'Unknown';
 export const UNDECIDED_GLYPH = '?';
-export const UNDECIDED_MEANING = 'Undecided: the policies alone cannot decide it. It is not a grant and not a zero.';
+export const UNDECIDED_MEANING = 'Unknown: Companion could not read or load what it needs to tell. It is not a grant and not a zero.';
 
 /** Local changes that are not saved to the server. */
 export const UNSAVED_CHANGES = 'Unsaved changes';

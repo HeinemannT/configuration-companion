@@ -34,8 +34,15 @@ export interface InstanceFanout {
   ownFamilyKey: string;
   /** True when other scorecards link to this page (it is a template master). */
   isMaster: boolean;
+  /** The first INSTANCE_ROWS instances; `total` counts all of them. */
   instances: { rid: string; businessId?: string; name?: string }[];
+  total: number;
 }
+
+/** Rows one probe returns per list. The counts are complete; only the listed rows are cut, so a
+ *  template with thousands of pages costs one count and a short list. */
+export const INSTANCE_ROWS = 20;
+export const USAGE_ROWS = 300;
 
 export interface SharedFamily {
   /** A representative scorecard rid for the family (the master if seen, else any member). */
@@ -49,6 +56,8 @@ export interface ContainerBlast {
   otherFamilies: number;
   /** One representative page per other family (for the warning text). */
   families: SharedFamily[];
+  /** A container has more users than the probe lists: other pages may use it unseen. */
+  truncated?: boolean;
 }
 
 export interface FlowContainerProbe {
@@ -87,12 +96,13 @@ export function buildInstanceFanoutEc(pageRef: string): string {
   // by intent, so the user's kind (script-kinds.ts).
   return userScript([
     `_p := ${pageRef}`,
-    // Instances as one row each, joined once: a master page can have thousands of them.
-    `_rows := _p.rref(linkedTo).calculate(`,
+    // The count of all instances, and the first few as one row each, joined once.
+    `_l := _p.rref(linkedTo)`,
+    `_rows := _l.first(${INSTANCE_ROWS}).calculate(`,
     `     _i := self`,
     `     "${SEP}INST|" + ${instRow} + "\\n"`,
     `)`,
-    `"${SEP}SELF|" + ${selfRow} + "\\n" + _rows.join("")`,
+    `"${SEP}SELF|" + ${selfRow} + "\\n" + "${SEP}COUNT|" + str(_l.size()) + "\\n" + _rows.join("").whenMissing("")`,
   ].join('\n'));
 }
 
@@ -100,6 +110,7 @@ export function parseInstanceFanout(log: string): InstanceFanout {
   let ownRid = '';
   let ownLinkedTo = '';
   const instances: InstanceFanout['instances'] = [];
+  let count = 0;
   const seen = new Set<string>();
   for (const line of markerLines(log, SEP)) {
     if (!line) continue;
@@ -107,6 +118,9 @@ export function parseInstanceFanout(log: string): InstanceFanout {
     if (parts[0] === 'SELF') {
       ownRid = parts[1] ?? '';
       ownLinkedTo = parts[2] ?? '';
+    } else if (parts[0] === 'COUNT') {
+      const n = Number(parts[1]);
+      if (Number.isInteger(n) && n >= 0) count = n;
     } else if (parts[0] === 'INST') {
       const rid = parts[1];
       if (!rid || seen.has(rid)) continue;
@@ -114,7 +128,8 @@ export function parseInstanceFanout(log: string): InstanceFanout {
       instances.push({ rid, businessId: parts[2] || undefined, name: parts.slice(3).join('|') || undefined });
     }
   }
-  return { ownFamilyKey: ownLinkedTo || ownRid, isMaster: instances.length > 0, instances };
+  const total = Math.max(count, instances.length);
+  return { ownFamilyKey: ownLinkedTo || ownRid, isMaster: total > 0, instances, total };
 }
 
 /** (B) Build the shared-structure probe for the containers the plan touches. One rref(container)
@@ -128,10 +143,14 @@ export function buildContainerBlastEc(containerRefs: string[]): string {
   const lines: string[] = ['_r := ""'];
   containerRefs.forEach((ref, i) => {
     lines.push(`_c${i} := ${ref}`);
-    lines.push(`_c${i}.rref(container).forEach(_w:`);
+    // One row per widget, joined once per container; a container used on very many pages is cut.
+    lines.push(`_l${i} := _c${i}.rref(container)`);
+    lines.push(`_x${i} := _l${i}.first(${USAGE_ROWS}).calculate(`);
+    lines.push('     _w := self');
     lines.push('     _sc := _w.scorecard');
-    lines.push(`     _r := _r + "${SEP}" + ${scRow} + "\\n"`);
+    lines.push(`     "${SEP}" + ${scRow} + "\\n"`);
     lines.push(')');
+    lines.push(`_r := _r + _x${i}.join("").whenMissing("") + (IF _l${i}.size() > ${USAGE_ROWS} THEN "${SEP}MORE|" + "\\n" ELSE "" ENDIF)`);
   });
   lines.push('_r');
   return userScript(lines.join('\n'));
@@ -139,10 +158,12 @@ export function buildContainerBlastEc(containerRefs: string[]): string {
 
 export function parseContainerBlast(log: string, ownFamilyKey: string): ContainerBlast {
   const byFamily = new Map<string, SharedFamily>();
+  let truncated = false;
   for (const line of markerLines(log, SEP)) {
     if (!line) continue;
     const parts = line.split('|');
     const scRid = parts[0];
+    if (scRid === 'MORE') { truncated = true; continue; }
     if (!scRid) continue;
     const linkedTo = parts[1] || '';
     const name = parts.slice(2).join('|') || undefined;
@@ -154,7 +175,7 @@ export function parseContainerBlast(log: string, ownFamilyKey: string): Containe
       byFamily.set(family, { rid: scRid, name, isMaster: !linkedTo });
     }
   }
-  return { otherFamilies: byFamily.size, families: [...byFamily.values()] };
+  return { otherFamilies: byFamily.size, families: [...byFamily.values()], ...(truncated ? { truncated: true } : {}) };
 }
 
 /** (C) Probe whether an edited InputSet/EditPage is referenced by more than
@@ -167,11 +188,13 @@ export function buildFlowContainerBlastEc(probes: FlowContainerProbe[]): string 
     const id = formatEcLiteral(probe.id);
     const className = formatEcLiteral(probe.className);
     lines.push(`_f${index} := ${probe.ref}`);
-    lines.push(`_f${index}.rref(${property}).forEach(_w:`);
+    lines.push(`_y${index} := _f${index}.rref(${property}).first(${USAGE_ROWS}).calculate(`);
+    lines.push('     _w := self');
     lines.push(
-      `     _r := _r + "${SEP}FLOW|${id}|${className}|" + _w.rid.whenMissing("") + "|" + _w.id.whenMissing("") + "|" + _w.className.whenMissing("") + "|" + ${safeWireTextEc('_w.name.whenMissing("")')} + "\\n"`,
+      `     "${SEP}FLOW|${id}|${className}|" + _w.rid.whenMissing("") + "|" + _w.id.whenMissing("") + "|" + _w.className.whenMissing("") + "|" + ${safeWireTextEc('_w.name.whenMissing("")')} + "\\n"`,
     );
     lines.push(')');
+    lines.push(`_r := _r + _y${index}.join("").whenMissing("")`);
   });
   lines.push('_r');
   return userScript(lines.join('\n'));

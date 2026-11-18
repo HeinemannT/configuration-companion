@@ -893,7 +893,7 @@ export function mountWorkspace({
   function seedMatrixCreateType() {
     if (!state.matrixTesting || state.check.action !== 'Create') return;
     try {
-      if (!readCreateValues(state.check.proposed).type) setCreateValue(state.check,'type','properties',state.matrixTest.type);
+      if (state.matrixTest.type && !readCreateValues(state.check.proposed).type) setCreateValue(state.check,'type','properties',state.matrixTest.type);
     } catch { /* Keep unfinished JSON editable when returning to its test. */ }
   }
 

@@ -8,10 +8,10 @@
  * moved (→ dest). Deletions stay visible (the DOM widget is still there until apply). Staged adds
  * have no DOM, so they draw as dashed placeholders in their host's area.
  */
-import { placeBar } from './bar-place';
+import { placeBar, dockBar, portalBand } from './bar-place';
 import { withShortcut } from '../lib/shortcuts';
 import { typeBadge } from '../lib/type-badge';
-import type { LModel, LNode } from '../lib/layout/types';
+import type { Breakpoint, LModel, LNode } from '../lib/layout/types';
 import { findNode, hasHeight, isResultTab, descendantWidgets, descendantVisibleWidgets, editableTabsets, modelTabsets, tabsetOf } from '../lib/layout/model';
 import { COMPOSITE_TYPES, COMPOSITE_CHILDREN } from '../lib/layout/constraints';
 import { isAncestorOf } from '../lib/layout/edit';
@@ -232,8 +232,10 @@ export function render(): void {
     main.className = 'bp-header-main';
     main.appendChild(renderChip(ctx, pending));
     header.appendChild(main);
-    placeBar(header);
+    const band = portalBand();
+    placeBar(header, band?.getBoundingClientRect().bottom ?? 0);
     layer.appendChild(header);
+    if (dockBar(header, band)) bp.resultAnchor = null; // the page moved: anchor the canvas again
     bp.resultMode = renderEditPage(m, layer);
     renderFloatingChrome(byRid, m);
     if (oldRects) flipFrom(layer, oldRects);
@@ -263,9 +265,12 @@ export function render(): void {
   main.append(renderChip(ctx, pending), tabBar(base, m, liveId, viewedId));
   header.append(modeSwitch(), main);
   if (bp.mode === 'style') header.appendChild(paintStation()); // the paintbrush 2×2, right of the bar
-  placeBar(header); // under the portal's header band, centred, never off the left edge
+  const band = portalBand(); // looked up once for placing and docking
+  placeBar(header, band?.getBoundingClientRect().bottom ?? 0); // under the portal's header band, centred, never off the left edge
   layer.appendChild(header);
   fitTabsOneRow(header.querySelector<HTMLElement>('.bp-tabs'));
+  // A strip under the portal's band, with the same height as room in the page: nothing is covered.
+  if (dockBar(header, band)) bp.resultAnchor = null; // the page moved: anchor the canvas again
 
   // The result canvas IS the editor: the edited model laid out as a CSS-grid wireframe (final positions,
   // real heights, all tabs, honest drop targets) — the sole editing surface. It anchors to the live
@@ -296,6 +301,13 @@ export function render(): void {
   renderFloatingChrome(byRid, m);
   mountActionTray(layer, m, viewedId); // the tab-bar trigger exists here too — let the menu open on a widget-less page
 }
+
+/** The screen size the width control edits, for one object: another object starts on the large
+ *  screen again, the one the canvas draws and dragging changes. */
+let widthScreen: Breakpoint = 'L', widthScreenFor = '';
+const SCREENS: ReadonlyArray<[Breakpoint, string]> = [
+  ['L', 'Large screens (the layout drawn here)'], ['M', 'Medium screens, such as a tablet'], ['S', 'Small screens, such as a phone'],
+];
 
 const TRAY_W = 320;
 /** When the action menu is OPEN, drop its card panel as a floating overlay anchored under the tab-bar
@@ -498,13 +510,27 @@ function toolbar(node: LNode, r: Rect): HTMLElement {
   // Width works in columns: − N col +, 1 to 6.
   const col = document.createElement('div'); col.className = 'bp-colstep'; col.setAttribute('role', 'group'); col.setAttribute('aria-label', 'Width in columns');
   const lblW = document.createElement('span'); lblW.className = 'lbl'; lblW.textContent = 'W'; col.appendChild(lblW);
+  if (widthScreenFor !== node.id) { widthScreenFor = node.id; widthScreen = 'L'; }
+  // Which screen size the width is for. A size BMP holds no own width for shows "auto".
+  const seg = document.createElement('span'); seg.className = 'bp-screens'; seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', 'Screen size');
+  for (const [key, title] of SCREENS) {
+    const b = document.createElement('button'); b.className = 'bp-screen' + (widthScreen === key ? ' on' : '') + (key !== 'L' && node.cols[key] != null ? ' set' : '');
+    b.textContent = key; b.title = title; b.setAttribute('aria-label', title); b.setAttribute('aria-pressed', String(widthScreen === key));
+    b.addEventListener('mousedown', (e) => { e.stopPropagation(); e.preventDefault(); widthScreen = key; render(); });
+    seg.appendChild(b);
+  }
+  col.appendChild(seg);
+  const own = node.cols[widthScreen];
+  const cur = own ?? node.cols.L;
+  const where = widthScreen === 'L' ? '' : widthScreen === 'M' ? ' on medium screens' : ' on small screens';
   const minus = document.createElement('button'); minus.className = 'bp-colstep-minus'; setIcon(minus, ICON_MINUS);
-  minus.title = 'One column narrower'; minus.setAttribute('aria-label', minus.title); minus.disabled = node.cols.L <= 1;
-  minus.addEventListener('mousedown', (e) => { e.stopPropagation(); if (node.cols.L > 1) setWidth(node.id, node.cols.L - 1); });
-  const val = document.createElement('span'); val.className = 'bp-colstep-v'; val.textContent = `${node.cols.L} col`;
+  minus.title = `One column narrower${where}`; minus.setAttribute('aria-label', minus.title); minus.disabled = cur <= 1;
+  minus.addEventListener('mousedown', (e) => { e.stopPropagation(); if (cur > 1) setWidth(node.id, cur - 1, widthScreen); });
+  const val = document.createElement('span'); val.className = 'bp-colstep-v'; val.textContent = own == null ? 'auto' : `${own} col`;
+  if (own == null) val.title = 'No own width for this screen size: BMP decides. Use + or − to set one.';
   const plus = document.createElement('button'); plus.className = 'bp-colstep-plus'; setIcon(plus, ICON_PLUS);
-  plus.title = 'One column wider'; plus.setAttribute('aria-label', plus.title); plus.disabled = node.cols.L >= 6;
-  plus.addEventListener('mousedown', (e) => { e.stopPropagation(); if (node.cols.L < 6) setWidth(node.id, node.cols.L + 1); });
+  plus.title = `One column wider${where}`; plus.setAttribute('aria-label', plus.title); plus.disabled = own != null && cur >= 6;
+  plus.addEventListener('mousedown', (e) => { e.stopPropagation(); setWidth(node.id, own == null ? cur : Math.min(6, cur + 1), widthScreen); });
   col.append(minus, val, plus);
   t.appendChild(col);
 

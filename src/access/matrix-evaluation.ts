@@ -74,7 +74,11 @@ function scalarComparison(comparison: string, right: unknown, matches: (boolean 
 }
 
 export function evaluateMatrixExpression(expression: PolicyJson, context: PolicyJson, depth = 0): Fact {
-  const { type, action, children = {}, metadata, roleIds } = context;
+  // `anyType`: evaluate what holds without naming a type. A test FOR a type, or for named objects,
+  // then counts as not matched, so only the type-free part of the expression is left. A test
+  // AGAINST a type ("not X") names no type the grant is for: it holds for any type but X, so it
+  // counts as matched here and each type's own row still decides for that type.
+  const { type, action, children = {}, metadata, roleIds, anyType = false } = context;
   if (expression === '*') return fact(true);
   if (!expression || typeof expression !== 'object' || depth > 64) return unknown('Unsupported expression');
   if (activePBACExpressions(expression).length !== 1) return unknown('Ambiguous expression');
@@ -118,6 +122,7 @@ export function evaluateMatrixExpression(expression: PolicyJson, context: Policy
   if (c.Right === 'user' && !['Empty', 'NotEmpty'].includes(comparison)) return unknown('Personal access requires a User test');
   if (left.startsWith('new.') && action === 'Update') return unknown('Depends on submitted changes');
   if (['resource.type', 'new.type'].includes(left)) {
+    if (anyType) return fact(!positive.has(comparison) && !['Empty', 'ExactTypeOf'].includes(comparison));
     const right = list(c.Right);
     if (['Empty', 'NotEmpty'].includes(comparison)) return fact(comparison === 'NotEmpty');
     if (classifyPBACRight(left, c.Right).kind !== 'types' || right.some(v => typeof v !== 'string')) return unknown('Invalid or unresolved type operand');
@@ -127,6 +132,7 @@ export function evaluateMatrixExpression(expression: PolicyJson, context: Policy
     return truth == null ? unknown('Type inheritance unavailable') : fact(truth, positive.has(comparison) && truth);
   }
   if (['resource', 'resource.linkedTo'].includes(left) && classifyPBACRight(left, c.Right).kind === 'objects') {
+    if (anyType) return positive.has(comparison) ? fact(false) : unknown('Reference exclusion requires object values');
     const refs = list(c.Right).map(token => metadata?.references?.[token]);
     if (refs.some(v => v === undefined || v === null)) return unknown('Object reference unavailable or missing');
     if (comparison === 'ContainsAll' && new Set(refs.map(v => v.rid)).size > 1) return fact(false);
@@ -147,7 +153,38 @@ export function evaluateMatrixExpression(expression: PolicyJson, context: Policy
   return unknown('Operand requires engine evaluation');
 }
 
+/** The kinds of condition a grant can hang on, in the order the matrix shows them:
+ *  own      the object names the user (owner, responsible)
+ *  related  access to, or a role on, a related object
+ *  model    the object's model
+ *  some     certain field values, certain objects, or the submitted change */
+export const CONDITION_KINDS = ['own', 'related', 'model', 'some'] as const;
+export type ConditionKind = typeof CONDITION_KINDS[number];
+const KIND_OF: Array<[RegExp, ConditionKind]> = [
+  [/User test/i, 'own'],
+  [/Related-object access|Role membership/i, 'related'],
+  [/Model-restricted/i, 'model'],
+  [/object or submitted field values|submitted changes|Only the referenced objects|Only objects linked|Reference exclusion/i, 'some'],
+];
+
+/** What an open answer hangs on: the kinds of condition, and the reasons that are not a
+ *  condition at all but something the matrix could not read or load (`gaps`). */
+export function conditionKinds(result: Pick<Fact, 'reasons' | 'unresolvedReasons'>): { kinds: ConditionKind[]; gaps: string[] } {
+  const kinds = new Set<ConditionKind>(), gaps = new Set<string>();
+  for (const reason of [...result.reasons, ...(result.unresolvedReasons ?? [])]) {
+    const kind = KIND_OF.find(([re]) => re.test(reason))?.[1];
+    if (kind) kinds.add(kind); else gaps.add(reason);
+  }
+  return { kinds: CONDITION_KINDS.filter(k => kinds.has(k)), gaps: [...gaps] };
+}
+
+/** A grant under a known kind of condition is CONDITIONAL. UNRESOLVED is left for what the
+ *  matrix could not read or load: no condition is known, or a gap sits beside the condition
+ *  and no type guard matched. */
 export function coverageStatus(result: Fact): number {
-  return result.truth === false ? EXCLUDED : result.truth === true ? DEFINITE : result.anchored && !result.blocked ? CONDITIONAL : UNRESOLVED;
+  if (result.truth === false) return EXCLUDED;
+  if (result.truth === true) return DEFINITE;
+  const { kinds, gaps } = conditionKinds(result);
+  return kinds.length && (!gaps.length || result.anchored) ? CONDITIONAL : UNRESOLVED;
 }
 export const typeMatch = (expression: PolicyJson, type: string, action: string, children: Record<string, any> = {}) => evaluateMatrixExpression(expression, { type, action, children }).truth;
