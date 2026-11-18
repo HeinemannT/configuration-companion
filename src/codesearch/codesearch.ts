@@ -1281,7 +1281,8 @@ function buildGroup(h: CodeSearchHit): Node[] {
     row.addEventListener('click', e => {
       if (selected === key && !e.detail) return;
       selected = key;
-      if (e.detail >= 2) { open(key, e.altKey); return; }
+      // "Open" on the selected row opens with one click, like Enter.
+      if (e.detail >= 2 || (e.target as Element | null)?.closest?.('.open')) { open(key, e.altKey); return; }
       updateSelection();
     });
     out.push(row);

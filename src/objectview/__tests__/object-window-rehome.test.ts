@@ -127,6 +127,60 @@ describe('Used by', () => {
     expect([...notReady.root.querySelectorAll('button')].some(b => b.textContent?.includes('Search now'))).toBe(true);
   });
 
+  it('answers in one line after the scan and lists the instances on their own', async () => {
+    const inbound = vi.fn(async () => ({
+      targets: [
+        { rid: '42', name: 'Risk', type: 'CeRisk', businessId: 'r' },
+        { rid: '43', name: 'Copy of the set', type: 'InputSet', businessId: 'c' },
+      ],
+      total: 2,
+      instances: { total: 30, targets: [{ rid: '43', name: 'Copy of the set', type: 'InputSet', businessId: 'c' }] },
+    }));
+    const usedInCode = vi.fn(async () => ({ targets: [{ rid: '44', name: 'Calls the set', type: 'ExtendedExpression', businessId: 'calls_set', places: 1 }], coverage: { kind: 'index' as const, objects: 10, at: null } }));
+    const { root, view, controller } = mount(src({ [VIEW]: inputView() }, [], { inbound, usedInCode }), { usedInCode: o => controller.loadInCode(o) });
+    await controller.open(VIEW);
+    view.select(SET);
+    await flush();
+    expect(root.querySelector('.ow-use-sum')).toBeNull();
+    button(root, 'Scan for other references')!.click();
+    await flush();
+    const sum = root.querySelector('.ow-use-sum')!;
+    expect(sum.getAttribute('data-found')).toBe('true');
+    expect(sum.querySelector('.h')?.textContent).toBe('32 objects refer to this object.');
+    expect(sum.textContent).toContain('It is the template of 30 objects.');
+    const heads = [...root.querySelectorAll('.ow-rel-h')].map(h => h.textContent);
+    expect(heads).toContain('Instances 30');
+    // The instance is not listed a second time under its type.
+    expect(heads.some(h => h?.startsWith('Input set'))).toBe(false);
+    expect(root.textContent).toContain('Showing the first 1 of 30.');
+  });
+
+  it('a template that only its instances refer to is not reported as free', async () => {
+    const inbound = async () => ({ targets: [], total: 0, instances: { total: 1, targets: [{ rid: '43', name: 'Landing Page', type: 'Scorecard', businessId: 'lp' }] } });
+    const { root, view, controller } = mount(src({ [VIEW]: inputView() }, [], { inbound }));
+    await controller.open(VIEW);
+    view.select(SET);
+    button(root, 'Scan for other references')!.click();
+    await flush();
+    expect(root.querySelector('.ow-use-sum .h')?.textContent).toBe('1 object refers to this object.');
+    expect(root.textContent).toContain('It is the template of 1 object.');
+    expect([...root.querySelectorAll('.ow-rel-h')].map(h => h.textContent)).toContain('Instances 1');
+    expect(root.textContent).not.toContain('Nothing refers to this object.');
+  });
+
+  it('says "nothing found", not "unused", when the scan finds nothing', async () => {
+    const { root, view, controller } = mount(src({ [VIEW]: inputView() }, [], { inbound: async () => ({ targets: [], total: 0 }) }));
+    await controller.open(VIEW);
+    view.select(SET);
+    button(root, 'Scan for other references')!.click();
+    await flush();
+    const sum = root.querySelector('.ow-use-sum')!;
+    expect(sum.getAttribute('data-found')).toBe('false');
+    expect(sum.textContent).toContain('Nothing found that refers to this object.');
+    expect(sum.textContent).toContain('Code was not checked.');
+    expect(root.textContent).not.toMatch(/unused/i);
+  });
+
   it('cancel drops the scan and tells the service worker', async () => {
     const cancelInbound = vi.fn();
     const { root, view, controller } = mount(src({ [VIEW]: inputView() }, [], { inbound: () => new Promise(() => undefined), cancelInbound }));

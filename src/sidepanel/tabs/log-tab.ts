@@ -17,9 +17,10 @@ import { icon, mountShellSprites } from '../icons';
 import { toggleMenu } from '../menu';
 import { trimActivity } from '../../lib/activity-policy';
 import { emptyState } from '../../lib/empty-state';
+import { CHANGES_MAX, cutNote, type ChangeRecord } from '../../lib/change-record';
 import {
   LOG_DISPLAY_CAP, LEVEL_WORD, clockTime, collapseRuns, detailLines, entriesJson, entriesText, entryText,
-  errorCount, exportFileName, filterEntries, formatDuration, groupByDay, inScope, markEndedPauses, metaLine, problemCount, readableEntry,
+  dayKey, dayLabel, errorCount, exportFileName, filterEntries, formatDuration, groupByDay, inScope, markEndedPauses, metaLine, problemCount, readableEntry,
   type EventFilter, type ScopeFilter,
 } from './log-model';
 
@@ -55,6 +56,10 @@ export class LogTab implements Tab {
   /** The entry shown highlighted, for a few seconds. */
   private highlightId: number | null = null;
   private highlightTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Activity entries, or the change record of this server. */
+  private view: 'log' | 'changes' = 'log';
+  private changes: ChangeRecord[] = [];
+  private openChanges = new Set<number>();
 
   /** Latest activity message (read by status bar in sidepanel) */
   get latestActivityMsg() { return this.latestMsg; }
@@ -120,6 +125,7 @@ export class LogTab implements Tab {
 
   activate() {
     this.send({ type: 'GET_ACTIVITY' });
+    this.send({ type: 'GET_CHANGES' });
   }
 
   deactivate() {
@@ -148,6 +154,16 @@ export class LogTab implements Tab {
         this.showWorkStatus(compactActivityStatus(entry));
         return true;
       }
+      case 'CHANGES_DATA':
+        // Another server's record is not this panel's.
+        if (msg.profileId && S.settings.activeProfileId && msg.profileId !== S.settings.activeProfileId) return false;
+        this.changes = msg.entries;
+        return this.view === 'changes';
+      case 'PROFILE_SWITCHED':
+        this.changes = [];
+        this.openChanges.clear();
+        this.send({ type: 'GET_CHANGES' });
+        return false;
       default:
         return false;
     }
@@ -187,7 +203,9 @@ export class LogTab implements Tab {
     const root = el('div', 'lg ui');
     root.append(this.renderTools(problems, errors, matching.length));
 
-    if (!groups.length) {
+    if (this.view === 'changes') {
+      root.append(this.renderChanges());
+    } else if (!groups.length) {
       root.append(this.renderEmpty());
     } else {
       // The duration column exists only when a row in view has a duration.
@@ -224,7 +242,7 @@ export class LogTab implements Tab {
       b.type = 'button';
       b.dataset.eventFilter = value;
       b.dataset.fk = `filter:${value}`;
-      b.setAttribute('aria-pressed', String(this.eventFilter === value));
+      b.setAttribute('aria-pressed', String(this.view === 'log' && this.eventFilter === value));
       if (count) {
         // Danger colour only when something actually failed.
         const c = el('span', `lg-cnt${errors ? ' err' : ''}`, String(count));
@@ -234,8 +252,25 @@ export class LogTab implements Tab {
       return b;
     };
     seg.append(segBtn('activity', 'Activity'), segBtn('problems', 'Problems', problems), segBtn('all', 'All'));
+    const changes = el('button', '', 'Changes') as HTMLButtonElement;
+    changes.type = 'button';
+    changes.dataset.act = 'changes';
+    changes.dataset.fk = 'changes';
+    changes.title = 'What the object window wrote to this server, with the value before';
+    changes.setAttribute('aria-pressed', String(this.view === 'changes'));
+    seg.append(changes);
 
     const tools = el('div', 'lg-tools', seg, el('span', 'lg-sp'));
+    if (this.view === 'changes') {
+      const clear = el('button', 'ui-tbtn lg-clear', 'Clear') as HTMLButtonElement;
+      clear.type = 'button';
+      clear.dataset.act = 'clear-changes';
+      clear.dataset.fk = 'clear-changes';
+      clear.disabled = !this.changes.length;
+      clear.title = 'Remove the recorded changes of this server from this computer';
+      tools.append(clear);
+      return tools;
+    }
     if (S.settings.profiles.length > 1) {
       const label = this.scope === 'this' ? 'This server' : 'All servers';
       const scope = el('button', 'ui-tbtn lg-scope', icon('s-globe', 'ic-sm lg-scope-ic'), el('span', 'lg-scope-t', label), icon('i-chev', 'ic-sm')) as HTMLButtonElement;
@@ -280,6 +315,79 @@ export class LogTab implements Tab {
       text.push(link);
     }
     return emptyState({ title, text, art: 'sm', className: 'lg-empty' });
+  }
+
+  /** The change record of this server, newest first. */
+  private renderChanges(): HTMLElement {
+    if (!this.changes.length) {
+      return emptyState({
+        title: 'No changes recorded yet',
+        text: ['Properties you save in the object window appear here with the value before. Kept on this computer only.'],
+        art: 'sm', className: 'lg-empty',
+      });
+    }
+    const list = el('div', 'lg-list nodur');
+    const now = Date.now();
+    let day = '';
+    for (const rec of [...this.changes].reverse()) {
+      if (dayKey(rec.at) !== day) {
+        day = dayKey(rec.at);
+        list.append(el('div', 'ui-band lg-day', el('span', 't', dayLabel(rec.at, now)), el('span', 'n', String(this.changes.filter(c => dayKey(c.at) === day).length))));
+      }
+      list.append(this.renderChange(rec));
+    }
+    const wrap = el('div', 'lg-changes', list);
+    if (this.changes.length >= CHANGES_MAX) wrap.append(el('div', 'lg-more', `The newest ${CHANGES_MAX} changes are kept.`));
+    return wrap;
+  }
+
+  private renderChange(rec: ChangeRecord): HTMLElement {
+    const open = this.openChanges.has(rec.id);
+    // The name at save time, with the ID: a renamed object stays recognisable.
+    const object = rec.name && rec.businessId && rec.name !== rec.businessId ? `${rec.name} (${rec.businessId})` : rec.name || rec.businessId || rec.rid;
+    const prop = rec.label || rec.prop;
+    const item = el('div', `lg-item ${rec.unchecked ? 'warn' : 'success'}${open ? ' open' : ''}`);
+    const row = el('div', 'lg-row');
+    row.tabIndex = 0;
+    row.setAttribute('role', 'button');
+    row.setAttribute('aria-expanded', String(open));
+    row.dataset.change = String(rec.id);
+    row.dataset.fk = `change:${rec.id}`;
+    row.title = `${object}: ${prop}`;
+    const result = el('span', `lg-r ${rec.unchecked ? 'warn' : 'success'}`, icon(rec.unchecked ? 's-warn' : 's-check', 'ic-sm'));
+    result.title = rec.unchecked ? 'Sent; the stored value could not be confirmed' : 'Saved';
+    row.append(el('span', 'lg-t', clockTime(rec.at)), result,
+      el('span', 'lg-m', el('span', 'lg-mt', `${object}: ${rec.reset ? `${prop} reset to the template value` : prop}`)));
+    item.append(row);
+    if (!open) return item;
+    const detail = el('div', 'lg-detail');
+    const meta = [rec.objectType, rec.businessId, `RID ${rec.rid}`, rec.prop !== prop ? rec.prop : '', rec.actor ? `as ${rec.actor}` : ''].filter(Boolean).join(' · ');
+    detail.append(el('div', 'lg-meta', meta));
+    const value = (title: string, text: string, side: 'before' | 'after') => {
+      detail.append(el('div', 'lg-val-h', title), el('pre', 'lg-pre', text === '' ? '(empty)' : text));
+      const note = cutNote(rec, side);
+      if (note) detail.append(el('div', 'lg-meta', note));
+    };
+    value('Before', rec.before, 'before');
+    if (!rec.reset) value('After', rec.after, 'after');
+    if (rec.unchecked) detail.append(el('div', 'lg-meta', 'Sent, but the stored value could not be confirmed.'));
+    const copy = el('button', 'ui-tbtn lg-copy', icon('i-copy', 'ic-sm'), 'Copy the value before') as HTMLButtonElement;
+    copy.type = 'button';
+    copy.dataset.act = 'copy-before';
+    copy.dataset.key = String(rec.id);
+    copy.dataset.fk = `copy-before:${rec.id}`;
+    detail.append(copy);
+    item.append(detail);
+    return item;
+  }
+
+  private async clearChanges(): Promise<void> {
+    const ok = await confirmModal({
+      title: 'Clear the recorded changes',
+      body: 'This removes the record from this computer. Nothing changes in BMP.',
+      confirmLabel: 'Clear',
+    });
+    if (ok) this.send({ type: 'CLEAR_CHANGES' });
   }
 
   private renderEntry(entry: ActivityEntry, count: number): HTMLElement {
@@ -345,16 +453,34 @@ export class LogTab implements Tab {
       if (focus) this.container?.querySelector<HTMLElement>(`.lg-row[data-key="${id}"]`)?.focus();
     };
 
+    const toggleChange = (key: string, focus: boolean) => {
+      const id = Number(key);
+      if (this.openChanges.has(id)) this.openChanges.delete(id); else this.openChanges.add(id);
+      rerender();
+      if (focus) this.container?.querySelector<HTMLElement>(`.lg-row[data-change="${id}"]`)?.focus();
+    };
+
     root.addEventListener('click', (ev) => {
       const t = ev.target as HTMLElement;
       const filter = t.closest<HTMLElement>('[data-event-filter]');
       if (filter) {
         const next = filter.dataset.eventFilter as EventFilter;
-        if (next !== this.eventFilter) { this.eventFilter = next; rerender(); }
+        if (next !== this.eventFilter || this.view !== 'log') { this.eventFilter = next; this.view = 'log'; rerender(); }
         this.focusKey(`filter:${next}`);
         return;
       }
       const act = t.closest<HTMLElement>('[data-act]');
+      if (act?.dataset.act === 'changes') {
+        if (this.view !== 'changes') { this.view = 'changes'; this.send({ type: 'GET_CHANGES' }); rerender(); }
+        this.focusKey('changes');
+        return;
+      }
+      if (act?.dataset.act === 'clear-changes') { void this.clearChanges(); return; }
+      if (act?.dataset.act === 'copy-before') {
+        const rec = this.changes.find(c => c.id === Number(act.dataset.key));
+        if (rec) void this.copy(rec.before, 'Copied');
+        return;
+      }
       if (act?.dataset.act === 'scope') { this.openScopeMenu(act); return; }
       if (act?.dataset.act === 'export') { this.openExportMenu(act); return; }
       if (act?.dataset.act === 'reset-scripts') {
@@ -369,6 +495,7 @@ export class LogTab implements Tab {
       }
       if (t.closest('.lg-detail')) return; // text selection inside the detail
       const row = t.closest<HTMLElement>('.lg-row');
+      if (row?.dataset.change) { toggleChange(row.dataset.change, false); return; }
       if (row) toggle(row.dataset.key, false);
     });
     root.addEventListener('keydown', (ev) => {
@@ -376,6 +503,7 @@ export class LogTab implements Tab {
       const row = (ev.target as HTMLElement).closest<HTMLElement>('.lg-row');
       if (!row || ev.target !== row) return;
       ev.preventDefault();
+      if (row.dataset.change) { toggleChange(row.dataset.change, true); return; }
       toggle(row.dataset.key, true);
     });
   }

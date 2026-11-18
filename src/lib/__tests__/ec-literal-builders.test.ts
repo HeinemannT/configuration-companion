@@ -40,6 +40,30 @@ describe('the shared EC literal escaper', () => {
   });
 });
 
+describe('applyObjectChanges: built-in text fields', () => {
+  it('writes quotes, backslashes, line breaks and non-ASCII text as one escaped literal', async () => {
+    const { c, exec } = makeClient();
+    await expect(c.applyObjectChanges('100', 'instance', { pageTitle: RAW, description: 'Line one\nLine two' })).resolves.toMatchObject({ ok: true });
+    const ec = exec.mock.calls[0][0];
+    expect(ec).toContain(`pageTitle := "${ESCAPED}"`);
+    expect(ec).toContain('description := "Line one\\nLine two"');
+  });
+
+  it('clears a text field with an empty string literal', async () => {
+    const { c, exec } = makeClient();
+    await c.applyObjectChanges('100', 'instance', { pageTitle: '', description: '' });
+    expect(exec.mock.calls[0][0]).toContain('_o.change(pageTitle := "", description := "")');
+  });
+
+  it('refuses the text fields that are not editable', async () => {
+    const { c, exec } = makeClient();
+    for (const p of ['key', 'image', 'information', 'richText']) {
+      await expect(c.applyObjectChanges('100', 'instance', { [p]: 'x' })).resolves.toMatchObject({ ok: false });
+    }
+    expect(exec).not.toHaveBeenCalled();
+  });
+});
+
 describe('builders that interpolate text', () => {
   it('BmpClient.applyObjectChanges: a text property value', async () => {
     const { c, exec } = makeClient();

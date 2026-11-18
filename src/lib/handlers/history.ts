@@ -11,6 +11,8 @@ import { getActivityLog } from '../activity';
 import { holdLogEntryForPanel, logIdForError } from '../toast-log';
 import { log } from '../logger';
 import { isRidShaped } from '../validate-inbound';
+import { clearChanges, readChanges, recordChanges, type ChangeRecord } from '../change-record';
+import { currentCommandActor } from '../command-actor';
 
 register('GET_HISTORY', (msg, respond, meta) => {
   respond({ type: 'HISTORY_DATA', entries: ctxOf(meta).history.getAll() });
@@ -82,6 +84,30 @@ register('DELETE_STYLE_PRESET', (msg, respond, meta) => {
   const ctx = ctxOf(meta);
   ctx.stylePresets.remove(msg.id);
   respond({ type: 'STYLE_PRESETS_DATA', presets: ctx.stylePresets.getAll() });
+});
+
+// Change record: per server profile, written only by the object window's saves.
+register('RECORD_CHANGES', async (msg, _respond, meta) => {
+  const ctx = ctxOf(meta);
+  const profileId = ctx.profileId;
+  if (!profileId || !Array.isArray(msg.changes) || !msg.changes.length) return;
+  try {
+    const entries = await recordChanges(profileId, msg.changes, currentCommandActor(profileId)?.user);
+    ctx.sendToPanel({ type: 'CHANGES_DATA', profileId, entries });
+  } catch (e) { log.swallow('changes:record', e); }
+});
+
+register('GET_CHANGES', async (_msg, respond, meta) => {
+  const profileId = ctxOf(meta).profileId ?? '';
+  let entries: ChangeRecord[] = [];
+  try { if (profileId) entries = await readChanges(profileId); } catch (e) { log.swallow('changes:read', e); }
+  respond({ type: 'CHANGES_DATA', profileId, entries });
+});
+
+register('CLEAR_CHANGES', async (_msg, respond, meta) => {
+  const profileId = ctxOf(meta).profileId ?? '';
+  try { if (profileId) await clearChanges(profileId); } catch (e) { log.swallow('changes:clear', e); }
+  respond({ type: 'CHANGES_DATA', profileId, entries: [] });
 });
 
 register('GET_ACTIVITY', (msg, respond, meta) => {

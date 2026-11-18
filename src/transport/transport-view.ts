@@ -23,7 +23,7 @@ import { FILE_LIMIT_KB_MAX, FILE_LIMIT_KB_MIN, isTransportRoot, sizeKb, uploadTe
 import { PATCH_VALUE_ACTION_LABELS, type PatchPart, type PatchReviewObject, type PatchValue, type ProbePart, type RenameHint, type TargetOnlyObject, type TransportPatch } from '../lib/transport-patch';
 import { TRANSPORT_SEARCH_CAP, TRANSPORT_USED_BY_CAP, type TransportLogEntry, type TransportScanRow } from '../lib/transport-read';
 import {
-  applyCounts, applySize, choiceOf, CHOICE_ANY, CHOICE_PASTE, IDLIST, ONPAGE, TRANSPORT_APPLY_WARN_CHARS, UNDER,
+  applyCounts, applySize, choiceOf, CHOICE_ANY, CHOICE_PASTE, IDLIST, NEED_KINDS, ONPAGE, TRANSPORT_APPLY_WARN_CHARS, UNDER,
   areaKey, type AreaResult, type BrowseNode, type Change, type DirectState, type NeedKind, type GroupKey, type TargetState, type TransportController,
 } from './transport-controller';
 import {
@@ -62,7 +62,12 @@ export const DEPTH_CAP = 6;
 /** The one sentence above the comparison script. */
 export const PROBE_LEAD = 'Run each part with Preview on the target, then paste the whole answer of every part below.';
 /** The empty transport. */
-export const EMPTY_TRANSPORT = 'Nothing in the transport yet. Tick objects under Find. A transport carries objects from this workspace to another one: choose a target and compare. Nothing is written to the target until you apply.';
+export const EMPTY_TRANSPORT = 'Nothing in the transport yet. Tick objects under Find.';
+/** Always shown at the top of the Transport tab: what a transport is for. */
+export const TRANSPORT_PURPOSE = 'Carries the objects you ticked under Find from this workspace to another one. Compare shows what would be added, changed, moved or deleted there. Nothing is written until you apply.';
+/** Shown while the objects are a stored draft that was not read again. */
+export const DRAFT_NOTE = 'These objects are from an earlier session. Refresh reads them again; Clear removes them.';
+export const TARGET_DEFAULT_TITLE = 'The first other connected workspace is chosen. Pick another one here.';
 /** The target picker's choices without a connection. */
 export const PASTE_TARGET = 'Another workspace: compare by pasted script';
 export const ANY_TARGET = 'Another workspace: scripts only, no comparison';
@@ -316,7 +321,7 @@ export function mountTransportView(host: HTMLElement, ctl: TransportController, 
   const findPanel = attrs(el('section', 'tr-panel tr-find', findBar, findStatus, findMain, foot), { id: 'tr-find', role: 'tabpanel', 'aria-labelledby': 'tr-tab-find' });
 
   // ── transport ───────────────────────────────────────────────────
-  const targetSel = attrs(el('select', 'tr-target ui-input') as HTMLSelectElement, { 'aria-label': 'Target' });
+  const targetSel = attrs(el('select', 'tr-target ui-input') as HTMLSelectElement, { 'aria-label': 'Target', title: TARGET_DEFAULT_TITLE });
   targetSel.addEventListener('change', () => ctl.setChoice(targetSel.value));
   const actBtn = btn('tr-act ui-btn primary', undefined, () => { void ctl.compareOrBuild(); }, 'Compare');
   const applyBtn = btn('tr-apply ui-btn', undefined, () => ctl.requestApply(), 'Apply');
@@ -348,14 +353,16 @@ export function mountTransportView(host: HTMLElement, ctl: TransportController, 
   const ttools = el('div', 'tr-ttools', viewSeg, el('span', 'tr-sp'), draftText, refreshBtn, copyIdsBtn, clearBtn);
   const tlist = attrs(el('div', 'tr-tlist'), { role: 'list', 'aria-label': 'Objects in the transport' });
   const tmap = el('div', 'tr-mapview');
+  const draftNote = el('p', 'tr-draftnote', DRAFT_NOTE);
+  draftNote.hidden = true;
   const tempty = el('p', 'tr-empty tr-tempty', EMPTY_TRANSPORT);
-  const transportMain = el('div', 'tr-main tr-tmain', stateBox, sumBox, pasteBox, ttools, tempty, tlist, tmap, scriptsBox, optsBox);
+  const transportMain = el('div', 'tr-main tr-tmain', stateBox, sumBox, pasteBox, ttools, draftNote, tempty, tlist, tmap, scriptsBox, optsBox);
   transportMain.addEventListener('click', e => {
     // A clamped value opens to its full text, and closes again.
     const v = (e.target as HTMLElement).closest<HTMLElement>('.tr-val');
     if (v && !(e.target as HTMLElement).closest('button, a, input')) v.classList.toggle('open');
   });
-  const transportPanel = attrs(el('section', 'tr-panel tr-transport', thead, lastLine, transportMain), { id: 'tr-transport', role: 'tabpanel', 'aria-labelledby': 'tr-tab-transport' });
+  const transportPanel = attrs(el('section', 'tr-panel tr-transport', el('p', 'tr-purpose', TRANSPORT_PURPOSE), thead, lastLine, transportMain), { id: 'tr-transport', role: 'tabpanel', 'aria-labelledby': 'tr-tab-transport' });
 
   // ── transport log ───────────────────────────────────────────────
   const logView = el('div', 'tr-main tr-logview');
@@ -945,7 +952,8 @@ export function mountTransportView(host: HTMLElement, ctl: TransportController, 
     const b = ctl.bundle;
     const link = (label: string, fn: () => void) => btn('tr-link', undefined, fn, label);
     if (ctl.refs) {
-      busyLine.append(el('span', '', `Looking up ${count(ctl.refs.done)} of ${count(ctl.refs.addresses.length)}`), ...(ctl.refs.status === 'reading' ? [link('Stop', () => ctl.stopRefs())] : []));
+      const round = ctl.missing ? `Adding what is missing, round ${ctl.missing.round} of ${ctl.missing.of} · ` : '';
+      busyLine.append(el('span', '', `${round}Looking up ${count(ctl.refs.done)} of ${count(ctl.refs.addresses.length)}`),...(ctl.refs.status === 'reading' ? [link('Stop', () => ctl.stopRefs())] : []));
       return;
     }
     if (b?.error && b.status === 'failed') {
@@ -1082,6 +1090,10 @@ export function mountTransportView(host: HTMLElement, ctl: TransportController, 
 
   // ── transport: summary and what is needed ───────────────────────
 
+  /** The one action for every need that can be added. */
+  const ADD_MISSING = 'Add what is missing and compare again';
+  const ADD_MISSING_TITLE = 'Adds the used objects, the parents and the flow steps that are missing to the transport, then compares again.';
+
   /** The target's name in a sentence. */
   const targetName = () => ctl.bundle?.direct?.label ?? 'the target';
   /** The target's name at the start of a sentence. */
@@ -1175,6 +1187,12 @@ export function mountTransportView(host: HTMLElement, ctl: TransportController, 
       lines.push(needLine('source-listing', 'know', `What this workspace has under ${t.listing.start} could not be read, so no object counts as only on ${targetName()} and nothing is deleted: ${t.sourceError}`));
     }
     if (p?.listing?.state === 'missing') lines.push(needLine('listing-missing', 'know', `${TargetName()} has no ${p.listing.start}.`));
+    // One action for all of the needs that can be looked up here, with a connected target.
+    if (b.target?.direct && NEED_KINDS.some(k => ctl.referencedAddresses(k).length)) {
+      const all = attrs(btn('tr-addmissing ui-btn primary', undefined, () => { void ctl.addMissing(); }, ADD_MISSING), { title: ADD_MISSING_TITLE });
+      all.disabled = ctl.busy || ctl.locked || !!ctl.missing;
+      sumBox.append(all);
+    }
     appendNeeds(lines);
   }
 
@@ -1185,7 +1203,13 @@ export function mountTransportView(host: HTMLElement, ctl: TransportController, 
   }
 
   /** What a comparison with nothing to do says. */
-  const matchLine = (p: TransportPatch) => (p.review.some(r => r.values.some(v => v.action === 'keep' && v.name.toLowerCase() !== 'id'))
+  const matchLine = (p: TransportPatch) => {
+    // Objects left out for a missing parent are not compared: "already matches" would be wrong.
+    const out = ctl.neededParents().objects;
+    if (out) return `Nothing to apply yet: ${out === 1 ? '1 object is' : `${count(out)} objects are`} left out.`;
+    return matchText(p);
+  };
+  const matchText = (p: TransportPatch) => (p.review.some(r => r.values.some(v => v.action === 'keep' && v.name.toLowerCase() !== 'id'))
     ? `Nothing to change: ${targetName()} only has values of its own, and they are kept.`
     : `${TargetName()} already matches.`);
 
@@ -1632,6 +1656,7 @@ export function mountTransportView(host: HTMLElement, ctl: TransportController, 
     refreshBtn.hidden = !ctl.draftRestored && !ctl.refresh;
     refreshBtn.disabled = !ctl.refreshing && (ctl.busy || ctl.locked);
     clearBtn.disabled = ctl.locked || !items.length;
+    draftNote.hidden = !(ctl.draftUnread && items.length);
   }
 
   function drawUndo(): void {

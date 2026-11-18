@@ -140,7 +140,15 @@ describe('edit policy', () => {
     // Read-only in this step: arbitrary properties.
     expect(editability(r[VIEW], 'sortIndex')).toBeNull();
     expect(editability(r[VIEW], 'persistence')).toBeNull();
-    expect(editability(r[BTN], 'description')).toBeNull();
+  });
+
+  it('edits a plain one-line description, also an empty one, and nothing with markup', () => {
+    expect(editability(r[BTN], 'description')).toMatchObject({ route: 'props', def: { kind: 'string' } });
+    const withText = (text: string) => ({ ...r[BTN], props: { ...r[BTN].props, description: t(text) } });
+    expect(editability(withText('Writes the date'), 'description')?.route).toBe('props');
+    expect(editability(withText('<p>Writes the date</p>'), 'description')).toBeNull();
+    // Several plain lines open in a text area (object-window-text.test.ts); markup stays read-only above.
+    expect(editability(r[LBL], 'description')).toBeNull();
   });
 
   it('never allows a property the read did not return', () => {

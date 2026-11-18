@@ -218,3 +218,13 @@ describe('inbound scan (C3)', () => {
     expect(capped).toBe(true);
   });
 });
+
+describe('instances of a template', () => {
+  it('lists at most the cap and counts all', async () => {
+    const { buildInstancesEc, INSTANCE_LIST_CAP } = await import('../connections');
+    const ec = buildInstancesEc('this.object');
+    expect(ec).toContain('_o.rref(linkedTo)');
+    expect(ec).toContain(`_l.first(${INSTANCE_LIST_CAP}).calculate(`);
+    expect(ec).toContain('_l.size()');
+  });
+});

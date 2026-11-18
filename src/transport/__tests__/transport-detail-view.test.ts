@@ -6,10 +6,10 @@
  * <Class>", "Links between steps" (links removed), the steps needs line,
  * the schedule line and the confirmation's schedule and class-link lines.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { CHECK_READY_LINE } from '../../lib/transport-patch';
 import type { InspectorMessage } from '../../lib/types';
-import { TransportController } from '../transport-controller';
+import { MISSING_ROUNDS, TransportController } from '../transport-controller';
 import { mountTransportView, scheduleSentence, unlinkCount, unlinkSentence } from '../transport-view';
 import { ENV, fakeWorker, flush, objectsResult, probeAnswer, propertyGenerate, readOk, row, scanResult, type ProbeTarget, type Sent } from './fakes';
 
@@ -82,6 +82,83 @@ async function compared() {
   const section = (r: { rid: string }, title: string) => $$(`.tr-detail[data-rid="${r.rid}"] .tr-dsec`).find(s => s.querySelector('.tr-dsec-h')?.textContent === title);
   return { w, ctl, $, $$, open, section, flow, type };
 }
+
+describe('Add what is missing and compare again', () => {
+  const LABEL = 'Add what is missing and compare again';
+  const TITLE = 'Adds the used objects, the parents and the flow steps that are missing to the transport, then compares again.';
+  const redraw = (ctl: unknown) => (ctl as { emit(e: { kind: string }): void }).emit({ kind: 'bundle' });
+
+  /** The needs and the size of the transport stood in for, so rounds can be counted. */
+  function rounds(ctl: TransportController, needs: (round: number) => string[], grows: boolean) {
+    const calls: string[] = [];
+    let size = 0;
+    let round = 0;
+    const real = ctl.transportItems.bind(ctl);
+    vi.spyOn(ctl, 'referencedAddresses').mockImplementation(kind => (kind === 'parents' ? [] : needs(round)));
+    vi.spyOn(ctl, 'transportItems').mockImplementation(() => { const own = real(); return [...own, ...Array.from({ length: size }, () => own[0])]; });
+    vi.spyOn(ctl, 'addReferenced').mockImplementation(async kind => {
+      calls.push(kind ?? 'uses');
+      if (kind === 'steps') { round++; if (grows) size++; }
+    });
+    return calls;
+  }
+
+  it('one button with the title, only with needs and a connected target; it is disabled while busy', async () => {
+    const { ctl, $ } = await compared();
+    const go = $<HTMLButtonElement>('.tr-addmissing')!;
+    expect([go.textContent, go.title, go.disabled]).toEqual([LABEL, TITLE, false]);
+    expect(go.textContent).not.toContain('—');
+    vi.spyOn(ctl, 'busy', 'get').mockReturnValue(true);
+    redraw(ctl);
+    expect($<HTMLButtonElement>('.tr-addmissing')!.disabled).toBe(true);
+    vi.restoreAllMocks();
+    // Nothing that can be looked up here: no button.
+    vi.spyOn(ctl, 'referencedAddresses').mockReturnValue([]);
+    redraw(ctl);
+    expect($('.tr-addmissing')).toBeNull();
+    vi.restoreAllMocks();
+    // No connected target: the per-line buttons stay, this one goes.
+    (ctl.bundle!.target as { direct?: unknown }).direct = undefined;
+    redraw(ctl);
+    expect($('.tr-addmissing')).toBeNull();
+  });
+
+  it('a click runs the add of each kind that is needed, once per round, and stops when nothing is needed', async () => {
+    const { ctl, $ } = await compared();
+    const calls = rounds(ctl, r => (r === 0 ? ['t.x'] : []), true);
+    $<HTMLButtonElement>('.tr-addmissing')!.click();
+    await flush(10);
+    expect(calls).toEqual(['uses', 'steps']);
+    expect(ctl.missing).toBeNull();
+  });
+
+  it('stops after the most rounds and leaves the rest', async () => {
+    const { ctl } = await compared();
+    const calls = rounds(ctl, () => ['t.x'], true);
+    await ctl.addMissing();
+    expect(MISSING_ROUNDS).toBe(6);
+    expect(calls).toEqual(Array.from({ length: MISSING_ROUNDS }, () => ['uses', 'steps']).flat());
+  });
+
+  it('stops when the transport did not grow, and does nothing while busy', async () => {
+    const { ctl } = await compared();
+    const calls = rounds(ctl, () => ['t.x'], false);
+    await ctl.addMissing();
+    expect(calls).toEqual(['uses', 'steps']);
+    calls.length = 0;
+    vi.spyOn(ctl, 'busy', 'get').mockReturnValue(true);
+    await ctl.addMissing();
+    expect(calls).toEqual([]);
+  });
+
+  it('stops at an error', async () => {
+    const { ctl } = await compared();
+    const calls = rounds(ctl, () => ['t.x'], true);
+    vi.mocked(ctl.addReferenced).mockImplementation(async kind => { calls.push(kind ?? 'uses'); ctl.error = 'No answer'; });
+    await ctl.addMissing();
+    expect(calls).toEqual(['uses']);
+  });
+});
 
 describe('a comparison with class links, own values per class and links between steps', () => {
   it('the row details; the class link only on the target is shown, not removed', async () => {

@@ -304,3 +304,43 @@ export function parseInbound(log: string, cap = INBOUND_CAP, frame: EcFrame = ST
   }
   return { targets, capped, ...(total != null ? { total } : {}) };
 }
+
+// ── Instances of a template ─────────────────────────────────────────
+
+/** Instances listed by name; the count is always complete. */
+export const INSTANCE_LIST_CAP = 20;
+
+/** EC that counts the objects linked to `ref` as their template and lists
+ *  the first INSTANCE_LIST_CAP. One `t` row per instance, the count in `m`. */
+export function buildInstancesEc(ref: string, _frame: EcFrame = STATIC_EC_FRAME): string {
+  return scriptOn('buildInstancesEc', ref, [
+    `_o := ${ref}`,
+    '_l := _o.rref(linkedTo)',
+    // One row per listed instance, joined once.
+    `_x := _l.first(${INSTANCE_LIST_CAP}).calculate(`,
+    '     _t := self',
+    '     _row := ""',
+    ...ROW('_row', 't', '""', '_t', '     '),
+    '     _row',
+    ')',
+    '_s := _x.join("").whenMissing("")',
+    ...appendRowEc('_s', ['"m"', '_l.size()']),
+    `_s + ${EC_DONE_LITERAL}`,
+  ].join('\n'));
+}
+
+/** Parse buildInstancesEc. Throws when the answer was cut off. */
+export function parseInstances(log: string, frame: EcFrame = STATIC_EC_FRAME): { total: number; targets: ConnTarget[] } {
+  const targets: ConnTarget[] = [];
+  let total = 0;
+  for (const [kind, ...rest] of parseFramedLog(log, frame)) {
+    if (kind === 'm' && rest.length === 1) {
+      const n = Number(rest[0].trim());
+      if (Number.isInteger(n) && n >= 0) total = n;
+    } else if (kind === 't' && rest.length === 5) {
+      const t = parseRow(rest.slice(1));
+      if (t && !t.broken) targets.push(t);
+    }
+  }
+  return { total: Math.max(total, targets.length), targets };
+}

@@ -495,6 +495,19 @@ body {
 
 .editor-output-content.ok { color: var(--text-ok); }
 .editor-output-content.error { color: var(--text-error); }
+.editor-output-summary { white-space: pre-wrap; }
+.editor-output-raw-label {
+  margin-top: var(--space-xs);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  user-select: none;
+}
+.editor-output-raw {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  user-select: text;
+}
 
 /* Inert rendering of a successful HTML-bearing EC result. This replaces only
  * the output body; the normal status/timing/stale header and panel sizing stay

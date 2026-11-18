@@ -23,7 +23,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CONTEXT_OBJECT, EC_FRAME, SCRIPT_TARGET_CHARS, chunkByScriptSize } from '../ec-parser';
+import { CONTEXT_OBJECT, EC_CHUNK, EC_FRAME, SCRIPT_TARGET_CHARS, chunkByScriptSize } from '../ec-parser';
 import { classifyScript, constantScript, resetScriptKinds, SCRIPT_LIMITS, userScript, varyingScript } from '../script-kinds';
 import { buildObjectPaneEc, buildEditFieldPropertyEc, buildPropertyApplicationsEc, buildEditFieldTypesEc } from '../ec-codegen';
 import { buildContextRowFactsEc, buildRowFactsEc } from '../object-row-facts';
@@ -33,7 +33,7 @@ import { buildCodeScopeEc, buildCodeScopeEcs } from '../code-search-scope';
 import { buildContextReadEc, buildReadEc, buildRootListEc, buildCountEc, countGroups, buildBucketInventoryEc, buildSummaryEc, buildExistsEc, buildSampleEc, codeTypes, CODE_ROOTS, KNOWN_CODE_PROPS, orgBucket, rootBucket } from '../code-index-sync';
 import { buildSourceListEc, buildSourceCodeEc, buildHitScanEcs } from '../code-scope-read';
 import { buildContextRefResolveEc, buildRefResolveEc } from '../code-ref-resolve';
-import { buildConnectionsEc, buildContextJunctionEc, buildInboundEc, buildJunctionEc } from '../connections';
+import { buildConnectionsEc, buildContextJunctionEc, buildInboundEc, buildInstancesEc, buildJunctionEc } from '../connections';
 import { buildStructureEc, buildStructureEcMany } from '../object-structure';
 import { buildAncestorsEc, idLookupPlan } from '../browse-tree';
 import { buildNameCatalogEc, buildNameSearchEc, CONFIG_TYPES, nameSearchPlan } from '../object-search';
@@ -61,6 +61,7 @@ import { readCreationContext } from '../access-workspace/creation';
 import { readResult } from '../access-workspace/test-response';
 import { framedText } from '../ec-parser';
 import type { BmpClient } from '../bmp-client';
+import { growingTexts } from './ec-growth';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -114,6 +115,7 @@ const ENTRIES: Entry[] = [
   { fn: 'buildContextReadEc', kind: 'constant', a: () => buildContextReadEc(KNOWN_CODE_PROPS.ButtonInput) },
   { fn: 'buildContextRefResolveEc', kind: 'constant', a: () => buildContextRefResolveEc() },
   { fn: 'buildInboundEc', kind: 'constant', a: () => buildInboundEc(CONTEXT_OBJECT) },
+  { fn: 'buildInstancesEc', kind: 'constant', a: () => buildInstancesEc(CONTEXT_OBJECT) },
   { fn: 'buildConnectionsEc', kind: 'constant', a: () => buildConnectionsEc(CONTEXT_OBJECT, fields(10, 'in')) },
   { fn: 'buildContextJunctionEc', kind: 'constant', a: () => buildContextJunctionEc(fields(10, 'out')) },
   { fn: 'buildStructureEc', kind: 'constant', a: () => buildStructureEc(CONTEXT_OBJECT, { via: 'inputSet', depth: 4 }) },
@@ -214,12 +216,67 @@ const ENTRIES: Entry[] = [
   { fn: 'buildSuggestEc', kind: 'fallback', a: () => buildSuggestEc(`lookup(${RID_A})`, { templateRef: `lookup(${RID_B})` }) },
 ];
 
+/**
+ * Loops that append to one text per element and are not cut in the script, with what bounds
+ * them. Everything else a builder loops over is cut (`.first(n)`, a counter), joined
+ * (`calculate` + `join("")`) or collected in the short chunk of ec-parser. A loop over objects
+ * of a type, over everything under a root or over the instances of a template does not belong
+ * here: those lists have no bound.
+ */
+const BOUNDED_LOOPS: Record<string, Record<string, string>> = {
+  buildObjectPaneEc: {
+    '_o.parent.rref(editPage).forEach(_view:': 'the forms that use one edit page',
+    '_o.parent.types.forEach(_type:': 'the types of one edit page',
+    '_o.addableItems.forEach(_i:': 'the item types one object can add',
+  },
+  buildColorSetsEc: { '_colors.forEach(_col:': 'the colours of the portal\'s colour sets; one parenthesised row each' },
+  buildConnectionsEc: { '_o.ref_field_N.forEach(_t:': 'the values of one reference property of one object' },
+  buildEditFieldPropertyEc: { 'c.get(T.name).children().forEach(_app:': 'the properties of one class' },
+  buildEditFieldTypesEc: {
+    '_o.parent.rref(editPage).forEach(_view:': 'the forms that use one edit page',
+    '_o.parent.types.forEach(_type:': 'the types of one edit page',
+  },
+  buildCodeScopeEc: { '_lb.forEach(_b:': 'a row per followed object, started again for each' },
+  buildCodeScopeEcs: { '_lb.forEach(_b:': 'a row per followed object, started again for each' },
+  buildFetchEc: {
+    '_tabsets.forEach(_ts:': 'the tab sets of one page',
+    '_ts.descendants().forEach(_n:': 'the layout of one tab set',
+    '_w.actionObject.children().forEach(_tr:': 'the children of one action object',
+    '_layoutNodes.forEach(_w:': 'the layout nodes of one page',
+    '_fref.children().forEach(_fc:': 'the fields of one form',
+  },
+  buildFlowRefChildrenEc: { '_ref.children().forEach(_fc:': 'the fields of one form' },
+  buildEditPageFetchEc: {
+    '_ref.types.forEach(_type:': 'the types of one edit page',
+    '_ref.children().forEach(_fc:': 'the fields of one form',
+  },
+  buildTransportCreationEc: { '_o.rref(linkedTo).forEach(_i:': 'the class links of one property definition (asked only for a MethodConfig)' },
+  buildStudioChildrenEc: { '_c.children().forEach(_ch:': 'the children of one object' },
+  buildContainerBlastEc: { '_N.rref(container).forEach(_w:': 'the widgets of one container' },
+  buildFlowContainerBlastEc: { '_N.rref(inputSet).forEach(_w:': 'the forms that use one input set or edit page' },
+  buildPortableIdOccupancyEc: { '_ids.forEach(_id:': 'the IDs written into the script' },
+  buildContextQueryEc: { '_items.as(className).distinct().forEach(_class:': 'the distinct class names of the result' },
+};
+
 /** Exported names in src/lib that are not script builders. */
 const NOT_SCRIPTS = new Set(['buildRowEc', 'buildInventoryEc' /* tests only */]);
 
 const flat = (v: string | string[]) => (Array.isArray(v) ? v : [v]);
 
 describe('script kinds', () => {
+  it('no builder appends to one text per element of an uncut loop, except the loops listed with their bound', () => {
+    // Rows collected in the short chunk of ec-parser (appendRowEc into EC_CHUNK, flushed every few rows) are not listed.
+    const chunked = (g: { variable: string; line: string }) => g.variable === EC_CHUNK || g.variable === '_chunk' || /:= _r \+ (_rc|_chunk)$/.test(g.line);
+    const loopOf = (open: string) => open.replace(/ref_field_\d+/g, 'ref_field_N').replace(/_[cf]\d+\./g, '_N.').replace(/c\.get\(Ce\w+/g, 'c.get(T').replace(/lookup\(\d+\)/g, 'lookup(N)');
+    const found: Record<string, string[]> = {};
+    for (const e of ENTRIES) {
+      const loops = new Set([...flat(e.a()), ...(e.b ? flat(e.b()) : [])].flatMap(s => growingTexts(s)).filter(g => !chunked(g)).map(g => loopOf(g.loop)));
+      if (loops.size) found[e.fn] = [...loops].sort();
+    }
+    const listed = Object.fromEntries(Object.entries(BOUNDED_LOOPS).map(([fn, loops]) => [fn, Object.keys(loops).sort()]));
+    expect(found, 'A new loop that grows a text: cut it (.first(n) or a counter), build the rows with calculate( … ) and join(""), or list it in BOUNDED_LOOPS with what bounds it.').toEqual(listed);
+  });
+
   it('every exported script builder in src/lib is listed', () => {
     const root = fileURLToPath(new URL('..', import.meta.url));
     const names = new Set<string>();

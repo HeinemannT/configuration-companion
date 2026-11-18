@@ -15,7 +15,9 @@ import { enumMember } from './color-util';
 /** Compare pane values by their property semantics. BMP reads enums as
  * qualified values (TextType.rich) while editors stage bare members (RICH). */
 export function paneValueEquals(prop: string, a: string, b: string): boolean {
-  return findPropDef(prop)?.kind === 'enum' ? enumMember(a) === enumMember(b) : a === b;
+  if (findPropDef(prop)?.kind === 'enum') return enumMember(a) === enumMember(b);
+  // A text area gives "\n"; BMP may store "\r\n". The same text is not a change.
+  return a === b || a.replace(/\r\n?/g, '\n') === b.replace(/\r\n?/g, '\n');
 }
 
 /** Coerce a string-valued draft into the typed payload APPLY_OBJECT_CHANGES

@@ -975,7 +975,7 @@ function wireDrag(state: FrameState, handle: HTMLElement): () => void {
   };
 
   handle.addEventListener('pointerdown', (e: PointerEvent) => {
-    if ((e.target as HTMLElement).closest('.crev-eo-btn')) return;
+    if ((e.target as HTMLElement).closest?.('.crev-eo-btn')) return;
     dragging = true;
     pointerId = e.pointerId;
     startX = e.clientX;

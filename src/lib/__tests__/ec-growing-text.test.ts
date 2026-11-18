@@ -8,6 +8,10 @@
  * a short chunk first (ec-parser.ts). The large listings (code index, code search, transport)
  * join their rows per type, so their result grows once per type.
  *
+ * The exported script builders are checked one by one, loop by loop, in ec-script-kinds.test.ts
+ * (BOUNDED_LOOPS, with ec-growth.ts). This count stays for the scripts that are not an exported
+ * builder: the ones written inline in a handler and the write scripts.
+ *
  * This test fails when a file gains such a line or a new file has one. Before raising a number:
  * build the rows with `list.calculate( … row )` and `.join("")` (linear),
  * or cap the loop in the script, and say in a comment what bounds it.

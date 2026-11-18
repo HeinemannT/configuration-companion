@@ -19,7 +19,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { CHOICE_ANY, CHOICE_PASTE, TransportController } from '../transport-controller';
 import { draftKey, toDraft } from '../transport-collection';
 import {
-  BUILD_TO_SEE, closeWherePopover, NOT_SEARCHED, NOT_TRANSPORTED, NOTHING_USES, COMPARE_TO_SEE, EMPTY_TRANSPORT, mountTransportView, NUMERIC_ID_TITLE, PROBE_LEAD,
+  BUILD_TO_SEE, closeWherePopover, NOT_SEARCHED, NOT_TRANSPORTED, NOTHING_USES, COMPARE_TO_SEE, EMPTY_TRANSPORT, TRANSPORT_PURPOSE, DRAFT_NOTE, TARGET_DEFAULT_TITLE, mountTransportView, NUMERIC_ID_TITLE, PROBE_LEAD,
 } from '../transport-view';
 import {
   belowResult, childrenResult, countsResult, ENV, fakeWorker, flush, HOLD, logResult, memoryStore, objectsResult, patchCase, probeAnswer, readOk, row, rowsResult, scanResult, underResult, type FakeWorker, type Sent,
@@ -644,11 +644,16 @@ describe('the transport tab', () => {
     await s.ctl.restoreDraft();
     s.ctl.showTab('transport');
     expect(s.$('.tr-draft-t')!.textContent).toBe('Draft from 14 Nov, 1 object');
+    expect(s.$('.tr-purpose')!.textContent).toBe(TRANSPORT_PURPOSE);
+    expect(s.$('.tr-draftnote')!.hidden).toBe(false);
+    expect(s.$('.tr-draftnote')!.textContent).toBe(DRAFT_NOTE);
+    expect(s.$('.tr-target')!.getAttribute('title')).toBe(TARGET_DEFAULT_TITLE);
     const refresh = s.$<HTMLButtonElement>('.tr-refresh')!;
     expect(refresh.hidden).toBe(false);
     refresh.click();
     await flush(10);
     expect(s.$('.tr-draft-t')!.textContent).toBe('Draft from 15 Nov, 1 object · 1 not found');
+    expect(s.$('.tr-draftnote')!.hidden).toBe(true);
     expect(s.$(`.tr-trow[data-rid="${a.rid}"] .tr-tag.gone`)!.textContent).toBe('not found');
     s.$<HTMLButtonElement>('.tr-clearall')!.click();
     expect(s.$('.tr-tempty')!.textContent).toBe(`${EMPTY_TRANSPORT} Undo the clear`);

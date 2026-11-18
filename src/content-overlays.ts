@@ -351,7 +351,7 @@ export function createIdentityLabel(
 
   // Double-click upgrades the cheap single-click selection to full object view.
   label.addEventListener('dblclick', (e) => {
-    if ((e.target as HTMLElement).closest('.crev-meta')) return;
+    if ((e.target as HTMLElement).closest?.('.crev-meta')) return;
     e.preventDefault();
     e.stopPropagation();
     cancelPendingCopy();

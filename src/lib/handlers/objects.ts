@@ -13,7 +13,7 @@ import { errorMessage, log } from '../logger';
 import { CODE_BEARING_TYPES } from '../namespace';
 import { loadColorSets } from '../color-set-cache';
 import type { BmpObject } from '../types';
-import { refFieldsFromSchema, buildConnectionsEc, parseConnections, buildContextJunctionEc, parseJunctions, pickFarSide, buildInboundEc, parseInbound } from '../connections';
+import { refFieldsFromSchema, buildConnectionsEc, parseConnections, buildContextJunctionEc, parseJunctions, pickFarSide, buildInboundEc, parseInbound, buildInstancesEc, parseInstances } from '../connections';
 import type { ConnGroup } from '../types';
 import { appendRowEc, CONTEXT_OBJECT, createEcFrame, EC_DONE_LITERAL, parseFramedLog, STATIC_EC_FRAME, type EcFrame } from '../ec-parser';
 import { pathTouchesCode } from '../ec-code-safety';
@@ -485,6 +485,16 @@ register('FETCH_INBOUND', async (msg, respond, meta) => {
     const result = await ctx.client.executeEcOn(buildInboundEc(ref, frame), msg.rid, signal);
     if (!result.ok) { respond({ type: 'INBOUND_RESULT', rid: msg.rid, ok: false, error: result.error || result.log || 'EC execution failed' }); return; }
     const inbound = parseInbound(result.log ?? '', undefined, frame);
+    // Objects linked to this one as their template: rref() does not return
+    // them, so they are always read. A failed read leaves the count out.
+    let instances: ReturnType<typeof parseInstances> | undefined;
+    {
+      signal.throwIfAborted();
+      try {
+        const linked = await ctx.client.executeEcOn(buildInstancesEc(ref, frame), msg.rid, signal);
+        if (linked.ok) instances = parseInstances(linked.log ?? '', frame);
+      } catch (e) { if (signal.aborted) throw e; }
+    }
     respond({
       type: 'INBOUND_RESULT',
       rid: msg.rid,
@@ -493,6 +503,7 @@ register('FETCH_INBOUND', async (msg, respond, meta) => {
       targets: inbound.targets,
       capped: inbound.capped || groups.some(group => group.capped),
       ...(inbound.total != null ? { total: inbound.total } : {}),
+      ...(instances ? { instances } : {}),
     });
   } catch (e) {
     respond({ type: 'INBOUND_RESULT', rid: msg.rid, ok: false, error: signal.aborted ? 'Cancelled' : errorMessage(e) });

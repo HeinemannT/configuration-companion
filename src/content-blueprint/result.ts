@@ -441,7 +441,17 @@ function cell(base: BaselineIndex, m: LModel, node: LNode, parentId: string | nu
   if (node.kind === 'container') {
     const grid = document.createElement('div'); grid.className = 'bp-rgrid';
     if (node.children.length) fillGrid(grid, base, m, node.children, node.id, byRid, reordered);
-    else { grid.appendChild(gapCell(node.id, TRACKS)); deleteStrips(grid, base, node.id); } // empty container → a full add slot
+    else { // empty container → a full add slot
+      const gap = gapCell(node.id, TRACKS);
+      // Its body is all add slot, so the first click selects the container (Rename, Delete, width);
+      // a click on the selected container adds.
+      if (bp.selectedId !== node.id) {
+        gap.title = `Select ${node.name}. Click again to add a widget.`;
+        gap.addEventListener('mousedown', (e) => { e.stopImmediatePropagation(); select(node.id); }, { capture: true });
+      } else gap.title = `Add a widget to ${node.name}`;
+      grid.appendChild(gap);
+      deleteStrips(grid, base, node.id);
+    }
     el.appendChild(grid);
   } else if (flow) {
     // Flow-bearing widget: config band(s) + reference band + the chain as badge-led rows (result-flow).

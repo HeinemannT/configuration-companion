@@ -576,7 +576,7 @@ function styleToolbar(node: LNode, r: Rect): HTMLElement {
     styleGroup('Border', segChoice(BORDER_STYLE_OPTS, s.borderStyle, (v) => setNodeStyle(node.id, { borderStyle: v }))),
     // "Header bar" = the headerStyle placement (In/Out/None) — distinct from the "Header" colour slot in row 1.
     styleGroup('Header bar', segChoice(HEADER_STYLE_OPTS, s.headerStyle, (v) => setNodeStyle(node.id, { headerStyle: v }))),
-    styleGroup('Fade', transpControl(node, s.transparency ?? 0)),
+    styleGroup('Transparency', transpControl(node, s.transparency ?? 0)),
   );
 
   t.append(row1, row2);
@@ -896,7 +896,7 @@ function addDest(list: HTMLElement, dest: LNode, label: string, widgetId: string
   const isTab = dest.kind === 'tab';
   const row = pickRow(label, isTab ? 'tab' : 'container', () => moveTo(widgetId, dest.id));
   // Hierarchy: tabs are the headers; nested containers are smaller, lighter, and indented under them.
-  row.title = `Puts it last in ${label}. Drag it afterwards for another place.`;
+  row.title = `Puts it at the end of ${label}; a container goes before the widgets. Drag it afterwards for another place.`;
   row.classList.add(isTab ? 'bp-mv-tab' : 'bp-mv-cont');
   if (!isTab) row.style.paddingLeft = `${10 + depth * 13}px`;
   list.appendChild(row);

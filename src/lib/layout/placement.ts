@@ -9,7 +9,8 @@
  * with the reason), the add-picker flows use `bandInsertIndex` (best-effort — an illegal slot
  * remaps to the nearest legal position, flagged so the caller can explain).
  */
-import type { LNode, NodeKind } from './types';
+import type { LModel, LNode, NodeKind } from './types';
+import { findNode, findTabOf } from './model';
 
 const isContainerKind = (k: NodeKind): boolean => k === 'container';
 
@@ -54,4 +55,31 @@ export function bandInsertIndex(children: LNode[], afterId: string | undefined, 
   // the widget band; a container there ends the container band). Widget-after-LAST-container is
   // the one legal cross-band slot (the flow really continues there), so it isn't a remap.
   return { index: boundary, remapped: !(!isContainerKind(kind) && at === boundary - 1) };
+}
+
+/** Plain-words sentence for where `id` really is in `m` (call it AFTER the edit, so band
+ *  normalisation is reflected). `offTab` appends the hint to open the destination tab. */
+export function describePlacement(m: LModel, id: string, verb: 'Added' | 'Moved', offTab = false): string {
+  const f = findNode(m, id);
+  if (!f) return '';
+  const label = (n: LNode): string => (n.kind === 'tab' ? `tab "${n.name}"` : `"${n.name}"`);
+  const owner = f.parent ?? f.node;
+  const tab = findTabOf(m, id);
+  const where = label(owner) + (offTab && tab && tab.id !== owner.id ? ` in tab "${tab.name}"` : '');
+  const sibs = f.siblings, i = f.index, prev = sibs[i - 1], next = sibs[i + 1];
+  const name = `"${f.node.name}"`;
+  const hint = offTab ? ' Open that tab to see it.' : '';
+  let place: string;
+  if (f.node.kind === 'container' && next && next.kind !== 'container') {
+    // Containers always render before widgets, so it is not literally last.
+    place = prev
+      ? `into ${where}, after its last container and before the widgets`
+      : `into ${where}, before the widgets`;
+    return `${verb === 'Added' ? 'Added' : 'Moved'} ${name} ${place}.${hint}`;
+  }
+  if (verb === 'Moved' && !next) return `Moved ${name} to the end of ${where}.${hint}`;
+  if (!next) place = `at the end of ${where}`;
+  else if (!prev) place = `at the start of ${where}`;
+  else place = `after "${prev.name}"`;
+  return verb === 'Moved' ? `Moved ${name} into ${where}, ${place}.${hint}` : `Added ${name} ${place}.${hint}`;
 }

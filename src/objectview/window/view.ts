@@ -44,13 +44,13 @@ const isTextKind = (k: PropertyKind) => k === 'text' || k === 'multiline';
 import { identityBusinessIdError } from '../../lib/object-identity';
 import { colorLinkBid } from '../../lib/color-util';
 import {
-  colorLinkEditor, enumEditor, numberEditor, propertyAccessorEditor, sliderEditor, stringEditor,
+  colorLinkEditor, enumEditor, numberEditor, propertyAccessorEditor, sliderEditor, stringEditor, textAreaEditor,
   displayValue as draftDisplay, type EnumOption, type PropEditorContext,
 } from '../../lib/property-editors';
 import type { PropDef } from '../../lib/pane-schema';
 import { CODE_CAP_LINES, formatCount, keysReadBy, renderCode } from '../../editor-core/code-view';
 import type { CodeEditorFactory, CodeEditorHandle } from './code-edit';
-import { baseText, canReset, editability, templateRidOf, type DraftEntry, type DraftView } from './draft';
+import { baseText, canReset, editability, readOnlyReason, templateRidOf, type DraftEntry, type DraftView } from './draft';
 import { compareFailed, overrides, overrideState, type OverrideState } from './override-diff';
 import { ICON_SPRITE } from '../../lib/icon-sprite';
 import type { AccessMode } from './access-state';
@@ -60,6 +60,7 @@ import type { CodeRefCache } from '../../lib/code-ref-client';
 import type { RefTarget } from '../../lib/code-ref-resolve';
 import { RefUi, type RefCtx, type RefUiState } from '../../editor-core/code-links';
 import { coverageText, SEARCH_NOW_LABEL, type Coverage } from '../../lib/coverage-line';
+import { useSummary } from '../../lib/use-summary';
 import { failedNote, failureBlock, unreadValue } from '../../lib/failure-form';
 import { describeFailure } from '../../lib/connection-copy';
 import { attrs, btn as button, el, icon, type Kid } from '../../lib/dom';
@@ -132,6 +133,8 @@ export interface InboundState {
   /** Referrers counted by the scan, also past the cap. */
   total?: number;
   capped?: boolean;
+  /** Objects linked to it as their template: the count and the first few. */
+  instances?: { total: number; targets: InboundTarget[] };
   error?: string;
 }
 
@@ -524,6 +527,17 @@ export class ObjectWindowView {
     this.fatal = el('div', 'ow-fatal');
     this.bar = attrs(el('footer', 'ow-bar'), { 'aria-label': 'Unsaved changes', 'aria-live': 'polite' });
     this.shell = attrs(el('section', 'ow ui', titlebar, this.head, this.body, this.fatal, this.bar), { 'data-tree': 'closed', 'aria-label': 'Object window' });
+    // Text typed in a field counts only when the field is left (the editors commit on change). So
+    // that one click on Save is enough while the cursor is still in the field: typing makes the
+    // buttons usable, pressing Save does not take the focus away (the bar would be redrawn between
+    // press and release and the click lost), and requestSave takes the typed text first.
+    this.shell.addEventListener('input', e => {
+      if (!this.typedEditor(e.target) || this.model?.saving) return;
+      for (const b of this.bar.querySelectorAll<HTMLButtonElement>('button.ui-btn')) b.disabled = false;
+    });
+    this.bar.addEventListener('mousedown', e => {
+      if ((e.target as Element | null)?.closest?.('button.ui-btn.primary') && this.typedEditor(document.activeElement)) e.preventDefault();
+    });
     if (this.userTreeWidth) this.shell.dataset.treeW = 'user';
     root.append(this.shell);
     this.trailEl = attrs(el('nav', 'ow-trail'), { 'aria-label': 'Trail' });
@@ -1994,7 +2008,15 @@ export class ObjectWindowView {
   /** Close open inline edits; `keep` keeps typed code in the draft. */
   /** Ctrl/Cmd+S: what the Save button does (finish open edits, then review
    *  and save). The controller ignores it when nothing is pending. */
+  /** A text field of a property editor (the ones that commit on change). */
+  private typedEditor(t: EventTarget | null): HTMLInputElement | HTMLTextAreaElement | null {
+    const text = t instanceof HTMLTextAreaElement || (t instanceof HTMLInputElement && (t.type === 'text' || t.type === 'number'));
+    return text && t.closest('.ow-ed') ? t : null;
+  }
+
   requestSave(): void {
+    // Text still being typed in a field: take it as it is.
+    this.typedEditor(document.activeElement)?.dispatchEvent(new Event('change', { bubbles: true }));
     this.closeEdits(true);
     this.handlers.save();
   }
@@ -2056,7 +2078,7 @@ export class ObjectWindowView {
         tail.push(button('ow-link', `Reset ${f.label} to the template value`, () => this.handlers.toggleReset(obj.rid, prop, baseText(v)), 'Reset'));
       }
     }
-    const control = how?.route === 'props' ? this.editor(obj, prop, f, v, how.def) : this.readValue(obj, f, v);
+    const control = how?.route === 'props' ? this.editor(obj, prop, f, v, how.def, how.multiline) : this.readValue(obj, f, v);
     return el('span', 'ow-cell', control, ...tail);
   }
 
@@ -2073,11 +2095,13 @@ export class ObjectWindowView {
     if (v.kind === 'unknown' && !v.text && v.cls) return el('span', 'ow-none ow-mono', v.cls);
     if (v.kind === 'enum' || f.widget === 'enum') return attrs(el('span', 'ow-val', enumText(v)), { title: v.text });
     const mono = f.widget === 'mono' || f.widget === 'num' || v.kind === 'number' || v.kind === 'code';
-    return el('span', `ow-val ow-sel${mono ? ' ow-mono' : ''}`, displayValue(v));
+    const why = f.prop ? readOnlyReason(obj, f.prop) : null;
+    const text = el('span', `ow-val ow-sel${mono ? ' ow-mono' : ''}`, displayValue(v));
+    return why ? attrs(text, { title: why }) : text;
   }
 
   /** Typed editor for a pane property (the side panel's property editors). */
-  private editor(obj: FullObject, prop: string, f: FieldDef, v: PropValue, def: PropDef | undefined): Node {
+  private editor(obj: FullObject, prop: string, f: FieldDef, v: PropValue, def: PropDef | undefined, multiline = false): Node {
     const base = baseText(v);
     const value = this.current(obj, prop);
     const dirty = !!this.entry(obj.rid, prop);
@@ -2111,10 +2135,10 @@ export class ObjectWindowView {
         });
         break;
       }
-      default: node = stringEditor(ctx);
+      default: node = multiline ? textAreaEditor(ctx) : stringEditor(ctx);
     }
     node.classList.add('ow-ed');
-    const focusable = node.matches('button, input, select') ? node : node.querySelector<HTMLElement>('button, input, select');
+    const focusable = node.matches('button, input, select, textarea') ? node : node.querySelector<HTMLElement>('button, input, select, textarea');
     if (focusable) {
       focusable.dataset.fk = fk;
       focusable.setAttribute('aria-label', f.label);
@@ -3068,13 +3092,30 @@ export class ObjectWindowView {
     head.append(el('span', 'n', String(total)), el('span', 'ow-grow'),
       st.ms != null ? attrs(el('span', 'ow-use-ms', formatMs(st.ms)), { title: 'Scan time' }) : '', again);
     const scanCoverage = el('div', 'ow-quiet ow-note ow-coverage', coverageText({ kind: 'live', objects: 0, what: 'every reference in the workspace', at: st.ms != null && st.startedAt > 1e12 ? st.startedAt + st.ms : null, note: 'References built from text at run time are not found' }));
-    if (!st.targets.length) {
+    // The answer in one line, above the groups.
+    const code = this.model?.inCode?.[obj.rid];
+    const sum = useSummary({
+      inCode: code?.phase === 'done' ? code.targets.map(t => t.rid) : null,
+      listed: st.targets.map(t => t.rid), total, ...(st.instances ? { instances: st.instances.total, instanceRids: st.instances.targets.map(t => t.rid) } : {}),
+    });
+    out.splice(1, 0, attrs(el('div', 'ow-use-sum', el('div', 'h', sum.headline), ...sum.notes.map(n => el('div', 'ow-quiet', n))), { 'data-found': String(sum.found), role: 'status' }));
+    const linked = st.instances;
+    if (!st.targets.length && !linked?.total) {
       out.push(el('div', 'ow-quiet ow-note', 'Nothing refers to this object.'), scanCoverage);
       return out;
     }
+    const instanceRids = new Set(linked?.targets.map(t => t.rid));
+    if (linked?.total) {
+      out.push(el('div', 'ow-rel-h', `Instances ${linked.total}`));
+      for (const t of linked.targets) out.push(this.relRow(t.rid));
+      if (linked.total > linked.targets.length) out.push(el('div', 'ow-quiet ow-note', `Showing the first ${linked.targets.length} of ${linked.total}.`));
+    }
+    // Said before the rows: a long list hides a line below it.
+    if (st.capped || total > st.targets.length) out.push(el('div', 'ow-quiet ow-note', `Showing the first ${st.targets.length} of ${total}.`));
     // Declared reverse references keep their field name; the rest group by type.
     const groups = new Map<string, InboundTarget[]>();
     for (const t of st.targets) {
+      if (instanceRids.has(t.rid)) continue;
       const key = t.field || typeInfo(t.type).label || t.type || 'Other';
       const list = groups.get(key) ?? [];
       list.push(t);
@@ -3084,7 +3125,6 @@ export class ObjectWindowView {
       out.push(el('div', 'ow-rel-h', `${title} ${list.length}`));
       for (const t of list) out.push(this.relRow(t.rid));
     }
-    if (st.capped || total > st.targets.length) out.push(el('div', 'ow-quiet ow-note', `Showing the first ${st.targets.length} of ${total}.`));
     return out;
   }
 

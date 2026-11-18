@@ -39,12 +39,18 @@ describe('Blueprint command header', () => {
     expect(chip.textContent).not.toContain('STYLE');
     expect(settings).not.toBeNull();
     expect(target).not.toBeNull();
-    expect(Array.from(chip.children).indexOf(settings!)).toBeLessThan(Array.from(chip.children).indexOf(target!));
+    const tools = chip.querySelector('.bp-chip-tools')!;
+    expect(Array.from(tools.children).indexOf(settings!)).toBeLessThan(Array.from(tools.children).indexOf(target!));
     const exit = chip.querySelector<HTMLButtonElement>('.bp-exit');
     const commitActions = chip.querySelector('.bp-commit-actions');
     expect(exit?.getAttribute('aria-label')).toBe('Exit blueprint mode');
-    expect(chip.lastElementChild).toBe(commitActions);
-    expect(commitActions?.lastElementChild).toBe(exit);
+    expect(exit?.title).toContain('Exit blueprint mode');
+    // Exit is a direct flex item of the bar row, after the wrapping tool group, never absolutely placed.
+    expect(exit?.parentElement).toBe(chip);
+    expect(chip.lastElementChild).toBe(exit);
+    expect(tools.lastElementChild).toBe(commitActions);
+    expect(commitActions?.querySelector('.bp-exit')).toBeNull();
+    expect(exit?.style.position).toBe('');
   });
 
   it('opens settings from the header control', () => {

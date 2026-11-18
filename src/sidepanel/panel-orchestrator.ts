@@ -102,6 +102,7 @@ const LIVE_RESULT_OWNER = new Map<InspectorMessage['type'], PanelTabId>([
   ['BROWSE_RESOLVE_RESULT', 'browse'],
   ['CACHE_DATA', 'browse'],
   ['LOCATE_RESULT', 'browse'],
+  ['CHANGES_DATA', 'log'],
 ]);
 
 export function createPanelOrchestrator(

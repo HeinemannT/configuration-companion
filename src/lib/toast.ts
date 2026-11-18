@@ -67,6 +67,8 @@ export interface ToastOptions {
   /** Error only: the raw cause (a transport message), kept out of the toast text and carried to
    *  the Log by "Show in Log" (the toast's "Details"). */
   logDetail?: string;
+  /** Success or info: stays twice as long, for a result shown after the page changed under the user. */
+  long?: true;
 }
 
 /** What "Show in Log" asks of the context that shows the toast. */
@@ -88,6 +90,8 @@ export const SHOW_IN_LOG_LABEL = 'Show in Log';
 // Toasts carrying an action stay up longer — a 3s window is too short to
 // read "saved, reload to see it" and decide to click.
 const ACTION_DISMISS_MS = 8000;
+/** A result the user has to find on the page first (`long`). */
+export const LONG_DISMISS_MS = 6000;
 /** Longest detail shown in full. */
 const DETAIL_MAX = 36;
 
@@ -192,7 +196,7 @@ export function showToast(
 
   let fadeTimer: ReturnType<typeof setTimeout> | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let remaining = type === 'error' ? ERROR_DISMISS_MS : action ? ACTION_DISMISS_MS : AUTO_DISMISS_MS;
+  let remaining = type === 'error' ? ERROR_DISMISS_MS : action ? ACTION_DISMISS_MS : options.long ? LONG_DISMISS_MS : AUTO_DISMISS_MS;
   let startedAt = 0;
   let hovered = false;
   let focused = false;

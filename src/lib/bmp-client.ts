@@ -49,6 +49,7 @@ import { backgroundSignal, inheritClass } from './request-class';
 import { readIsolating } from './batch-isolate';
 import { compareVersions } from './util';
 import { BmpRequestError, ecResultError, errorKindOf, isConnectionKind, type BmpErrorKind } from './error-kind';
+import { OBJECT_TEXT_PROPS } from './pane-schema';
 import { validateBusinessId, validateRid, validateEcIdentifier, formatEcLiteral, ecScalarLiteral } from './ec-guards';
 import { resolveNamespace } from './namespace';
 import { ecResolveTemplate } from './template-link';
@@ -339,6 +340,7 @@ export const OBJECT_IDENTITY_PROPS = ['name', 'id'] as const;
 export const OBJECT_GATE_PROPS = ['useShowExpression', 'useEnableExpression'] as const;
 export const OBJECT_CHANGE_PROPS_SET: ReadonlySet<string> = new Set([
   ...PANE_PROPS,
+  ...OBJECT_TEXT_PROPS,
   ...OBJECT_IDENTITY_PROPS,
   ...OBJECT_GATE_PROPS,
 ]);

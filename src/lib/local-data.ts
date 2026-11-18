@@ -71,7 +71,7 @@ export const STORED_KEYS: readonly StoredKey[] = [
   // Per-profile stores (`crev_<profileId>_<suffix>`).
   ...(['cache', 'cache_date', 'history', 'script_history'] as const).map((suffix): StoredKey => ({
     key: PROFILE_KEY, match: 'prefix', suffix: `_${suffix}`, area: 'local', onProfile: 'profile-key', onReset: 'remove', what: `per-profile ${suffix}` })),
-  ...(['favorites', 'style_presets'] as const).map((suffix): StoredKey => ({
+  ...(['favorites', 'style_presets', 'changes'] as const).map((suffix): StoredKey => ({
     key: PROFILE_KEY, match: 'prefix', suffix: `_${suffix}`, area: 'local', onProfile: 'profile-key', onReset: 'keep', what: `per-profile ${suffix} (kept by Reset all)` })),
   { key: 'crev_object_cache', match: 'exact', area: 'local', onProfile: 'remove', onReset: 'remove', what: 'object cache before profiles (legacy)' },
   { key: 'crev_inspect_active', match: 'exact', area: 'local', onProfile: 'remove', onReset: 'remove', what: 'global Inspect flag (legacy)' },
@@ -122,6 +122,7 @@ export const STORED_KEYS: readonly StoredKey[] = [
   // Web storage the worker cannot reach: a BMP page's own storage (written by
   // content scripts) and Companion pages' localStorage. Tab- or view-only state.
   { key: 'crev_bp_resume', match: 'exact', area: 'page', onProfile: 'keep', onReset: 'keep', what: 'Blueprint resume flag (page sessionStorage, one reload)' },
+  { key: 'crev_bp_target:', match: 'prefix', area: 'page', onProfile: 'keep', onReset: 'keep', what: 'Blueprint edit target chosen for a page (page sessionStorage)' },
   { key: 'crev_inspect', match: 'exact', area: 'page', onProfile: 'keep', onReset: 'keep', what: 'Inspect on/off (page sessionStorage)' },
 ];
 

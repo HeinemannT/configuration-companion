@@ -10,7 +10,8 @@
  * property are editable, each tied to an existing write route:
  *  - identity (`name`, `id`)            → SAVE_IDENTITY, pencil only;
  *  - code shown as a Behaviour block    → SAVE_PROPERTY;
- *  - the pane-schema properties (src/lib/pane-schema.ts), plus the
+ *  - the pane-schema properties (src/lib/pane-schema.ts; a plain one-line
+ *    `description` among them), plus the
  *    gates of the drawn expression blocks → APPLY_OBJECT_CHANGES.
  * A property that the object read did not return is never editable: that is
  * the guard for older BMP versions where properties are missing.
@@ -19,8 +20,8 @@
  */
 
 import type { FullObject, PropValue } from '../../lib/object-read';
-import { EXPRESSIONS, tableBlocks, typeInfo } from '../../lib/object-window-table';
-import { findPropDef, type PropDef } from '../../lib/pane-schema';
+import { EXPRESSIONS, listsTextField, tableBlocks, typeInfo } from '../../lib/object-window-table';
+import { findPropDef, OBJECT_TEXT_PROPS_SET, type PropDef } from '../../lib/pane-schema';
 import { paneValueEquals } from '../../lib/pane-edit';
 import { storedEquals, type EditKind } from '../../lib/property-schema';
 
@@ -30,6 +31,8 @@ export interface Editability {
   route: EditRoute;
   /** Pane schema entry (typed editor, enum options, ranges) for `props`. */
   def?: PropDef;
+  /** Several plain lines: edited in a text area. */
+  multiline?: boolean;
   /** True for an expression gate (`useShowExpression` …). */
   gate?: boolean;
 }
@@ -60,7 +63,31 @@ export function editability(obj: FullObject, prop: string): Editability | null {
   const def = findPropDef(prop);
   if (!def || def.kind === 'text') return null;
   if (def.availableOn && !def.availableOn.has(obj.type)) return null;
+  if (OBJECT_TEXT_PROPS_SET.has(prop)) {
+    // A built-in text field: only where the table lists it, as one plain line.
+    if (!listsTextField(obj.type, prop) || v.kind !== 'text') return null;
+    return MARKUP.test(v.text) || LINE_BREAK.test(v.text) ? null : { route: 'props', def };
+  }
+  if (prop === 'description') {
+    // Markup is shown, not edited. Plain text opens in a text area that takes line breaks.
+    if (MARKUP.test(v.text)) return null;
+    return { route: 'props', def, multiline: true };
+  }
   return { route: 'props', def };
+}
+
+const MARKUP = /<[a-z!/]/i;
+const LINE_BREAK = /[\r\n]/;
+
+/** Why a text property that looks editable is not: the text holds markup (or,
+ *  for a built-in text field, line breaks). null when it is editable, or is
+ *  not a text field of this object. */
+export function readOnlyReason(obj: FullObject, prop: string): string | null {
+  if (!Object.hasOwn(obj.props, prop)) return null;
+  const v = obj.props[prop];
+  const isText = prop === 'description' || (OBJECT_TEXT_PROPS_SET.has(prop) && listsTextField(obj.type, prop) && v.kind === 'text');
+  if (!isText || editability(obj, prop)) return null;
+  return MARKUP.test(v.text) ? 'Holds formatted text. Edit it in BMP.' : null;
 }
 
 /** The template an instance is linked to (model link first, then the

@@ -217,7 +217,7 @@ function selectable(
   element.setAttribute('role', 'button');
   element.setAttribute('aria-label', `${node.className} ${node.id}${selected ? ', selected' : ''}`);
   element.addEventListener('click', event => {
-    if ((event.target as HTMLElement).closest('button,select,.bp-ep-drag')) return;
+    if ((event.target as HTMLElement).closest?.('button,select,.bp-ep-drag')) return;
     event.preventDefault();
     event.stopPropagation();
     selectEditPageField(node.id, node.className === 'EditField' ? types : []);
@@ -389,7 +389,7 @@ function editPageSurface(m: LModel, options: EditPageSurfaceOptions): HTMLElemen
     label.textContent = step.title;
     page.appendChild(label);
     page.addEventListener('click', event => {
-      if ((event.target as HTMLElement).closest('.bp-ep-toolbar')) return;
+      if ((event.target as HTMLElement).closest?.('.bp-ep-toolbar')) return;
       event.preventDefault();
       event.stopPropagation();
       viewEditPage(pageId, step.key, 0, drivesNativeForm);

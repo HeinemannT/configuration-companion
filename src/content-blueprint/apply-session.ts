@@ -38,7 +38,7 @@ export interface ApplyReview {
 }
 
 export type ApplyResolution =
-  | { kind: 'applied'; message: string }
+  | { kind: 'applied'; message: string; changes?: number }
   | { kind: 'noop'; model?: LModel }
   | { kind: 'stale'; model: LModel; message: string; notes: PlanNote[] }
   | { kind: 'partial'; model: LModel; message: string; notes: PlanNote[] }
@@ -280,7 +280,7 @@ export function createApplySession(
       kind: 'unverified' as const,
       commitReportedOk: null,
       message: 'Blueprint: the apply result could not be verified — refreshing.',
-    })).then(result => {
+    })).then((result): ApplyResolution => result.kind === 'applied' ? { ...result, changes: review.changes } : result).then(result => {
       // Once the command has been sent, its resolution is authoritative for
       // this session. `isCurrent` gates preparation/confirmation, but must not
       // strand an accepted commit in `applying` if surrounding UI state moves.

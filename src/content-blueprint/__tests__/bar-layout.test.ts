@@ -70,6 +70,17 @@ describe('Blueprint bar layout', () => {
     expect(last(`${L} .bp-header .bp-chip button.bp-exit`, 'padding')).toBe('0');
   });
 
+  it('keeps Exit in normal flow beside a wrapping tool group, so it cannot leave the bar', () => {
+    const tools = `${L} .bp-header .bp-chip .bp-chip-tools`;
+    expect(last(tools, 'flex-wrap')).toBe('wrap');
+    expect(last(tools, 'min-width')).toBe('0');
+    expect(last(`${L} .bp-header .bp-commit-actions`, 'flex-wrap')).toBe('wrap');
+    expect(last(`${L} .bp-header .bp-chip button.bp-exit`, 'flex')).toBe('none');
+    for (const sel of [`${L} .bp-chip button.bp-exit`, `${L} .bp-header .bp-chip button.bp-exit`]) {
+      expect(last(sel, 'position'), sel).toBeUndefined();
+    }
+  });
+
   it('keeps disabled controls at their size', () => {
     const d = decls(`${L} .bp-header .bp-chip button:disabled`).join(';');
     expect(d).toContain('opacity');

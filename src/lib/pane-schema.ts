@@ -12,13 +12,25 @@
  * editable prop here surfaces it in both UIs at once.
  */
 
-import type { PANE_PROPS } from './bmp-client';
+import type { PaneProp } from './bmp-client';
 import { styleOptions } from './style-props';
+
+/** Built-in text fields the object window edits (the ones its table lists as
+ * plain text). Written only through APPLY_OBJECT_CHANGES and not fetched by
+ * the pane query, so they stay out of PANE_PROPS. `key`, `image`,
+ * `information` and `richText` are left out on purpose. */
+export const OBJECT_TEXT_PROPS = [
+  'pageTitle', 'buttonText', 'label', 'enableHint',
+  'successMessage', 'failureMessage', 'warningMessage',
+  'confirmButtonText', 'cancelButtonText',
+] as const;
+export type ObjectTextProp = typeof OBJECT_TEXT_PROPS[number];
+export const OBJECT_TEXT_PROPS_SET: ReadonlySet<string> = new Set(OBJECT_TEXT_PROPS);
 
 export type EditorKind = 'color' | 'number' | 'enum' | 'boolean' | 'slider' | 'text' | 'string' | 'property';
 
 export interface PropDef {
-  prop: typeof PANE_PROPS[number];
+  prop: PaneProp | ObjectTextProp;
   label: string;
   kind: EditorKind;
   /** Enum options where applicable. */
@@ -156,6 +168,32 @@ const EDIT_FIELD_TYPES: ReadonlySet<string> = new Set(['EditField']);
 const LABEL_TYPES: ReadonlySet<string> = new Set(['Label']);
 
 export const PROP_GROUPS: Array<{ title: string; props: PropDef[] }> = [
+  {
+    // The description every business object has. Plain text only: the object
+    // window edits several lines in a text area and keeps stored markup
+    // read-only (draft.ts).
+    title: 'General',
+    props: [
+      { prop: 'description', label: 'Description', kind: 'string' },
+    ],
+  },
+  {
+    // Plain text fields of the object window's table. They carry no
+    // `availableOn`: the table decides which of them a type lists, and the
+    // read decides whether the object returned them (draft.ts).
+    title: 'Text',
+    props: [
+      { prop: 'pageTitle', label: 'Page title', kind: 'string' },
+      { prop: 'buttonText', label: 'Button text', kind: 'string' },
+      { prop: 'label', label: 'Label', kind: 'string' },
+      { prop: 'enableHint', label: 'Enable hint', kind: 'string' },
+      { prop: 'successMessage', label: 'Success message', kind: 'string' },
+      { prop: 'failureMessage', label: 'Failure message', kind: 'string' },
+      { prop: 'warningMessage', label: 'Warning message', kind: 'string' },
+      { prop: 'confirmButtonText', label: 'Confirm button text', kind: 'string' },
+      { prop: 'cancelButtonText', label: 'Cancel button text', kind: 'string' },
+    ],
+  },
   {
     title: 'Layout',
     props: [

@@ -733,7 +733,9 @@
 .cx .connect-update-notice, .cx .cache-quota-banner { margin: var(--space-2) var(--ui-inset) 0; }
 
 /* save / test result: its own line under the row, so name and host stay whole */
-.cx-verdict { display: flex; align-items: center; gap: var(--space-1); min-width: 0; height: 20px; margin: 0 var(--ui-inset) 2px; padding: 0 var(--space-2) 0 calc(var(--space-2) + 8px + var(--space-2)); font-size: var(--ui-fs-sm); color: var(--text-secondary); }
+.cx-verdict { display: flex; align-items: center; gap: var(--space-1); min-width: 0; min-height: 20px; margin: 0 var(--ui-inset) 2px; padding: 0 var(--space-2) 0 calc(var(--space-2) + 8px + var(--space-2)); font-size: var(--ui-fs-sm); color: var(--text-secondary); }
+.cx-verdict-t { min-width: 0; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow-wrap: anywhere; }
+.cx-verdict.ok { color: var(--text-ok); }
 .ui .cx-verdict.ok .ic { color: var(--support-ok); }
 .cx-verdict.err { color: var(--text-error); }
 .cx-verdict.pending { color: var(--text-helper); }

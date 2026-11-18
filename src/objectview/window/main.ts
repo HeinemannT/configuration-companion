@@ -210,6 +210,7 @@ const source: ObjectWindowSource = {
     return { objects: res.objects, errors: res.errors };
   },
   run: runStep,
+  recordChanges(changes) { sendFireForget({ type: 'RECORD_CHANGES', changes, ...(environment ? { environment } : {}) }); },
   propertyChoices,
   // The side panel's reference scan (FETCH_INBOUND): declared reverse
   // references keep their field label, every other referrer follows.
@@ -225,7 +226,9 @@ const source: ObjectWindowSource = {
     };
     for (const g of res.groups ?? []) if (g.direction === 'in') for (const t of g.targets) add(t, g.label);
     for (const t of res.targets ?? []) add(t);
-    return { targets, ...(res.total != null ? { total: Math.max(res.total, targets.length) } : {}), ...(res.capped ? { capped: true } : {}) };
+    const linked = res.instances;
+    const instances = linked && { total: linked.total, targets: linked.targets.map(t => ({ rid: t.rid, name: t.name, type: t.type, businessId: t.businessId })) };
+    return { targets, ...(res.total != null ? { total: Math.max(res.total, targets.length) } : {}), ...(res.capped ? { capped: true } : {}), ...(instances ? { instances } : {}) };
   },
   cancelInbound(rid) { sendFireForget({ type: 'FETCH_INBOUND_CANCEL', rid }); },
   // "Used by" › "In code": the local code index, as the search window's "Used in code".

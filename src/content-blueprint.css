@@ -1285,7 +1285,13 @@
 #crev-blueprint-layer .bp-header{--bp-ctl-h:26px;--bp-ctl-gap:6px;--bp-bar-x:12px;--bp-bar-y:8px;transform:none;margin:0 auto;width:max-content;min-width:0;max-width:calc(100vw - 16px);box-sizing:border-box}
 #crev-blueprint-layer .bp-header .bp-chip,#crev-blueprint-layer .bp-header .bp-tabs{flex-wrap:wrap;gap:var(--bp-ctl-gap);row-gap:var(--bp-ctl-gap);align-items:center;padding:var(--bp-bar-y) var(--bp-bar-x);min-width:0}
 #crev-blueprint-layer .bp-header .bp-tabs.bp-tabs-one{flex-wrap:nowrap}
-#crev-blueprint-layer .bp-header .bp-commit-actions{gap:var(--bp-ctl-gap);margin-left:auto}
+#crev-blueprint-layer .bp-header .bp-commit-actions{gap:var(--bp-ctl-gap);margin-left:auto;flex-wrap:wrap;justify-content:flex-end;min-width:0;max-width:100%}
+/* Everything but Exit wraps inside .bp-chip-tools; Exit is its own flex item beside it (top of the first
+   row, never shrunk or wrapped away), so it cannot leave the bar or overlap Style's extra actions. */
+#crev-blueprint-layer .bp-header .bp-chip{align-items:flex-start}
+#crev-blueprint-layer .bp-header .bp-chip .bp-chip-tools{display:flex;flex:1 1 0;flex-wrap:wrap;align-items:center;gap:var(--bp-ctl-gap);row-gap:var(--bp-ctl-gap);min-width:0}
+#crev-blueprint-layer .bp-header .bp-chip button.bp-exit{flex:none;margin-left:0}
+#crev-blueprint-layer .bp-header .bp-chip .bp-page-chip{min-width:0}
 #crev-blueprint-layer .bp-header .bp-chip button,#crev-blueprint-layer .bp-header .bp-tabs>button,#crev-blueprint-layer .bp-header .bp-tabs>.bp-tab,#crev-blueprint-layer .bp-header .bp-tabs>.bp-amenu-trigger,#crev-blueprint-layer .bp-header .bp-chip .bp-page-chip,#crev-blueprint-layer .bp-header .bp-chip .bp-target{box-sizing:border-box;height:var(--bp-ctl-h);min-height:var(--bp-ctl-h);border-radius:var(--bp-r);line-height:1;vertical-align:middle;margin-top:0;margin-bottom:0}
 #crev-blueprint-layer .bp-header .bp-chip button,#crev-blueprint-layer .bp-header .bp-tabs>button,#crev-blueprint-layer .bp-header .bp-tabs>.bp-amenu-trigger{padding:0 10px}
 /* Icon-only buttons (settings, peek, undo, redo, exit): square, same height. */
@@ -1300,3 +1306,7 @@
 @media (max-width:900px){
   #crev-blueprint-layer .bp-header{width:auto;--bp-bar-x:8px;--bp-bar-y:7px}
 }
+/* review: the before / after values stay readable (the chips used to shrink to their labels) */
+#crev-blueprint-layer .bp-modal .bp-ba{flex:0 1 auto;max-width:60%}
+#crev-blueprint-layer .bp-modal .bp-ba-b,#crev-blueprint-layer .bp-modal .bp-ba-a{flex:0 1 auto;max-width:none}
+#crev-blueprint-layer .bp-modal .bp-ba-v{max-width:24ch}

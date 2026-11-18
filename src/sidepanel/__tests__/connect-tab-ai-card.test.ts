@@ -392,7 +392,7 @@ describe('Connect tab: edit, test, remove', () => {
     expect(el.querySelector('#pf-pass-error')?.textContent).toBe('');
   });
 
-  it('saves a valid edit and shows the verdict on the row', () => {
+  it('saves a valid edit and shows the verdict on the row', async () => {
     shared.settings = oneProfile();
     const { tab, el, sent } = renderTab();
     (el.querySelector('[data-action="edit-profile"]') as HTMLButtonElement).click();
@@ -408,7 +408,16 @@ describe('Connect tab: edit, test, remove', () => {
     tab.render(el);
     expect(el.querySelector('.cx-verdict.ok')?.textContent).toBe('Connected as admin');
     shared.activeTab = 'connect';
-    vi.advanceTimersByTime(6_100);
+    // The line is brought into view once, when it is drawn.
+    const line = el.querySelector<HTMLElement>('.cx-verdict.ok')!;
+    const scroll = vi.fn();
+    line.scrollIntoView = scroll;
+    document.body.append(el);
+    await Promise.resolve();
+    expect(scroll).toHaveBeenCalledWith({ block: 'nearest' });
+    vi.advanceTimersByTime(19_000);
+    expect(el.querySelector('.cx-verdict.ok')).not.toBeNull();
+    vi.advanceTimersByTime(1_100);
     vi.useRealTimers();
     expect(el.querySelector('.cx-verdict')).toBeNull();
   });

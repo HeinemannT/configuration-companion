@@ -6,6 +6,7 @@ import type { AccessRequest } from './access-workspace/model';
 import type { AccessDestination } from './access-workspace/entry';
 import type { ActionVerdicts } from './access-mode';
 import type { CustomChange, ListItem, TypePropertySchema } from './property-schema';
+import type { ChangeInput, ChangeRecord } from './change-record';
 import type {
   AccessSubject,
   AccessTraceAction,
@@ -357,6 +358,11 @@ export type ActivityMessage =
   | { type: 'GET_ACTIVITY' }
   | { type: 'ACTIVITY_LOG'; entries: ActivityEntry[] }
   | { type: 'ACTIVITY_ENTRY'; entry: ActivityEntry }
+  // Change record (lib/change-record.ts): the object window reports what it wrote.
+  | { type: 'RECORD_CHANGES'; changes: ChangeInput[]; environment?: string }
+  | { type: 'GET_CHANGES' }
+  | { type: 'CLEAR_CHANGES' }
+  | { type: 'CHANGES_DATA'; profileId: string; entries: ChangeRecord[] }
   /** A page or window asks the worker to open the side panel's Log at an error. `logId` names the
    *  entry when the toast already has one; otherwise the worker logs `text`. */
   | { type: 'SHOW_IN_LOG'; text: string; detail?: string; logId?: number }
@@ -457,7 +463,7 @@ export type ObjectPaneMessage =
   // Inbound scan — "who references me" via rref(), incl. undeclared edges.
   | { type: 'FETCH_INBOUND'; rid: string; className: string }
   // total: every rref() referrer, also past the cap.
-  | { type: 'INBOUND_RESULT'; rid: string; ok: boolean; groups?: ConnGroup[]; targets?: ConnTarget[]; capped?: boolean; total?: number; error?: string }
+  | { type: 'INBOUND_RESULT'; rid: string; ok: boolean; groups?: ConnGroup[]; targets?: ConnTarget[]; capped?: boolean; total?: number; instances?: { total: number; targets: ConnTarget[] }; error?: string }
   // Stop waiting for a FETCH_INBOUND of `rid` (BMP may still finish the command).
   | { type: 'FETCH_INBOUND_CANCEL'; rid: string }
   // Access mode of the object window (lib/access-mode.ts). Every request

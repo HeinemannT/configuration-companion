@@ -195,6 +195,9 @@ export const choiceOf = (environment: string): TargetChoice => `env:${environmen
 
 /** What "Add them" looks up: used objects, parents, or steps of flow projects. */
 export type NeedKind = 'uses' | 'parents' | 'steps';
+export const NEED_KINDS: readonly NeedKind[] = ['uses', 'parents', 'steps'];
+/** The most rounds of "Add what is missing and compare again". */
+export const MISSING_ROUNDS = 6;
 
 /** The `generate(true)` text of the property definitions (their links),
  *  read after the target's answer. */
@@ -680,6 +683,9 @@ export class TransportController {
   log: LogState | null = null;
   /** Looking up used objects ("Add them"). */
   refs: RefsState | null = null;
+  /** "Add what is missing and compare again" is running: its round. */
+  missing: { round: number; of: number } | null = null;
+  private missingStopped = false;
   readonly usedBy = new Map<string, UsedByState>();
   /** What this workspace has at used addresses outside the transport (lower case). */
   readonly facts = new Map<string, TransportFact>();
@@ -3621,6 +3627,38 @@ export class TransportController {
     await this.readMissing();
   }
 
+  /**
+   * "Add what is missing and compare again": with a connected target, run
+   * "Add them" for each kind still needed (uses, parents, steps), each of
+   * which compares again. Adding can show more needs (a parent's parent, the
+   * uses of an added object), so it repeats while needs remain and the
+   * transport grew, at most MISSING_ROUNDS times. A failure, Stop, or nothing
+   * added ends it. It only reads here and compares; nothing is written to the
+   * target.
+   */
+  async addMissing(): Promise<void> {
+    if (this.busy || this.locked || this.missing || !this.bundle?.target?.direct) return;
+    this.missingStopped = false;
+    try {
+      for (let round = 1; round <= MISSING_ROUNDS; round++) {
+        const b = this.bundle;
+        if (!b || b.status !== 'done') break;
+        const kinds = NEED_KINDS.filter(k => this.referencedAddresses(k).length);
+        if (!kinds.length) break;
+        this.missing = { round, of: MISSING_ROUNDS };
+        const before = this.transportItems().length;
+        for (const kind of kinds) {
+          await this.addReferenced(kind);
+          if (this.missingStopped || this.error || this.disposed || this.bundle?.status !== 'done') break;
+        }
+        if (this.missingStopped || this.error || this.disposed || this.transportItems().length <= before) break;
+      }
+    } finally {
+      this.missing = null;
+      this.emit({ kind: 'bundle' });
+    }
+  }
+
   /** Look up one address for addReferenced. */
   private async findOne(refs: RefsState, address: string, conn: TransportConnection): Promise<'next' | 'stopped' | 'fatal'> {
     const requestId = this.nextId();
@@ -3657,6 +3695,7 @@ export class TransportController {
     const refs = this.refs;
     if (!refs || refs.status !== 'reading') return;
     refs.status = 'stopped';
+    this.missingStopped = true;
     if (refs.requestId) this.deps.post({ type: 'TRANSPORT_CANCEL', requestId: refs.requestId });
     refs.abort?.abort();
     this.emit({ kind: 'bundle' });

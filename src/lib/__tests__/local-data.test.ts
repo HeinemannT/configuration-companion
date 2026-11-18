@@ -26,7 +26,7 @@ const SEEDS: Seed[] = [
     { area: 'local', key: `crev_p1_${s}`, value: [1], afterDelete: 'removed', afterReset: 'removed' },
     { area: 'local', key: `crev_p2_${s}`, value: [2], afterDelete: 'kept', afterReset: 'removed' },
   ]),
-  ...['favorites', 'style_presets'].flatMap((s): Seed[] => [
+  ...['favorites', 'style_presets', 'changes'].flatMap((s): Seed[] => [
     { area: 'local', key: `crev_p1_${s}`, value: [1], afterDelete: 'removed', afterReset: 'kept' },
     { area: 'local', key: `crev_p2_${s}`, value: [2], afterDelete: 'kept', afterReset: 'kept' },
   ]),

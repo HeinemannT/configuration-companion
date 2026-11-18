@@ -31,6 +31,7 @@ import { scheduleHoverPrefetch, cancelHoverPrefetch } from './content-hover-pref
 import { startObserver } from './content-observer';
 import { adoptMountedFrames, mountFrameOverlay, setFrameServer, teardownFrameOverlayModule } from './content-frame-overlay';
 import { BP_RESUME_KEY } from './lib/blueprint-resume';
+import { readResume } from './content-blueprint/resume-note';
 import { sendFireForget } from './lib/messaging';
 
 declare global {
@@ -767,11 +768,15 @@ try {
   const raw = sessionStorage.getItem(BP_RESUME_KEY);
   if (raw) {
     sessionStorage.removeItem(BP_RESUME_KEY); // one-shot — a later manual reload must not re-trigger
-    const r = JSON.parse(raw) as { prefer?: string; t?: number };
-    if (typeof r?.t === 'number' && Date.now() - r.t < 30_000) {
-      window.__crevBpResumePrefer = r.prefer === 'instance' ? 'instance' : 'template';
+    const r = readResume(raw, Date.now());
+    if (r) {
+      window.__crevBpResumePrefer = r.prefer;
       const askResume = (tries: number): void => {
-        if (document.querySelector('[data-rid]')) { sendFireForget({ type: 'BLUEPRINT_RESUME' }); return; }
+        if (document.querySelector('[data-rid]')) {
+          sendFireForget({ type: 'BLUEPRINT_RESUME' });
+          if (r.message) showToast(r.message, 'success', undefined, { long: true }); // the apply result, shown once Blueprint is back
+          return;
+        }
         if (tries > 0) setTimeout(() => askResume(tries - 1), 500);
       };
       askResume(24); // give BMP up to ~12 s to paint before giving up on the resume

@@ -77,6 +77,25 @@ export function stringEditor(ctx: PropEditorContext, placeholder = ''): HTMLElem
   return h('div', { class: `prop-cell prop-cell--string${ctx.dirty ? ' prop-cell--dirty' : ''}` }, input);
 }
 
+/** Several lines of plain text. 2 to 6 rows, growing with the content; Enter
+ * adds a line break, and the value commits on change (blur) like stringEditor.
+ * The value is handed over with LF line breaks. */
+export function textAreaEditor(ctx: PropEditorContext, placeholder = ''): HTMLElement {
+  const area = h('textarea', {
+    id: nextEditorId('textarea'),
+    class: `prop-string-input prop-textarea${ctx.dirty ? ' prop-cell--dirty' : ''}`,
+    placeholder,
+    autocomplete: 'off',
+    spellcheck: 'false',
+  }) as HTMLTextAreaElement;
+  area.value = ctx.value;
+  const fit = () => { area.rows = Math.min(6, Math.max(1, area.value.split(/\r\n|\r|\n/).length)); };
+  fit();
+  area.addEventListener('input', fit);
+  area.addEventListener('change', () => ctx.onChange(area.value.replace(/\r\n?/g, '\n')));
+  return h('div', { class: `prop-cell prop-cell--string${ctx.dirty ? ' prop-cell--dirty' : ''}` }, area);
+}
+
 export interface EnumOption {
   value: string;
   label?: string;

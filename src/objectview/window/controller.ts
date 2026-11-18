@@ -70,6 +70,8 @@ export interface SummaryAnswer {
 /** Type hint for a presenting template: its structure rule lists widgets
  *  and Container → ActionButton in the same call as the batch read. */
 const TEMPLATE_HINT = 'EnterpriseTemplate';
+import { changeInputs } from './changes';
+import type { ChangeInput } from '../../lib/change-record';
 
 export interface ObjectWindowSource {
   /** Open a root. Rejects only when the root itself cannot be read. */
@@ -94,12 +96,14 @@ export interface ObjectWindowSource {
   /** Run one write on its existing route. `label` names the object for the
    *  Log (display only). */
   run(step: SaveStep, label?: ObjectLabel): Promise<SaveOutcome>;
+  /** Report written properties to the change record (no answer). */
+  recordChanges?(changes: ChangeInput[]): void;
   /** EditField propertyMapping choices. */
   propertyChoices?(rid: string): Promise<PropertyChoices>;
   /** "Used by": every object that refers to `rid` (declared reverse
    *  references first, then the rref() scan). Slow on much-used objects;
    *  started only by the user. Rejects on failure. */
-  inbound?(rid: string, type: string): Promise<{ targets: InboundTarget[]; total?: number; capped?: boolean }>;
+  inbound?(rid: string, type: string): Promise<{ targets: InboundTarget[]; total?: number; capped?: boolean; instances?: { total: number; targets: InboundTarget[] } }>;
   /** Stop waiting for the scan of `rid` (BMP may still finish it). */
   cancelInbound?(rid: string): void;
   /** Objects whose code calls `obj`, from the local code index; null while
@@ -392,11 +396,12 @@ export class ObjectWindowController {
     scan(rid, obj.type).then(res => {
       if (this.inbound[rid] !== state) return; // cancelled or restarted
       const known: Record<string, ObjectSummary> = {};
-      for (const t of res.targets) if (!this.summaries[t.rid]) known[t.rid] = { rid: t.rid, name: t.name, type: t.type, businessId: t.businessId };
+      for (const t of [...res.targets, ...(res.instances?.targets ?? [])]) if (!this.summaries[t.rid]) known[t.rid] = { rid: t.rid, name: t.name, type: t.type, businessId: t.businessId };
       this.summaries = { ...this.summaries, ...known };
       this.inbound = { ...this.inbound, [rid]: {
         phase: 'done', startedAt, ms: this.now() - startedAt, targets: res.targets,
         ...(res.total != null ? { total: res.total } : {}), ...(res.capped ? { capped: true } : {}),
+        ...(res.instances ? { instances: res.instances } : {}),
       } };
     }, (e: unknown) => {
       if (this.inbound[rid] !== state) return;
@@ -984,6 +989,10 @@ export class ObjectWindowController {
         rereadError = e instanceof Error ? e.message : String(e);
       }
     }
+    // The change record: what was sent, with the opened value.
+    const sent = changeInputs(results, fresh, objects, label,
+      (rid, prop, entry, value) => (entry.kind === 'custom' ? this.customText(rid, prop, value, objects) : value));
+    if (sent.length) this.source.recordChanges?.(sent);
     this.saveNote = this.settle(results, fresh, heldNotes, label, rereadError);
     // The allowed objects depend on the object's data: a written object's
     // sets are read again when its rows ask (after settle named the values).

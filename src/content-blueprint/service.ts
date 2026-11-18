@@ -16,6 +16,7 @@ import { walk } from '../lib/layout/model';
 import { descriptionViewSourceType } from '../lib/layout/description-view';
 import type { FlowRefListItem } from '../lib/layout/sync';
 import { BP_RESUME_KEY } from '../lib/blueprint-resume';
+import { appliedMessage, encodeResume } from './resume-note';
 import { bp } from './state';
 import { applyPendingSelect } from './actions';
 import { render } from './view';
@@ -245,10 +246,10 @@ export function presentApplyResolution(result: ApplyResolution): void {
     return;
   }
   if (result.kind === 'unverified') {
-    stashResume();
+    stashResume(result.message);
     showToast(result.message, result.commitReportedOk ? 'success' : 'error');
   } else {
-    stashResume();
+    stashResume(appliedMessage(result.changes));
     showToast(result.message, 'success');
   }
   sendToSW({ type: 'BLUEPRINT_TOGGLE' });
@@ -258,11 +259,9 @@ export function presentApplyResolution(result: ApplyResolution): void {
 /** Persist a page-scoped resume flag so the fresh content script re-enables blueprint after a reload,
  *  keeping the SAME edit target (template vs instance). Best-effort — storage may be disabled. Shared by
  *  the success reload and the D4 unverified reload. */
-function stashResume(): void {
+function stashResume(message?: string): void {
   bp.reloading = true; // both reload paths call this first — tells onBeforeUnload the imminent reload is intentional
   try {
-    sessionStorage.setItem(BP_RESUME_KEY, JSON.stringify({
-      prefer: bp.editingTemplate ? 'template' : 'instance', t: Date.now(),
-    }));
+    sessionStorage.setItem(BP_RESUME_KEY, encodeResume(bp.editingTemplate ? 'template' : 'instance', message, Date.now()));
   } catch { /* sandboxed / storage disabled — resume is best-effort */ }
 }

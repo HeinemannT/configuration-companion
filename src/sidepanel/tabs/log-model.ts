@@ -151,7 +151,7 @@ export function collapseRuns(chronological: readonly ActivityEntry[]): LogRow[] 
 
 export interface DayGroup { key: string; label: string; rows: LogRow[] }
 
-function dayKey(t: number): string {
+export function dayKey(t: number): string {
   const d = new Date(t);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }

@@ -25,6 +25,7 @@ import { releaseNativeEditPage } from './content-blueprint/edit-page-native';
 import { ensureOverlayStyle } from './content-overlay-style';
 import { resetObjectPreview } from './lib/object-chip';
 import { blueprintFontFaceCss } from './content-blueprint/font-face';
+import { rememberTarget, rememberedTarget } from './content-blueprint/resume-note';
 
 export { isBlueprintActive };
 
@@ -179,7 +180,7 @@ export function enableBlueprint(): void {
     });
   });
   bp.observer.observe(document.body, { childList: true, subtree: true });
-  const prefer = resumePrefer ?? 'template';
+  const prefer = resumePrefer ?? rememberedTarget(rid) ?? 'template';
   resumePrefer = null; // one-shot: only the resume-triggered enable inherits the saved target
   void loadPage(rid, prefer).then((ok) => { if (!ok) disableBlueprint(); });
 }
@@ -200,7 +201,7 @@ function mountLoadingShell(): void {
 
 /** Reload the overlay for `rid` — used by the page-change handler (C) and the template/instance toggle
  *  (F, same rid, different `prefer`). Drops the stale model + any staged edits. */
-function reloadForRid(rid: string, prefer: 'template' | 'instance' = 'template'): void {
+function reloadForRid(rid: string, prefer: 'template' | 'instance' = rememberedTarget(rid) ?? 'template'): void {
   // An accepted Apply owns this overlay until BMP answers. The successful or
   // unverified outcome reloads the current URL, so a navigation that arrived
   // meanwhile is naturally picked up without orphaning the commit result.
@@ -242,6 +243,7 @@ export function setEditTarget(toTemplate: boolean): void {
   const gen = bp.gen;
   void requestExit(toTemplate ? 'Switching to the template' : 'Switching to this instance').then(ok => {
     if (!ok || !bp.active || bp.gen !== gen || bp.editingTemplate === toTemplate) return;
+    rememberTarget(bp.loadedRid, toTemplate ? 'template' : 'instance');
     reloadForRid(bp.loadedRid, toTemplate ? 'template' : 'instance');
   });
 }

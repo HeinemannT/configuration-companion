@@ -235,7 +235,7 @@ export function previewModal(review: ApplyReview, ctx: BlueprintCtx, applying = 
   const fanout = impact?.fanout;
   if (fanout?.isMaster) {
     const n = fanout.instances.length;
-    warn(`This is a shared template; ${n} linked scorecard${n === 1 ? '' : 's'} inherit from it. `
+    warn(`This is a shared template; ${n} linked scorecard${n === 1 ? ' inherits' : 's inherit'} from it. `
       + 'Widget edits propagate to them; tab or container edits change every one.');
   } else if (shared) {
     warn('This is a shared template. These changes affect every instance that uses it.');
@@ -439,6 +439,14 @@ export function trayPanel(base: LModel, m: LModel): HTMLElement {
   // TabSet needed by a virtual TabSet), so plan-step counts are insufficient.
   const actions = notes.length;
   const wrap = document.createElement('div'); wrap.className = 'bp-tray';
+  // Below the header and flush with its right edge: the header wraps to two rows and is centred, so a
+  // fixed offset put the list under it.
+  queueMicrotask(() => {
+    const hd = bp.layer?.querySelector('.bp-header')?.getBoundingClientRect();
+    if (!hd || !hd.height) return;
+    wrap.style.top = `${Math.round(hd.bottom + 6)}px`;
+    wrap.style.right = `${Math.max(16, Math.round(window.innerWidth - hd.right))}px`;
+  });
   // Headline = logical changes; the "· N actions" exposes the underlying EC steps without hiding them
   // (one insert can compile to a create + a moveAfter chain). Singular-aware.
   const h = document.createElement('div'); h.className = 'bp-tray-h';
@@ -587,8 +595,15 @@ export function renderChip(ctx: BlueprintCtx, pending: number): HTMLElement {
   exit.setAttribute('aria-label', 'Exit blueprint mode');
   const commitActions = document.createElement('div');
   commitActions.className = 'bp-commit-actions';
-  commitActions.append(discardB, applyB, exit);
+  commitActions.append(discardB, applyB);
   c.appendChild(commitActions);
+  // Everything but Exit lives in one wrapping group; Exit is a plain flex item after it, so it always
+  // stays inside the bar at the end of the first row and can never be pushed out or overlapped by
+  // the group, however far it wraps (browser zoom, narrow pane, Style mode).
+  const tools = document.createElement('div');
+  tools.className = 'bp-chip-tools';
+  tools.append(...Array.from(c.childNodes));
+  c.append(tools, exit);
   return c;
 }
 

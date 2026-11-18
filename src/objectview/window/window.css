@@ -414,6 +414,14 @@
   font: inherit;
 }
 
+.prop-textarea {
+  height: auto;
+  padding: 4px 7px;
+  line-height: 1.4;
+  resize: none;
+  overflow-y: auto;
+}
+
 .prop-string-input:focus {
   border-color: var(--accent);
   outline: none;
@@ -743,6 +751,9 @@ html body {
 .ow-use-h .t { font-size: var(--ui-fs-sm); font-weight: 600; color: var(--text-primary); }
 .ow-use-h .n { font: 400 var(--ui-fs-xs) var(--font-mono); color: var(--text-helper); }
 /* "In code" and "By reference" inside "Used by" */
+.ow-use-sum { margin: 0 var(--space-1) var(--space-1) var(--ui-inset); padding: var(--space-1) var(--space-2); border-left: 2px solid var(--border-subtle); font-size: var(--ui-fs-sm); }
+.ow-use-sum .h { font-weight: 600; color: var(--text-primary); }
+.ow-use-sum[data-found="true"] { border-left-color: var(--accent-bright); }
 .ow-use-h.sub { margin-top: var(--space-1); border-top: 0; height: var(--space-6); }
 .ow-use-h.sub .t { font-size: var(--ui-fs-xs); color: var(--text-secondary); }
 .ow-use-ms { font: 400 var(--ui-fs-xs) var(--font-mono); color: var(--text-placeholder); }
@@ -815,6 +826,7 @@ details.ow-grp .inner { padding-top: var(--space-2); }
 .ow .ow-ed.prop-cell { width: auto; min-width: 0; max-width: 100%; }
 .ow .ow-ed .prop-select, .ow .ow-ed .prop-string-input, .ow .ow-ed .prop-number-input { height: var(--ui-ctl-h); font-size: var(--ui-fs-sm); background: var(--bg); border: 1px solid var(--border-subtle); color: var(--text-primary); }
 .ow .ow-ed .prop-string-input { width: 280px; max-width: 100%; }
+.ow .ow-ed .prop-textarea { height: auto; }
 .ow .ow-ed .prop-number-input { width: 88px; }
 .ow .ow-ed .prop-select { min-width: 140px; }
 

@@ -11,8 +11,8 @@ import { escapeLayers, type EscapeLayerKind } from '../lib/escape-layers';
 import { isTypingIn, matchesCombo, matchesShortcut, whichShortcut } from '../lib/shortcuts';
 import { cancelDrag } from './gestures';
 import { isCheatSheetOpen, toggleCheatSheet, type CheatSheetOptions } from '../lib/cheat-sheet';
-import { findNode, isResultTab, editableTabsets, walk } from '../lib/layout/model';
-import { bandInsertIndex } from '../lib/layout/placement';
+import { findNode, findTabOf, isResultTab, editableTabsets, walk } from '../lib/layout/model';
+import { bandInsertIndex, describePlacement } from '../lib/layout/placement';
 import { resize, setHeight, rename, remove, restoreNode, addWidget, addContainer, moveInto, swap, insertRelative, addTab, createTabset, toggleReset, setStyle, setDescriptionViewType, setDescriptionViewProperties } from '../lib/layout/edit';
 import { diff, summarizeChanges } from '../lib/layout/diff';
 import { addFlowChild, reorderFlowChild, removeFlowAdd, deleteFlowChild, setActionFlag, addActionButton, flowChangeCount, stageNewFlowContainer, wireFlowRef, unwireFlowRef, renameFlowObject, setEditFieldProperty } from '../lib/layout/flow';
@@ -272,12 +272,25 @@ export function addFromPicker(className: string): void {
   const kids = f ? f.node.children : m.tabs;
   // Band-correct insertion: after the gap's anchor when that slot is band-legal, else the nearest
   // position BMP can actually render it at (widgets always flow after all containers).
-  const { index, remapped } = bandInsertIndex(kids, bp.pickerOpts?.afterId, 'widget');
-  if (remapped) showToast('Widgets render after all containers, so it was added at the start of the widget flow', 'info');
+  const { index } = bandInsertIndex(kids, bp.pickerOpts?.afterId, 'widget'); // a remapped slot is explained by announcePlacement
   const added = addWidget(m, cid, index, className, undefined, bp.pickerOpts?.cols ?? 6);
   bp.picker = null; bp.pickerOpts = null;
   bp.selectedId = added.id;
   mutate(added.model);
+  announcePlacement(added.id, 'Added');
+}
+
+/** After an add/move: scroll the item's cell into view (after the FLIP slide, so the two do not fight)
+ *  and say in plain words where it ended up, computed from the model after the edit. */
+function announcePlacement(id: string, verb: 'Added' | 'Moved'): void {
+  const m = model(); if (!m) return;
+  const cellOf = (): HTMLElement | null => bp.layer?.querySelector<HTMLElement>(`.bp-rcell[data-bpid="${CSS.escape(id)}"]`) ?? null;
+  const offTab = !cellOf(); // not drawn: it sits in a tab other than the one shown
+  const text = describePlacement(m, id, verb, offTab);
+  // In another tab: the toast offers the way there.
+  const tab = offTab ? findTabOf(m, id) : null;
+  if (text) showToast(text, 'info', tab ? { label: 'Show the tab', onClick: () => viewTab(tab.id) } : undefined, { key: 'bp-placement', long: true });
+  setTimeout(() => cellOf()?.scrollIntoView({ block: 'nearest', inline: 'nearest' }), 320);
 }
 
 export function addTabAction(): void {
@@ -302,6 +315,7 @@ export function addTabTo(tabsetId: string): void {
   bp.tabsetPickerOpen = false;
   bp.selectedId = r.id;
   mutate(r.model);
+  announcePlacement(r.id, 'Added');
 }
 
 // ── flow editing (blueprint flow layer) ────────────────────────────────────────
@@ -426,8 +440,7 @@ export function addContainerTo(parentId: string): void {
   const m = model(); if (!m) return;
   const f = findNode(m, parentId);
   const kids = f ? f.node.children : m.tabs;
-  const { index, remapped } = bandInsertIndex(kids, bp.pickerOpts?.afterId, 'container');
-  if (remapped) showToast('Containers render before widgets, so it was added at the end of the container flow', 'info');
+  const { index } = bandInsertIndex(kids, bp.pickerOpts?.afterId, 'container');
   const r = addContainer(m, parentId, index, bp.pickerOpts?.cols ?? 6);
   bp.picker = null; bp.pickerOpts = null;
   bp.selectedId = r.id;
@@ -439,7 +452,9 @@ export function closeMovePicker(): void { bp.movePicker = null; render(); }
 export function moveTo(id: string, destId: string): void {
   const m = model(); if (!m) return;
   bp.movePicker = null;
+  bp.selectedId = id;
   mutate(moveInto(m, id, destId));
+  announcePlacement(id, 'Moved');
 }
 
 // ── direct-manipulation drops (gestures.ts stages these on drop) ──────────────

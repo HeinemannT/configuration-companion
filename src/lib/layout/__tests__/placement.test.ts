@@ -5,7 +5,7 @@
  * raw children order can never drift from BMP's rendered order.
  */
 import { describe, it, expect } from 'vitest';
-import { resolveGapPlacement, bandInsertIndex } from '../placement';
+import { resolveGapPlacement, bandInsertIndex, describePlacement } from '../placement';
 import { insertRelative, moveInto, addContainer } from '../edit';
 import type { LModel, LNode } from '../types';
 
@@ -94,5 +94,28 @@ describe('edit primitives enforce canonical band order (the safety net under the
     const m = mdl([container('c1'), widget('w1')]);
     const r = addContainer(m, 't1', 2, 3); // raw index after the widget
     expect(tabIds(r.model)).toEqual(['c1', r.id, 'w1']);
+  });
+});
+
+describe('describePlacement', () => {
+  const m = mdl([container('c1'), container('c2'), widget('w1'), widget('w2')]);
+  it('describes an add by its real predecessor, start or end', () => {
+    expect(describePlacement(m, 'w2', 'Added')).toBe('Added "w2" at the end of tab "t1".');
+    expect(describePlacement(m, 'w1', 'Added')).toBe('Added "w1" after "c2".');
+    expect(describePlacement(mdl([widget('a'), widget('b')]), 'a', 'Added')).toBe('Added "a" at the start of tab "t1".');
+  });
+  it('says end of for a widget move, and names the other tab', () => {
+    expect(describePlacement(m, 'w2', 'Moved')).toBe('Moved "w2" to the end of tab "t1".');
+    expect(describePlacement(m, 'w2', 'Moved', true)).toBe('Moved "w2" to the end of tab "t1". Open that tab to see it.');
+  });
+  it('describes a container that landed before the widgets truthfully', () => {
+    expect(describePlacement(m, 'c2', 'Moved')).toBe('Moved "c2" into tab "t1", after its last container and before the widgets.');
+    expect(describePlacement(m, 'c1', 'Moved')).toBe('Moved "c1" into tab "t1", at the start of tab "t1".');
+    const first = mdl([container('c1'), widget('w1')]);
+    expect(describePlacement(first, 'c1', 'Moved')).toBe('Moved "c1" into tab "t1", before the widgets.');
+  });
+  it('names a container destination with its tab when off tab', () => {
+    const mm = mdl([container('c1', 3, [widget('w1')])]);
+    expect(describePlacement(mm, 'w1', 'Moved', true)).toBe('Moved "w1" to the end of "c1" in tab "t1". Open that tab to see it.');
   });
 });

@@ -12,6 +12,7 @@ import { lintGutter } from '@codemirror/lint'
 import { baseEditingExtensions, baseKeymapBindings, languageExtension, codeTheme, type CodeLang } from '../editor-core/cm-scaffold'
 import { CodeSurface, isProgrammaticSwap, type CodeSlot } from '../editor-core/code-surface'
 import { conflictBody, conflictChoices, conflictTitle, executeOutcome, runCodeSave } from '../editor-core/code-save'
+import { describeEcError } from '../lib/ec-error-copy'
 import { storedDiffersLine, unknownOutcomeLine } from '../lib/save-check'
 import { ariaKeyShortcuts, eventTarget, matchesShortcut, shortcutLabel, withShortcut, cmBindings } from '../lib/shortcuts'
 import { installCheatSheetKey, toggleCheatSheet, type CheatSheetOptions } from '../lib/cheat-sheet'
@@ -77,6 +78,7 @@ import { jsonCompletions, setJsonCompletionContext } from './ec/jsonCompletions'
 import { jsonShapeStore } from './ec/json-shape-store'
 import { renderJsonVars } from './json-vars'
 import { extendedLinter } from './ec/diagnostics'
+import { wherePropertyLinter } from './ec/propertyLinter'
 import { runtimeErrorLinter, setRuntimeError, parseEcErrorLocation, clearRuntimeErrors } from './ec/runtimeErrors'
 import { ecBlockMatching } from '../editor-core/ec/blockMatching'
 import { ecFoldService } from './ec/foldRegions'
@@ -829,6 +831,7 @@ function buildExtensions(slot: CodeSlot): Extension[] {
       ...varHighlight,
       typeInferenceListener,
       extendedLinter,
+      wherePropertyLinter,
       runtimeErrorLinter,
       ecBlockMatching,
       ecFoldService,
@@ -1442,6 +1445,17 @@ function flashCopy(btn: HTMLElement, text: string, restore: () => void) {
 
 // ── Bottom panel (output / vars / history) ──────────────────────
 
+/** Error text with a plain summary on top and the server message beneath, or the raw text when no summary applies. */
+function renderErrorOutput(text: string): HTMLElement {
+  const prefix = text.startsWith('Save failed: ') ? 'Save failed: ' : ''
+  const copy = describeEcError(text.slice(prefix.length))
+  if (!copy) return h('div', { class: 'editor-output-content error' }, text)
+  return h('div', { class: 'editor-output-content error' },
+    h('div', { class: 'editor-output-summary' }, prefix + copy.summary),
+    h('div', { class: 'editor-output-raw-label' }, 'Server message'),
+    h('div', { class: 'editor-output-raw' }, copy.raw))
+}
+
 function showOutput(text: string, ok: boolean, entries: EcOutputEntry[] = []) {
   lastOutputText = text
   lastOutputEntries = entries
@@ -1570,7 +1584,7 @@ function renderBottomContentInner() {
         })
       : lastOutputOk
         ? renderEcOutput(lastOutputText, tablePreview, decodePreview)
-        : h('div', { class: 'editor-output-content error' }, lastOutputText)
+        : renderErrorOutput(lastOutputText)
     renderDom(container,
       h('div', { class: 'editor-output-header' },
         h('span', { class: `editor-output-pill ${cls}`, ...(warned ? { title: 'BMP reported warnings. Read the output before you execute.' } : {}) },

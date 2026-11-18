@@ -24,6 +24,14 @@ describe('toast timing', () => {
     expect(toasts()).toHaveLength(0);
   });
 
+  it('keeps a long toast twice as long', () => {
+    showToast('Blueprint: 1 change applied.', 'success', undefined, { long: true });
+    vi.advanceTimersByTime(AUTO_DISMISS_MS + 400);
+    expect(toasts()).toHaveLength(1);
+    vi.advanceTimersByTime(AUTO_DISMISS_MS + 400);
+    expect(toasts()).toHaveLength(0);
+  });
+
   it('keeps an error toast for 10 seconds', () => {
     showToast('Save failed', 'error');
     vi.advanceTimersByTime(ERROR_DISMISS_MS - 100);

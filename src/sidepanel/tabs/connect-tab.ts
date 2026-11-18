@@ -51,7 +51,7 @@ export function firstRunCandidate(tabUrl: string | undefined, bmpDetected: boole
 type SectionKey = 'ai' | 'prefs' | 'keys' | 'help';
 
 /** How long a successful save or test result stays under its row. */
-const VERDICT_SHOW_MS = 6_000;
+const VERDICT_SHOW_MS = 20_000;
 
 interface FieldErrors { url?: string; user?: string; pass?: string }
 
@@ -1258,10 +1258,20 @@ export class ConnectTab implements Tab {
     if (v.pending) {
       return h('div', { class: 'cx-verdict pending' }, h('span', { class: 'cx-spin', 'aria-hidden': 'true' }), h('span', { class: 'cx-ell' }, v.text));
     }
-    return h('div', { class: `cx-verdict ${v.ok ? 'ok' : 'err'}`, title },
+    const line = h('div', { class: `cx-verdict ${v.ok ? 'ok' : 'err'}`, title },
       v.ok ? icon('s-check', 'ic-sm') : icon('s-xc', 'ic-sm'),
-      h('span', { class: 'cx-ell' }, v.text));
+      h('span', { class: 'cx-verdict-t' }, v.text));
+    if (this.verdictSeen !== v) {
+      // Once per verdict, after the line is in the panel: bring it into view.
+      this.verdictSeen = v;
+      queueMicrotask(() => {
+        if (line.isConnected && typeof line.scrollIntoView === 'function') line.scrollIntoView({ block: 'nearest' });
+      });
+    }
+    return line;
   }
+
+  private verdictSeen: ConnectTab['verdict'] = null;
 
   private verdictTimer: { verdict: NonNullable<ConnectTab['verdict']>; timer: ReturnType<typeof setTimeout> } | null = null;
 

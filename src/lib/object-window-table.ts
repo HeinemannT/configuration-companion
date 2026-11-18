@@ -692,6 +692,13 @@ function indexedCode(obj: FullObject): string[] {
   return list.filter(p => !NOT_EC.has(p) && obj.props[p]?.kind === 'code' && !isEmptyValue(obj.props[p]));
 }
 
+/** Whether the table lists `prop` for `type` as a plain text field. */
+export function listsTextField(type: string, prop: string): boolean {
+  const info = typeInfo(type);
+  return [...info.groups, ...(info.layout ? [info.layout] : [])]
+    .some(g => g.fields.some(f => f.prop === prop && f.widget === 'text'));
+}
+
 function fieldProps(info: TypeInfo): Set<string> {
   const out = new Set<string>();
   for (const g of [...info.groups, ...(info.layout ? [info.layout] : [])]) for (const f of g.fields) if (f.prop) out.add(f.prop);
