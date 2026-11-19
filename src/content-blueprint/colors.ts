@@ -28,6 +28,8 @@ export function colorInfo(bid: string | undefined | null): { name: string; rgb: 
 /** The loaded colour sets (folders of swatches) — null until first fetched. For the Stage B popup. */
 export function colorSets(): ColorSetData[] | null { return catalogue.snapshot().sets; }
 export function colorSetsStatus(): ColorCatalogueStatus { return catalogue.snapshot().status; }
+/** When the sets were read (epoch ms), or null. */
+export function colorSetsReadAt(): number | null { return catalogue.snapshot().fetchedAt; }
 
 /** Drop the overlay's cached colours — call on a profile switch / teardown so the next session can't
  *  tint with the previous workspace's bid→rgb map. */

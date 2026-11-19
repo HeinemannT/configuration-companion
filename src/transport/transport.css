@@ -431,3 +431,70 @@ details.tr-uploads > summary { color: var(--text-warn); }
 .tr-row:hover .tr-only, .tr-only:focus-visible { visibility: visible; }
 .tr-row.cov { background: color-mix(in srgb, var(--brand) 5%, transparent); }
 .tr-row .bdg.plain .tile { background: var(--border-strong); }
+
+/* ── Numeric IDs ─────────────────────────────────────────────────── */
+/* Find's tag that opens this tab. */
+button.tr-tag.go { border: 0; cursor: pointer; }
+button.tr-tag.go:hover { background: var(--layer-hover); color: var(--text-primary); }
+.ni { position: relative; }
+.ni-bar { flex-wrap: nowrap; padding-bottom: var(--space-2); }
+.ni-bar .tr-qf { flex: 1 1 120px; max-width: 320px; }
+.ni-read { color: var(--text-helper); font-size: var(--ui-fs-sm); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ni-note { color: var(--text-helper); }
+/* One grid for the header and the rows, so the columns stay at one x: tick, type, name, old ID, arrow, new ID, code.
+   The folder depth widens the first track only, and the new ID is a share of the row, so nothing right of the name moves. */
+.ni-cols, .ni-row { display: grid; grid-template-columns: calc(14px + var(--d, 0) * 12px) 50px minmax(0, 1fr) 46px 12px clamp(150px, 36%, 320px) 30px; column-gap: var(--space-3); align-items: center; padding: 0 var(--inset); }
+.ni-cols { flex: none; height: 28px; border-top: 1px solid var(--border-subtle); border-bottom: 1px solid var(--border-subtle); font-size: var(--ui-fs-sm); color: var(--text-helper); }
+.ni-c-obj { grid-column: 2 / 4; }
+.ni-c-id { grid-column: 4 / 6; }
+.ni-c-new { grid-column: 6; padding-left: 9px; }
+.ni-list { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; }
+.ni-row { height: 32px; font-size: var(--ui-fs-base); }
+.ni-row:hover { background: var(--layer-01); }
+.ni-ck { width: 14px; height: 14px; margin: 0; flex: none; accent-color: var(--brand); cursor: pointer; }
+.ni-row > .ni-ck { justify-self: end; }
+.ni-nmc { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.ni-nm { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ni-row.off .ni-nm { color: var(--text-secondary); }
+.ni-why { flex: none; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--ui-fs-sm); color: var(--text-error); }
+.ni-old { font: 400 var(--ui-fs-sm) var(--font-mono); color: var(--text-helper); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ni-to { width: 12px; height: 12px; color: var(--text-helper); }
+.ni-nid { width: 100%; min-width: 0; height: 24px; padding: 0 var(--space-2); border: 1px solid transparent; border-radius: var(--radius-2); background: none; color: var(--text-primary); font: 400 var(--ui-fs-sm) var(--font-mono); }
+.ni-row:hover .ni-nid { border-color: var(--border-subtle); background: var(--bg); }
+.ni-row .ni-nid:focus, .ni-row:hover .ni-nid:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 1px var(--brand); background: var(--bg); }
+.ni-row.off .ni-nid { color: var(--text-helper); }
+.ni-row .ni-nid.bad, .ni-row:hover .ni-nid.bad { border-color: var(--support-error); box-shadow: 0 0 0 1px var(--support-error); background: var(--support-error-bg); }
+.ni-code { display: inline-flex; align-items: center; justify-content: flex-end; gap: var(--space-1); color: var(--text-helper); font-size: var(--ui-fs-sm); font-variant-numeric: tabular-nums; cursor: help; }
+.ni-code .ic { width: 12px; height: 12px; }
+.ni-row .bdg { display: inline-flex; align-items: stretch; flex: none; height: 18px; overflow: hidden; border: 1px solid var(--border-subtle); border-radius: var(--radius-1); font-size: 10px; font-weight: 600; line-height: 1; color: var(--text-primary); }
+.ni-row .bdg .tile { display: flex; align-items: center; justify-content: center; width: 20px; background: var(--c, var(--layer-active)); color: #fff; }
+.ni-row .bdg .tile svg { display: block; width: 11px; height: 11px; }
+.ni-row .bdg .lbl { display: flex; align-items: center; justify-content: center; width: 30px; background: var(--layer-01); font-family: var(--font-mono); letter-spacing: .02em; }
+.ni-row .bdg.plain .tile { background: var(--border-strong); }
+/* Areas and folders: a tick and a caret with the name, nothing else. */
+.ni-fold { height: 28px; }
+.ni-fold:hover { background: none; }
+.ni-fold .ni-caret { grid-column: 2 / 8; display: flex; align-items: center; gap: var(--space-1); min-width: 0; height: 24px; padding: 0; text-align: left; color: var(--text-secondary); }
+.ni-fold .ni-caret .ui-disc-chev { margin: 0; }
+.ni-fold .ni-ft { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--text-primary); }
+.ni-fold .ni-fn { flex: none; color: var(--text-helper); font-variant-numeric: tabular-nums; }
+.ni-area { background: var(--layer-01); }
+.ni-bmp .ni-caret { grid-column: 2 / 8; }
+.ni-bmp .ni-ft { color: var(--text-secondary); }
+.ni-empty { margin: var(--space-4) var(--inset); }
+.ni mark { text-decoration-color: currentColor; }
+/* The confirmation: one dialog over the tab. */
+.ni-scrim { position: absolute; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; background: var(--scrim, rgba(22, 22, 22, .32)); }
+.ni-scrim[hidden] { display: none; }
+.ni-dlg { width: 460px; max-width: calc(100% - 32px); background: var(--bg); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: var(--dlg-shadow, 0 8px 24px rgba(20, 22, 28, .18)); }
+.ni-dlg h2 { margin: 0; padding: var(--space-4) var(--space-4) var(--space-3); font-size: 15px; line-height: 20px; font-weight: 600; }
+.ni-dlist { max-height: 224px; overflow-y: auto; scrollbar-width: thin; margin: 0 var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-2); }
+.ni-drow { display: grid; grid-template-columns: 50px 52px 12px minmax(0, 1fr); column-gap: var(--space-3); align-items: center; height: 32px; padding: 0 var(--space-3); border-top: 1px solid var(--border-subtle); }
+.ni-drow:first-child { border-top: 0; }
+.ni-drow .bdg { display: inline-flex; align-items: stretch; height: 18px; overflow: hidden; border: 1px solid var(--border-subtle); border-radius: var(--radius-1); font-size: 10px; font-weight: 600; line-height: 1; }
+.ni-drow .bdg .tile { display: flex; align-items: center; justify-content: center; width: 20px; background: var(--c, var(--layer-active)); color: #fff; }
+.ni-drow .bdg .tile svg { display: block; width: 11px; height: 11px; }
+.ni-drow .bdg .lbl { display: flex; align-items: center; justify-content: center; width: 30px; background: var(--layer-01); font-family: var(--font-mono); }
+.ni-drow .ni-new { font: 400 var(--ui-fs-sm) var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ni-dnote { margin: var(--space-3) var(--space-4) 0; font-size: var(--ui-fs-sm); color: var(--text-secondary); }
+.ni-dfoot { display: flex; justify-content: flex-end; gap: var(--space-2); padding: var(--space-4); }

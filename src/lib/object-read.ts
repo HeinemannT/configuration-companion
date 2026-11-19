@@ -14,6 +14,7 @@
 
 import { JavaEnum } from './java-serial';
 import { SCRIPT_PROPS } from './types';
+import { fileLinkPropsOf } from './file-link-props';
 
 export type ValueKind =
   | 'text' | 'html' | 'number' | 'boolean' | 'enum' | 'code' | 'time' | 'list' | 'unknown';
@@ -268,15 +269,28 @@ export function parseFullObject(input: unknown): FullObject | null {
     props[key] = toPropValue(key, value);
   }
   if (!type && props.typeKey) type = props.typeKey.text;
+  const references = parseReferences(raw.references);
+  noteFileLinks(type, props, references);
   return {
     rid,
     type,
     name: props.name?.text ?? '',
     businessId: props.id?.text ?? '',
     props,
-    references: parseReferences(raw.references),
+    references,
     overridden: parseStringSet(raw.overridden),
   };
+}
+
+/** A property that links to a file (the image of a button) is held in `props`
+ *  as the RID of the file, '' when there is none, so the window edits it like
+ *  any other property. The link itself is in `references`. */
+export function noteFileLinks(type: string, props: Record<string, PropValue>, references: Record<string, string[]>): void {
+  for (const prop of fileLinkPropsOf(type)) {
+    const own = props[prop]?.text ?? '';
+    const rid = references[prop]?.[0] ?? (/^-?\d+$/.test(own) ? own : '');
+    props[prop] = { kind: 'text', text: rid };
+  }
 }
 
 /** Build a FullObject from the Extended Code object-pane read. Used when the
@@ -307,6 +321,7 @@ export function fullObjectFromPane(pane: import('./types').ObjectPanePayload): F
     const rids = items.map(item => item.rid).filter(Boolean);
     if (rids.length) references[role] = rids;
   }
+  noteFileLinks(pane.instance.type, props, references);
   return {
     rid: pane.instance.rid,
     type: pane.instance.type,

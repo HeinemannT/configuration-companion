@@ -26,7 +26,7 @@ import { readIsolating } from '../../lib/batch-isolate';
 import { CodeRefCache } from '../../lib/code-ref-client';
 import type { RefResolution } from '../../lib/code-ref-resolve';
 import type { AttachedRow } from '../../lib/object-structure';
-import { editability, templateRidOf, WindowDraft, type CustomEntry } from './draft';
+import { baseText, editability, templateRidOf, WindowDraft, type CustomEntry } from './draft';
 import {
   customModels, encodeCustomValue, isEditKind, isReferenceKind, ownValue, REASON_TEXT, referenceRids, referenceValue, storedValue,
   type AllowedObjects, type Editability, type ListItem, type PropertyModel, type ReferenceKind, type TypePropertySchema,
@@ -71,6 +71,7 @@ export interface SummaryAnswer {
  *  and Container → ActionButton in the same call as the batch read. */
 const TEMPLATE_HINT = 'EnterpriseTemplate';
 import { changeInputs } from './changes';
+import { fileLinkText, isFileLinkProp } from '../../lib/file-link-props';
 import type { ChangeInput } from '../../lib/change-record';
 
 export interface ObjectWindowSource {
@@ -251,6 +252,8 @@ export class ObjectWindowController {
   private pins = new Set<string>();
   private targets = new Map<string, EditTarget>();
   private readonly draft = new WindowDraft();
+  /** Changes opened from outside (Point and tell), staged once their object has landed. */
+  private pendingDrafts: Array<{ rid: string; prop: string; value: string }> = [];
   private saving = false;
   private saveNote: string | undefined;
   private base: BaseModel | null = null;
@@ -699,6 +702,30 @@ export class ObjectWindowController {
     return out;
   }
 
+  /** Stage a change in the draft of `rid`, for the user to review and save here. It waits for the object to be read; a property the window
+   *  does not edit is said in the save note and nothing is staged. */
+  stageDraft(rid: string, prop: string, value: string): void {
+    this.pendingDrafts.push({ rid, prop, value });
+    if (this.flushDrafts()) this.refresh();
+  }
+
+  private flushDrafts(): boolean {
+    if (!this.pendingDrafts.length) return false;
+    const objects = this.objects();
+    const waiting: typeof this.pendingDrafts = [];
+    let staged = false;
+    for (const d of this.pendingDrafts) {
+      const obj = objects[d.rid];
+      if (!obj) { waiting.push(d); continue; }
+      staged = true;
+      if (!editability(obj, d.prop)) { this.saveNote = `${d.prop} cannot be changed in this window.`; continue; }
+      this.draft.set(d.rid, d.prop, d.value, baseText(obj.props[d.prop]));
+      this.saveNote = undefined;
+    }
+    this.pendingDrafts = waiting;
+    return staged;
+  }
+
   edit(rid: string, prop: string, value: string, base: string): void {
     if (this.saving) return;
     const obj = this.objects()[rid];
@@ -833,6 +860,14 @@ export class ObjectWindowController {
    *  A text that begins or ends with white space is quoted, so the
    *  difference to the same text without it shows. A reference value names
    *  its objects as "Name (ID)". */
+  /** A file link in words (the image of a button): its name and ID, or "No image". */
+  fileText(value: string): string {
+    return fileLinkText(value, rid => {
+      const s = this.summaries[rid];
+      return s ? (s.name && s.businessId && s.name !== s.businessId ? `${s.name} (${s.businessId})` : s.name || s.businessId) : undefined;
+    });
+  }
+
   private customText(rid: string, prop: string, value: string, objects: Record<string, FullObject>): string {
     const obj = objects[rid];
     const found = obj ? this.customModel(obj, prop) : null;
@@ -902,7 +937,8 @@ export class ObjectWindowController {
       return EXPRESSIONS[prop]?.label ?? propLabel(objects[rid] ?? { type: '' }, prop, this.labels);
     };
     const isCode = (rid: string, prop: string) => objects[rid]?.props[prop]?.kind === 'code';
-    const display = (rid: string, prop: string, value: string) => (isCustomKey(prop) && this.draft.get(rid, prop)?.kind === 'custom' ? this.customText(rid, prop, value, objects) : undefined);
+    const display = (rid: string, prop: string, value: string) => (isFileLinkProp(prop) ? this.fileText(value)
+      : isCustomKey(prop) && this.draft.get(rid, prop)?.kind === 'custom' ? this.customText(rid, prop, value, objects) : undefined);
     const review = buildReview(items, describe, label, isCode, display, (rid, prop) => this.draft.propErrorFor(rid, prop),
       (rid, prop) => (isCustomKey(prop) ? this.reviewDetail(rid, prop, objects) : undefined));
     if (this.options.confirmSave && !(await this.options.confirmSave(review))) return;
@@ -991,7 +1027,7 @@ export class ObjectWindowController {
     }
     // The change record: what was sent, with the opened value.
     const sent = changeInputs(results, fresh, objects, label,
-      (rid, prop, entry, value) => (entry.kind === 'custom' ? this.customText(rid, prop, value, objects) : value));
+      (rid, prop, entry, value) => (entry.kind === 'custom' ? this.customText(rid, prop, value, objects) : isFileLinkProp(prop) ? this.fileText(value) : value));
     if (sent.length) this.source.recordChanges?.(sent);
     this.saveNote = this.settle(results, fresh, heldNotes, label, rereadError);
     // The allowed objects depend on the object's data: a written object's
@@ -1214,6 +1250,7 @@ export class ObjectWindowController {
     // other. The service worker usually has the template under way already.
     const names = this.loadSummaries(payload);
     this.publish({ phase: 'ready', rid: entry.rid, hint: entry.hint, payload });
+    if (this.flushDrafts()) this.refresh();
     this.options.onRoot?.(payload.root);
     void this.loadPresented(payload);
     void names;

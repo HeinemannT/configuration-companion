@@ -20,6 +20,8 @@ import { accessDestinationForObject } from '../../lib/access-workspace/entry';
 import { hasStudio } from '../../lib/studio-mode';
 import { openColorPicker } from '../../lib/color-picker';
 import { WorkspaceColorCatalogue } from '../../lib/workspace-color-catalogue';
+import { createImageEditor, ImageCatalogue } from '../../lib/image-picker';
+import { ThumbCache } from '../../lib/colors-images/thumb-cache';
 import { ObjectWindowView, type InboundTarget, type PropertyChoices, type WindowHint } from './view';
 import type { FullObject } from '../../lib/object-read';
 import { templateRidOf } from './draft';
@@ -353,10 +355,21 @@ async function storedHint(rid: string): Promise<WindowHint | undefined> {
 /** Esc closes the window only when no edit, field, menu or dialog has it. */
 function escapeClosesWindow(e: KeyboardEvent | null, view: ObjectWindowView): boolean {
   if (!e || view.editing || isTypingIn(e)) return false;
-  return !document.querySelector('.crev-modal-backdrop, .cp-popover');
+  return !document.querySelector('.crev-modal-backdrop, .cp-popover, .ip-popover');
 }
 
 const colorCatalogue = new WorkspaceColorCatalogue();
+
+/** The image files, read when the picker of a button's image is first opened. */
+const imageCatalogue = new ImageCatalogue(
+  new ThumbCache(async rids => (await sendRequest<Msg<'IMAGE_BYTES_DATA'>>({ type: 'IMAGE_BYTES', rids }))?.items
+    ?? rids.map(rid => ({ rid, error: 'No answer from the extension' }))),
+  async () => {
+    const r = await sendRequest<Msg<'IMAGE_INDEX_DATA'>>({ type: 'IMAGE_INDEX' });
+    if (!r?.ok) throw new Error(r?.error ?? 'The image files could not be read');
+    return { folders: r.folders ?? [], files: r.files ?? [], ...(r.error ? { error: r.error } : {}) };
+  },
+);
 
 /** Back to the code search window that opened this one (it stays open
  *  behind, with its results and selection). */
@@ -423,6 +436,25 @@ function boot(): void {
     // mode for every other object).
     access: obj => sendFireForget({ type: 'OPEN_ACCESS_WORKSPACE', ...(environment ? { environment } : {}),
       destination: accessDestinationForObject({ rid: obj.rid, name: obj.name, type: obj.type, businessId: obj.businessId }) }),
+    imageEditor: spec => {
+      // The button's own background color: its ID is read when the picker opens (one small read), then its value from the color list.
+      let colorBid = spec.colorBid;
+      return createImageEditor({
+        ...spec,
+        catalogue: imageCatalogue,
+        background: () => (colorBid ? colorCatalogue.rgb(colorBid) : null),
+        beforeOpen: async () => {
+          if (!colorBid && spec.colorRid) {
+            const res = await sendRequestBounded<Msg<'OBJECT_SUMMARIES_DATA'>>({ type: 'READ_OBJECT_SUMMARIES', rids: [spec.colorRid] }, { timeoutMs: ENRICH_TIMEOUT_MS }).catch(() => undefined);
+            if (res?.type === 'OBJECT_SUMMARIES_DATA' && res.ok) colorBid = res.summaries.find(s => s.rid === spec.colorRid)?.businessId ?? '';
+          }
+          if (colorBid && colorCatalogue.rgb(colorBid) === null) {
+            await colorCatalogue.load(force => sendRequest<Msg<'COLOR_SETS_DATA'>>({ type: 'FETCH_COLOR_SETS', ...(force ? { force: true } : {}) }));
+          }
+        },
+      onOpenImages: () => sendFireForget({ type: 'OPEN_COLORS_IMAGES', tab: 'images' }),
+      });
+    },
     pickColor: (anchor, currentBid, apply) => openColorPicker({
       anchor, currentBid, catalogue: colorCatalogue,
       sendMessage: message => {
@@ -496,6 +528,12 @@ function boot(): void {
     // The Extended Code window's "Open": select the object in this tree, or
     // hang it under the calling object; otherwise open it as root.
     if (a.reveal && view.revealFromOutside(a.rid, a.from)) return;
+    // A change to review (Point and tell): staged in the draft once the object is read; the window's own review and save follow.
+    if (a.draft) {
+      controller.stageDraft(a.rid, a.draft.prop, a.draft.value);
+      if (a.rid !== controller.current) void controller.open(a.rid, { name: a.name, type: a.objectType, businessId: a.businessId });
+      return;
+    }
     // A code search match: land on its property and line.
     if (a.focus || a.origin) {
       void controller.land(a.rid, { name: a.name, type: a.objectType, businessId: a.businessId }, { ...(a.focus ? { focus: a.focus } : {}), ...(a.origin ? { origin: a.origin } : {}) });

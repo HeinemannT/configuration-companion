@@ -14,6 +14,7 @@
 
 import type { PaneProp } from './bmp-client';
 import { styleOptions } from './style-props';
+import type { ObjectFileProp } from './file-link-props';
 
 /** Built-in text fields the object window edits (the ones its table lists as
  * plain text). Written only through APPLY_OBJECT_CHANGES and not fetched by
@@ -27,10 +28,10 @@ export const OBJECT_TEXT_PROPS = [
 export type ObjectTextProp = typeof OBJECT_TEXT_PROPS[number];
 export const OBJECT_TEXT_PROPS_SET: ReadonlySet<string> = new Set(OBJECT_TEXT_PROPS);
 
-export type EditorKind = 'color' | 'number' | 'enum' | 'boolean' | 'slider' | 'text' | 'string' | 'property';
+export type EditorKind = 'color' | 'image' | 'number' | 'enum' | 'boolean' | 'slider' | 'text' | 'string' | 'property';
 
 export interface PropDef {
-  prop: PaneProp | ObjectTextProp;
+  prop: PaneProp | ObjectTextProp | ObjectFileProp;
   label: string;
   kind: EditorKind;
   /** Enum options where applicable. */
@@ -238,6 +239,14 @@ export const PROP_GROUPS: Array<{ title: string; props: PropDef[] }> = [
     props: [
       { prop: 'headerColor', label: 'Header', kind: 'color', availableOn: APPEARANCE_TYPES },
       { prop: 'fontColor',   label: 'Font',   kind: 'color', availableOn: APPEARANCE_TYPES },
+    ],
+  },
+  {
+    // The image of a button or an image view: a link to a FileResource, picked
+    // from the workspace's image files (lib/file-link-props.ts), never typed.
+    title: 'Image',
+    props: [
+      { prop: 'imageFile', label: 'Image file', kind: 'image', availableOn: new Set(['ActionButton', 'ImageView']) },
     ],
   },
   {

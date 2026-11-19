@@ -48,6 +48,34 @@ describe('Transport window registration', () => {
     }));
   });
 
+  it('the launcher hands a tab to the window, also when it is open (a frame activation)', async () => {
+    const sendMessage = vi.fn(async () => ({ type: 'FRAME_MOUNT_RESULT', disposition: 'activated' }));
+    (globalThis as unknown as { chrome: unknown }).chrome = {
+      runtime: { getURL: (p: string) => `chrome-extension://test/${p}` },
+      tabs: { get: vi.fn(async (id: number) => ({ id })), query: vi.fn(async () => [{ id: 4 }]), sendMessage },
+    };
+    const { openTransportWindow } = await import('../../lib/transport-launcher');
+    expect(await openTransportWindow({ windowId: 2 }, 'numeric')).toBe('activated');
+    expect(sendMessage).toHaveBeenCalledWith(4, expect.objectContaining({ resourceKey: 'transport:window', activation: { type: 'transport', tab: 'numeric' } }));
+    sendMessage.mockClear();
+    await openTransportWindow({ windowId: 2 });
+    expect(sendMessage.mock.calls[0]).toEqual([4, expect.not.objectContaining({ activation: expect.anything() })]);
+    // The side panel asks for the tab, the window asks for the rest.
+    expect(read('src/sidepanel/utilities.ts')).toContain("message: { type: 'OPEN_TRANSPORT', tab: 'numeric' }");
+    expect(read('src/transport/transport.ts')).toContain("m.activation?.type === 'transport'");
+    expect(read('src/transport/transport.ts')).toContain("postToParent({ type: 'CREV_FRAME_READY' })");
+  });
+
+  it('the numeric ID reads and the change are registered and accepted from the window frame only', async () => {
+    const { getHandler } = await import('../../lib/handler-registry');
+    await import('../../lib/handlers/transport');
+    const { MESSAGE_ACCESS } = await import('../../lib/message-access');
+    for (const type of ['NUMERIC_IDS_SCAN', 'NUMERIC_IDS_ORIGINS', 'NUMERIC_IDS_RUN']) {
+      expect(getHandler(type), type).toBeTypeOf('function');
+      expect(MESSAGE_ACCESS[type], type).toEqual(['frame']);
+    }
+  });
+
   it('the targets and the part run are registered and accepted from the window frame only', async () => {
     const { getHandler } = await import('../../lib/handler-registry');
     await import('../../lib/handlers/transport');
@@ -65,9 +93,10 @@ describe('Transport window registration', () => {
     const { MESSAGE_ACCESS } = await import('../../lib/message-access');
     expect(MESSAGE_ACCESS.OPEN_TRANSPORT).toEqual([]);
     expect(read('src/lib/message-router.ts')).toContain("import './handlers/transport-window';");
-    const panel = read('src/sidepanel/sidepanel.ts');
-    expect(panel).toContain("iconBtn('open-transport', 'i-share', 'Transport (beta)')");
-    expect(panel).toContain("sendMessage({ type: 'OPEN_TRANSPORT' })");
+    // The panel's Utilities tab opens it (its own drawing; the share graph stays the diagram widget's).
+    const utilities = read('src/sidepanel/utilities.ts');
+    expect(utilities).toContain("icon: 's-transport', message: { type: 'OPEN_TRANSPORT' }");
+    expect(read('src/sidepanel/icons.ts')).toContain('id="s-transport"');
     expect(ICON_SPRITE).toContain('id="i-share"');
   });
 });

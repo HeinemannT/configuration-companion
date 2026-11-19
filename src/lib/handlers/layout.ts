@@ -6,7 +6,7 @@
 import { register } from '../handler-registry';
 import { boundCtxForTab, ctxOf, getCtx } from '../sw-context';
 import type { SwContext } from '../sw-context';
-import { loadPage, applyPage, loadBlastRadius, loadFlowRefs, loadFlowSettings, loadFlowRefChildren, preflightPortableIds } from '../layout-service';
+import { loadPage, loadPageStructure, applyPage, loadBlastRadius, loadFlowRefs, loadFlowSettings, loadFlowRefChildren, preflightPortableIds } from '../layout-service';
 import { ensureContentScript, ensureBlueprintScript } from '../tab-awareness';
 import { toggleInspect } from './inspect';
 import { reportFrameOpenFailure } from '../frame-open-failure';
@@ -15,6 +15,7 @@ import type { PlanNote } from '../layout/types';
 import type { ApplyResult } from '../layout/sync';
 import type { ActivityMeta } from '../types';
 import { environmentMismatchError, environmentToken } from '../environment';
+import { linkMap } from '../point-tell/links';
 
 const BLUEPRINT_VERSION_ERROR = 'Blueprint requires BMP 5.6.3 or newer.';
 
@@ -257,10 +258,23 @@ register('LAYOUT_LOAD', async (msg, respond, meta) => {
       type: 'LAYOUT_LOAD_RESULT', ok: true, env: environment,
       ctx: res.ctx, model: res.load.model, baseline: res.load.baseline, orphans: res.load.orphans,
     });
-    ctx.logActivity('success', `Opened Blueprint for ${res.ctx.pageId}`, [`${res.ctx.pageClass} ${res.ctx.pageId}${res.ctx.resultOnly ? ' (result-only, no tabset)' : ''}`, `EC calls: ${timings.join(' | ')}`].join('\n'), { category: 'system', action: 'blueprint-load', durationMs: Date.now() - t0 });
+    ctx.logActivity('success', msg.for === 'point-tell' ? `Read the layout of ${res.ctx.pageId} for Point and tell` : `Opened Blueprint for ${res.ctx.pageId}`, [`${res.ctx.pageClass} ${res.ctx.pageId}${res.ctx.resultOnly ? ' (result-only, no tabset)' : ''}`, `EC calls: ${timings.join(' | ')}`].join('\n'), { category: 'system', action: 'blueprint-load', durationMs: Date.now() - t0 });
   } catch (e) {
     respond({ type: 'LAYOUT_LOAD_RESULT', ok: false, error: errorMessage(e) });
     ctx.logActivity('error', 'Blueprint load threw', e instanceof Error ? e.message : String(e));
+  }
+});
+
+// Point and tell on a templated page: the instance's widgets and the template widgets they stand for.
+register('LAYOUT_LINKS', async (msg, respond, meta) => {
+  const ctx = ctxOf(meta);
+  if (!ctx.client) { respond({ type: 'LAYOUT_LINKS_RESULT', ok: false, error: 'Not connected' }); return; }
+  try {
+    const res = await loadPageStructure(ctx.client, msg.rid);
+    if (!res) { respond({ type: 'LAYOUT_LINKS_RESULT', ok: false, error: 'Not an editable page (no tabset resolved)' }); return; }
+    respond({ type: 'LAYOUT_LINKS_RESULT', ok: true, links: linkMap(res.load.model) });
+  } catch (e) {
+    respond({ type: 'LAYOUT_LINKS_RESULT', ok: false, error: errorMessage(e) });
   }
 });
 

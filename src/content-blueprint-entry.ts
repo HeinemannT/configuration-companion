@@ -18,10 +18,11 @@
  *     event on `document` could be forged by the page). Commands issued before this file publishes the
  *     function are buffered in `window.__crevBpPendingCmds`, then drained in order on initialization.
  */
-import { enableBlueprint, disableBlueprint, setBlueprintRidResolver, setBlueprintResumePrefer, selectBlueprintRid } from './content-blueprint';
+import { enableBlueprint, disableBlueprint, setBlueprintRidResolver, setBlueprintResumePrefer, selectBlueprintRid, isBlueprintActive } from './content-blueprint';
 import { requestExit } from './content-blueprint/actions';
 import { resetColorSets } from './content-blueprint/colors';
 import { resetFlowRefsCache } from './content-blueprint/service';
+import { enablePointTell, disablePointTell, startNewPage } from './content-pointtell/index';
 import { log } from './lib/logger';
 
 type BlueprintCmd =
@@ -29,7 +30,10 @@ type BlueprintCmd =
   | { cmd: 'disable' }
   | { cmd: 'resetOverlayCaches' }
   | { cmd: 'setResumePrefer'; prefer: 'template' | 'instance' }
-  | { cmd: 'select'; rid: string };
+  | { cmd: 'select'; rid: string }
+  | { cmd: 'pointTellEnable' }
+  | { cmd: 'pointTellNewPage' }
+  | { cmd: 'pointTellDisable' };
 
 declare global {
   interface Window {
@@ -71,7 +75,7 @@ declare global {
 function parseBlueprintCmd(detail: unknown): BlueprintCmd | null {
   if (typeof detail !== 'object' || detail === null) return null;
   const d = detail as Record<string, unknown>;
-  if (d.cmd === 'enable' || d.cmd === 'disable' || d.cmd === 'resetOverlayCaches') {
+  if (d.cmd === 'enable' || d.cmd === 'disable' || d.cmd === 'resetOverlayCaches' || d.cmd === 'pointTellEnable' || d.cmd === 'pointTellNewPage' || d.cmd === 'pointTellDisable') {
     return { cmd: d.cmd };
   }
   if (d.cmd === 'setResumePrefer' && (d.prefer === 'template' || d.prefer === 'instance')) {
@@ -85,11 +89,15 @@ function parseBlueprintCmd(detail: unknown): BlueprintCmd | null {
 
 function handleCmd(detail: BlueprintCmd): void {
   switch (detail.cmd) {
-    case 'enable': enableBlueprint(); break;
+    // Blueprint and Point and tell never share a page: whichever turns on first sends the other away.
+    case 'enable': disablePointTell(); enableBlueprint(); break;
     case 'disable': disableBlueprint(); break;
     case 'resetOverlayCaches': resetColorSets(); resetFlowRefsCache(); break;
     case 'setResumePrefer': setBlueprintResumePrefer(detail.prefer); break;
     case 'select': selectBlueprintRid(detail.rid); break;
+    case 'pointTellEnable': if (!isBlueprintActive()) enablePointTell(); break;
+    case 'pointTellNewPage': if (!isBlueprintActive()) startNewPage(); break;
+    case 'pointTellDisable': disablePointTell(); break;
   }
 }
 
@@ -104,6 +112,7 @@ const runCmd = (detail: unknown): void => {
 function teardown(): void {
   if (window.__crevBpCmd === runCmd) window.__crevBpCmd = undefined;
   disableBlueprint();
+  disablePointTell();
 }
 
 // Re-injection guard — see window.__crevBpEntryLoaded above.

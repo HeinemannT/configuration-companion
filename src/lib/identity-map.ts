@@ -49,3 +49,9 @@ export function sameActorUser(portal: EffectiveActor, command: EffectiveActor): 
 export function withSameUser(identity: Omit<IdentityMap, 'sameUser'>): IdentityMap {
   return { ...identity, sameUser: sameActorUser(identity.portal, identity.command) };
 }
+
+/** The user a connection runs commands as, or '' when it is not known. */
+export function commandUserOf(state: { identities?: { command?: { status?: string; user?: string | null } } } | null | undefined): string {
+  const actor = state?.identities?.command;
+  return actor?.status === 'connected' ? actor.user ?? '' : '';
+}

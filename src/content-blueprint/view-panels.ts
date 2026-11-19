@@ -28,7 +28,8 @@ import type { ApplyReview } from './apply-session';
 import { currentCommandActor, onCommandActorChange, readCommandActor } from '../lib/command-actor';
 import { setIcon, mkBtn, mkIconBtn, mkUserBtn, sp } from './geometry';
 import { isUserAction } from '../lib/trusted-event';
-import { closePreview, confirmApply, revertNode, undo, redo, toggleTray, togglePeek, toggleSettings, closeSettings, discard, armDiscard, disarmDiscard, openApplyPreview, exitBlueprint, setMode, dismissApplyOutcome } from './actions';
+import { openRoute } from '../lib/point-tell/open-route';
+import { closePreview, confirmApply, discardNote, revertNode, undo, redo, toggleTray, togglePeek, toggleSettings, closeSettings, discard, armDiscard, disarmDiscard, openApplyPreview, exitBlueprint, setMode, dismissApplyOutcome } from './actions';
 import { setEditTarget } from '../content-blueprint'; // runtime-only (click handler) — no init-time cycle
 import { setNativeEditPageSuppressed } from './edit-page-native';
 import {
@@ -463,7 +464,7 @@ export function trayPanel(base: LModel, m: LModel): HTMLElement {
     planStepId(step),
     step.kind === 'flowReorder' || step.kind === 'flowDelete' ? step.parentId : planStepId(step),
   ]));
-  rows.forEach((note, i) => {
+  const addRow = (note: PlanNote, i: number, into: HTMLElement): void => {
     const id = note.id!;
     const row = planRow(note, false);
     row.insertBefore(markerEl(i + 1, note.verb), row.firstChild);
@@ -471,8 +472,60 @@ export function trayPanel(base: LModel, m: LModel): HTMLElement {
     x.setAttribute('aria-label', `Discard change ${i + 1}`);
     x.addEventListener('mousedown', (e) => { e.stopPropagation(); revertNode(revertTarget.get(id) ?? id); });
     row.appendChild(x);
-    wrap.appendChild(row);
+    into.appendChild(row);
+  };
+  // Changes staged from Point and tell notes are grouped by note, each group with what the answer left out.
+  const reports = bp.noteReports;
+  if (!reports || !rows.some(r => bp.noteOrigins.has(r.id!))) {
+    rows.forEach((note, i) => addRow(note, i, wrap));
+    return wrap;
+  }
+  const byNote = new Map<number, Array<{ note: PlanNote; i: number }>>();
+  rows.forEach((note, i) => {
+    const origin = bp.noteOrigins.get(note.id!) ?? 0;
+    byNote.set(origin, [...(byNote.get(origin) ?? []), { note, i }]);
   });
+  const head = (num: number | null, text: string, discardN?: number): HTMLElement => {
+    const h = document.createElement('div'); h.className = 'bp-tray-note';
+    const n = document.createElement('span'); n.className = 'bp-note-num'; n.textContent = num === null ? '' : String(num);
+    if (num === null) n.hidden = true;
+    const t = document.createElement('span'); t.className = 'bp-note-text'; t.textContent = text; t.title = text;
+    h.append(n, t);
+    if (discardN !== undefined) {
+      const x = document.createElement('button'); x.className = 'bp-note-x'; x.textContent = 'Discard note'; x.title = 'Take back what this note staged';
+      x.addEventListener('mousedown', (e) => { e.stopPropagation(); discardNote(discardN); });
+      h.appendChild(x);
+    }
+    return h;
+  };
+  const skip = (text: string): HTMLElement => { const s = document.createElement('div'); s.className = 'bp-tray-skip'; s.textContent = text; return s; };
+  for (const rep of reports) {
+    const mine = byNote.get(rep.n) ?? [];
+    const left = rep.results.filter(r => r.verdict !== 'ok');
+    if (!mine.length && !rep.results.length && !rep.questions.length && !rep.cannot.length) continue;
+    wrap.appendChild(head(rep.n || null, rep.text ? `“${rep.text}”` : 'No note', mine.length ? rep.n : undefined));
+    for (const { note, i } of mine) addRow(note, i, wrap);
+    // Staged, but the tray shows one row per object and the object's row is the earlier note's: say what this note staged.
+    if (!mine.length) for (const r of rep.results) if (r.verdict === 'ok') wrap.appendChild(skip(r.text));
+    for (const r of left) {
+      const line = skip(r.reason ? `${r.text}: ${r.reason}` : r.text);
+      const route = r.route;
+      const rid = route && bp.baseline ? findNode(bp.baseline, route.id)?.node.rid : undefined;
+      if (route && rid) {
+        const b = document.createElement('button'); b.className = 'bp-note-x'; b.textContent = route.kind === 'code' ? 'Review in editor' : 'Review in object window';
+        b.addEventListener('mousedown', (e) => { e.stopPropagation(); if (isUserAction(e)) openRoute(rid, route); });
+        line.appendChild(b);
+      }
+      wrap.appendChild(line);
+    }
+    for (const q of rep.questions) wrap.appendChild(skip(`Question: ${q}`));
+    for (const c of rep.cannot) wrap.appendChild(skip(`Cannot: ${c}`));
+  }
+  const other = byNote.get(0);
+  if (other?.length) {
+    wrap.appendChild(head(null, 'Other changes'));
+    for (const { note, i } of other) addRow(note, i, wrap);
+  }
   return wrap;
 }
 

@@ -22,6 +22,7 @@ interface Seed { area: 'local' | 'session'; key: string; value: unknown; afterDe
 const SEEDS: Seed[] = [
   { area: 'local', key: 'crev_settings', value: { profiles: [] }, afterDelete: 'kept', afterReset: 'kept' },
   { area: 'local', key: 'crev_settings_backup', value: { profiles: [] }, afterDelete: 'kept', afterReset: 'kept' },
+  { area: 'local', key: 'crev_pt_voice', value: { on: true }, afterDelete: 'kept', afterReset: 'kept' },
   ...['cache', 'cache_date', 'history', 'script_history'].flatMap((s): Seed[] => [
     { area: 'local', key: `crev_p1_${s}`, value: [1], afterDelete: 'removed', afterReset: 'removed' },
     { area: 'local', key: `crev_p2_${s}`, value: [2], afterDelete: 'kept', afterReset: 'removed' },
@@ -40,6 +41,8 @@ const SEEDS: Seed[] = [
   { area: 'local', key: 'crev_objectview_ctx_1000003', value: { name: 'no environment', savedAt: NOW }, afterDelete: 'removed', afterReset: 'removed' },
   { area: 'local', key: 'crev_color_sets_v2', value: { [ENV1]: { version: 2, fetchedAt: NOW, sets: [] }, [ENV2]: { version: 2, fetchedAt: NOW, sets: [] } },
     afterDelete: 'rewritten', kept: { [ENV2]: { version: 2, fetchedAt: NOW, sets: [] } }, afterReset: 'removed' },
+  { area: 'local', key: 'crev_image_index_v1', value: { [ENV1]: { version: 1, fetchedAt: NOW, index: { folders: [], files: [] } }, [ENV2]: { version: 1, fetchedAt: NOW, index: { folders: [], files: [] } } },
+    afterDelete: 'rewritten', kept: { [ENV2]: { version: 1, fetchedAt: NOW, index: { folders: [], files: [] } } }, afterReset: 'removed' },
   { area: 'local', key: 'crev_schema_cache_v2', value: {
     [`${ENV1}::risk`]: { serverId: ENV1, className: 'Risk', fetchedAt: NOW, props: [] },
     [`${ENV2}::risk`]: { serverId: ENV2, className: 'Risk', fetchedAt: NOW, props: [] },
@@ -57,6 +60,10 @@ const SEEDS: Seed[] = [
   { area: 'local', key: `crev_transport_draft:${ENV2}`, value: { v: 1 }, afterDelete: 'kept', afterReset: 'removed' },
   { area: 'local', key: `crev_transport_undo:${ENV1}|${ENV2}`, value: { v: 1 }, afterDelete: 'removed', afterReset: 'removed' },
   { area: 'local', key: `crev_transport_undo:${ENV2}|${ENV1}`, value: { v: 1 }, afterDelete: 'kept', afterReset: 'removed' },
+  { area: 'local', key: `crev_replace_undo:${ENV1}`, value: { v: 1 }, afterDelete: 'removed', afterReset: 'removed' },
+  { area: 'local', key: `crev_replace_undo:${ENV2}`, value: { v: 1 }, afterDelete: 'kept', afterReset: 'removed' },
+  { area: 'local', key: `crev_numeric_ids_undo:${ENV1}`, value: { v: 1 }, afterDelete: 'removed', afterReset: 'removed' },
+  { area: 'local', key: `crev_numeric_ids_undo:${ENV2}`, value: { v: 1 }, afterDelete: 'kept', afterReset: 'removed' },
   { area: 'local', key: 'crev_access_mode_recents', value: { p1: ['1000001'], p2: ['1000002'] },
     afterDelete: 'rewritten', kept: { p2: ['1000002'] }, afterReset: 'removed' },
   { area: 'local', key: 'crev_overlay_bounds_editor', value: { left: 1, top: 1, width: 9, height: 9 }, afterDelete: 'kept', afterReset: 'removed' },
@@ -68,6 +75,7 @@ const SEEDS: Seed[] = [
     { area: 'session', key: `${prefix}one`, value: { environment: ENV1 }, afterDelete: 'removed', afterReset: 'removed' },
     { area: 'session', key: `${prefix}two`, value: { environment: ENV2 }, afterDelete: 'kept', afterReset: 'removed' },
   ]),
+  { area: 'session', key: 'crev_menus_ready', value: true, afterDelete: 'kept', afterReset: 'removed' },
   { area: 'session', key: 'crev_access_mode_subjects', value: { environment: ENV1, subjects: [] }, afterDelete: 'removed', afterReset: 'removed' },
   { area: 'session', key: `crev_access_mode_subject:${ENV1}`, value: { rid: '1' }, afterDelete: 'removed', afterReset: 'removed' },
   { area: 'session', key: `crev_access_mode_subject:${ENV2}`, value: { rid: '2' }, afterDelete: 'kept', afterReset: 'removed' },

@@ -47,6 +47,7 @@ import { copyWithFeedback } from '../lib/copy-feedback';
 import { cancelledText, isQuietEnd, NO_ANSWER_TEXT, startWatchdog, STATUS_TIMEOUT_MS, STOPPED_TEXT, type Watchdog } from './search-lifecycle';
 import { attrs, btn, el, icon, type Kid } from '../lib/dom';
 import { startKeepAlive, type KeepAlive } from '../lib/keep-alive';
+import { createReplaceTab } from './replace-tab';
 
 installCloseHandshake();
 
@@ -85,7 +86,7 @@ let recentsProfile: string | null = null;
 const recentsKey = (): string | null => recentsProfile ? `${RECENTS_PREFIX}:${recentsProfile}` : null;
 const WIN_ID = Math.random().toString(36).slice(2);
 
-let mode: 'text' | 'refs' = 'text';
+let mode: 'text' | 'refs' | 'replace' = 'text';
 let query = '';
 const opts = { caseSensitive: true, wholeWord: false, regex: false };
 /** Where, Kind of code (properties) and Object type (types); empty lists
@@ -168,6 +169,10 @@ function adoptEnvironment(env: string): void {
 /** Order of the objects (null: the mode's default). */
 let sortBy: CodeSearchSort | null = null;
 const currentSort = (): CodeSearchSort => sortBy ?? (mode === 'refs' ? 'location' : 'matches');
+/** The Replace tab changes with the query, the options, the filters and the copy. */
+/** The mode of the results shown (the Replace tab has none). */
+const searchMode = (): 'text' | 'refs' => (mode === 'refs' ? 'refs' : 'text');
+const refreshReplace = (): void => { if (mode === 'replace') rep.invalidate(); };
 
 function loadRecents(): RecentSearch[] {
   const key = recentsKey();
@@ -226,10 +231,11 @@ const fieldSlot = el('div');
 const progSlot = el('div');
 const scopeSlot = el('div');
 const pickSlot = el('div');
+const repSlot = el('div');
 /** What is wrong with the pattern, at the field (regex mode). */
 const fieldMsg = attrs(el('div', 'cs-field-err'), { id: 'cs-field-err', role: 'alert' });
 fieldMsg.hidden = true;
-const qaEl = el('div', 'cs-qa', modesSlot, fieldSlot, fieldMsg, progSlot, scopeSlot, pickSlot);
+const qaEl = el('div', 'cs-qa', modesSlot, fieldSlot, fieldMsg, repSlot, progSlot, scopeSlot, pickSlot);
 const sumEl = el('div', 'cs-sum');
 const resEl = attrs(el('div', 'cs-res'), { id: 'cs-results', role: 'tree', 'aria-label': 'Results', tabindex: '-1' });
 const statusEl = el('footer', 'cs-status');
@@ -239,6 +245,7 @@ root.append(shell);
 let typeTimer = 0;
 input.addEventListener('input', () => {
   query = input.value;
+  if (mode === 'replace') { rep.leaveResult(); renderQa(); rep.invalidate(); return; }
   if (run) stale = true;
   patternError = null;
   renderQa();
@@ -255,12 +262,14 @@ for (const [k, b] of Object.entries(toggles)) attrs(b, { 'aria-pressed': String(
 
 function setOpt(k: keyof typeof opts): void {
   opts[k] = !opts[k];
+  if (mode === 'replace') { rep.leaveResult(); renderQa(); rep.invalidate(); return; }
   if (query.trim() || mode === 'refs') void search(); else renderQa();
 }
 
 function clearQuery(): void {
   query = '';
   input.value = '';
+  if (mode === 'replace') { rep.leaveResult(); rep.invalidate(); renderAll(); return; }
   run?.controller?.abort();
   run?.watchdog?.stop();
   if (run?.source === 'server') sendFireForget({ type: 'CODE_SEARCH_STOP', id: run.id, windowId: WIN_ID });
@@ -325,6 +334,8 @@ function onStatus(s: CodeIndexStatus): void {
   if (prev && prev.environment !== s.environment) snapshot = null;
   const nowUsable = indexUsable();
   const changed = !!prev && snapshotKey(prev) !== snapshotKey(s);
+  rep.environmentKnown();
+  if (mode === 'replace' && (changed || !prev || prev.state !== s.state)) rep.invalidate();
   // The index became ready while server results are shown, or the index
   // changed under index results: the same query runs again (selection and
   // scroll position are kept).
@@ -353,6 +364,8 @@ function holdWorker(): void {
 // ── search ────────────────────────────────────────────────────────
 
 function request(): CodeSearchRequest | null {
+  // The Replace tab plans from the copy by itself (replace-tab.ts).
+  if (mode === 'replace') return null;
   const base = {
     caseSensitive: opts.caseSensitive, wholeWord: opts.wholeWord, regex: opts.regex, sort: currentSort(), fold,
     ...(filters.where.length && !scope ? { where: [...filters.where] } : {}),
@@ -476,14 +489,14 @@ function finish(cur: Run, outcome: CodeSearchOutcome): void {
     selected = rows[0]?.key ?? null;
   }
   const rec: RecentSearch = {
-    mode, query: mode === 'refs' ? (target?.businessId || target?.rid || '') : query, ...(mode === 'refs' && target ? { target } : {}),
+    mode: searchMode(), query: mode === 'refs' ? (target?.businessId || target?.rid || '') : query, ...(mode === 'refs' && target ? { target } : {}),
     ...opts, types: mode === 'text' ? [...filters.types] : [], props: mode === 'text' ? [...filters.props] : [],
     ...(filters.where.length && !scope ? { where: filters.where.map(k => ({ key: k, label: whereLabel(k) })) } : {}),
     ...(scope ? { scope: scope.obj } : {}), matches: outcome.matches, objects: outcome.matchedObjects,
   };
   recents = addRecent(recents, rec);
   saveRecents();
-  live.textContent = outcome.matchedObjects ? `${summaryText(outcome, mode)}.` : 'No matches.';
+  live.textContent = outcome.matchedObjects ? `${summaryText(outcome, searchMode())}.` : 'No matches.';
   renderAll();
 }
 
@@ -515,7 +528,7 @@ function open(key: string, inEditor = false): void {
   }
   openObject(rid, hit, {
     focus: { prop, line },
-    origin: { kind: 'search', label: run?.label ?? labelOf(), mode, ...(mode === 'text' ? { query } : {}) },
+    origin: { kind: 'search', label: run?.label ?? labelOf(), mode: searchMode(), ...(mode === 'text' ? { query } : {}) },
   });
 }
 
@@ -580,6 +593,26 @@ escLayers.register({ kind: 'input', name: 'running-search', isOpen: () => !!run?
 escLayers.register({ kind: 'menu', name: 'menus', isOpen: () => !!openMenu || !!picking, close: () => { closeMenu(); closePick(); renderQa(); } });
 escLayers.listen(document);
 document.addEventListener('keydown', onWindowKey);
+
+// The Replace tab (replace-tab.ts) works on the window's copy of the code.
+const rep = createReplaceTab({
+  objects: () => snapshot?.objects ?? null,
+  load: () => ensureSnapshot(),
+  copyReady: () => status?.state === 'ready' || status?.state === 'refreshing',
+  environment: () => ownEnvironment ?? status?.environment,
+  blocked: () => environmentWatch.blocked(),
+  query: () => query,
+  options: () => opts,
+  filters: () => filters,
+  scopeRids: () => scope?.rids,
+  tile,
+  typeLabel,
+  render: renderAll,
+  openEditor: (rid, prop, line) => sendFireForget({ type: 'OPEN_EDITOR', rid, property: prop, ...(line ? { scrollToLine: line } : {}) }),
+  keepCopy: () => { setMode('text'); instantOpen = true; void loadEstimate(); renderAll(); },
+  announce: text => { live.textContent = text; },
+  escape: layer => { escLayers.register(layer); },
+});
 installCheatSheetKey(() => ({ window: 'codesearch', title: 'Code search: keyboard shortcuts' }));
 
 function updateSelection(): void {
@@ -607,15 +640,18 @@ function chip(label: Kid | Kid[], on: boolean, onClick: () => void, title?: stri
 function renderQa(): void {
   // Only when it differs: setting the value moves the caret.
   if (input.value !== query) input.value = query;
-  input.placeholder = mode === 'refs' ? '' : 'Search Extended Code';
+  input.placeholder = mode === 'refs' ? '' : mode === 'replace' ? 'Find' : 'Search Extended Code';
+  shell.dataset.mode = mode;
   for (const [k, b] of Object.entries(toggles)) {
     const on = opts[k as keyof typeof opts];
     b.classList.toggle('on', on);
     b.setAttribute('aria-pressed', String(on));
   }
-  clearBtn.hidden = !query;
+  clearBtn.hidden = !query || mode === 'replace';
+  goBtn.hidden = mode === 'replace';
   // The pattern problem shows only while the pattern is still the one searched.
-  if (patternError && !(mode === 'text' && opts.regex)) patternError = null;
+  if (mode === 'replace') patternError = opts.regex && query.trim() ? patternProblem(query) : null;
+  else if (patternError && !(mode === 'text' && opts.regex)) patternError = null;
   fieldMsg.hidden = !patternError;
   fieldMsg.replaceChildren(...(patternError ? [icon('i-warn', 'ic-sm'), el('span', '', el('b', '', 'Not a valid pattern. '), patternError)] : []));
   if (patternError) attrs(input, { 'aria-invalid': 'true', 'aria-describedby': 'cs-field-err' });
@@ -626,7 +662,7 @@ function renderQa(): void {
   goBtn.className = searching ? 'ui-btn cs-go' : 'ui-btn primary cs-go';
   const modes = el('div', 'cs-modes');
   attrs(modes, { role: 'tablist', 'aria-label': 'Search mode' });
-  for (const [m, label] of [['text', 'Find text'], ['refs', 'Used in code']] as const) {
+  for (const [m, label] of [['text', 'Find text'], ['refs', 'Used in code'], ['replace', 'Replace']] as const) {
     const b = btn(m === mode ? 'on' : '', undefined, () => setMode(m), label);
     attrs(b, { role: 'tab', 'aria-selected': String(m === mode) });
     modes.append(b);
@@ -634,8 +670,10 @@ function renderQa(): void {
   // The query field is never moved in the DOM (moving it drops focus and
   // caret): each part has its own slot, and only changed slots are replaced.
   modesSlot.replaceChildren(modes);
-  if (mode === 'text') { if (fieldSlot.firstChild !== fieldEl) fieldSlot.replaceChildren(fieldEl); }
+  if (mode !== 'refs') { if (fieldSlot.firstChild !== fieldEl) fieldSlot.replaceChildren(fieldEl); }
   else fieldSlot.replaceChildren(targetRow());
+  if (mode === 'replace') { if (repSlot.firstChild !== rep.field) repSlot.replaceChildren(rep.field); }
+  else repSlot.replaceChildren();
   if (searching || status?.state === 'building' || status?.state === 'refreshing') {
     const p = progressFraction();
     progSlot.replaceChildren(attrs(el('div', 'cs-prog', Object.assign(el('i'), { style: `width:${Math.round(p * 100)}%` }) as HTMLElement), { role: 'progressbar', 'aria-label': 'Search progress', 'aria-valuenow': String(Math.round(p * 100)) }));
@@ -673,18 +711,19 @@ function progressFraction(): number {
  *  failed picker query). */
 const runsByMode: Record<'text' | 'refs', Run | null> = { text: null, refs: null };
 
-function setMode(m: 'text' | 'refs'): void {
+function setMode(m: 'text' | 'refs' | 'replace'): void {
   if (mode === m) return;
   // A search under way belongs to the mode it was started in.
   if (run?.searching) stop();
-  runsByMode[mode] = run;
+  if (mode !== 'replace') runsByMode[mode] = run;
   mode = m;
-  run = runsByMode[m];
+  run = m === 'replace' ? null : runsByMode[m];
   stale = false;
   selected = null;
   if (m === 'refs' && !target && context) target = context;
   renderAll();
-  if (m === 'refs' && target && !run) void search();
+  if (m === 'replace') { rep.invalidate(); input.focus(); }
+  else if (m === 'refs' && target && !run) void search();
   else if (m === 'text') input.focus();
 }
 
@@ -705,7 +744,7 @@ function scopeRow(): HTMLElement {
   // deeper (a group's chevron).
   const row = el('div', 'cs-scope');
   row.append(filterMenu('where'));
-  if (mode === 'text') row.append(filterMenu('kind'), filterMenu('type'));
+  if (mode !== 'refs') row.append(filterMenu('kind'), filterMenu('type'));
   if (scope?.error) row.append(el('span', 'cs-scope-err', icon('i-warn', 'ic-sm'), scope.error));
   return row;
 }
@@ -797,6 +836,7 @@ function setChosen(kind: MenuKind, value: string[]): void {
   if (kind === 'kind') filters.props = value;
   else if (kind === 'type') filters.types = value;
   else { filters.where = value; whereTouched = true; if (value.length && scope) scope = null; }
+  refreshReplace();
   if (request()) void search(); else renderAll();
 }
 
@@ -970,7 +1010,7 @@ function setFilter(list: 'types' | 'props' | 'where', value: string[]): void {
 function setScope(obj: CodeSearchObject | null): void {
   // Under an object replaces the Where choice.
   if (obj) filters.where = [];
-  if (!obj) { scope = null; if (request()) void search(); else renderAll(); return; }
+  if (!obj) { scope = null; refreshReplace(); if (request()) void search(); else renderAll(); return; }
   const s: NonNullable<typeof scope> = { obj, loading: true };
   scope = s;
   renderAll();
@@ -988,6 +1028,7 @@ function setScope(obj: CodeSearchObject | null): void {
       s.loading = false;
       s.error = e instanceof Error ? e.message : String(e);
     }
+    refreshReplace();
     if (request()) void search(); else renderAll();
   })();
 }
@@ -1076,7 +1117,7 @@ function renderSummary(): void {
   sumEl.hidden = false;
   const kids: Kid[] = [];
   if (o) {
-    kids.push(el('span', '', el('b', '', summaryText(o, mode))));
+    kids.push(el('span', '', el('b', '', summaryText(o, searchMode()))));
     if (fold && o.rows < o.matchedObjects) kids.push(el('span', 'cs-muted', `in ${fmt(o.rows)} ${o.rows === 1 ? 'row' : 'rows'}`));
     if (o.more || (o.coverage.searched < o.coverage.total)) kids.push(el('span', 'cs-muted', o.more ? `showing ${fmt(Math.min(run.hits.length, o.matchedObjects))}` : `in ${fmt(o.coverage.searched)} of ${fmt(o.coverage.total)} objects`));
     if (mode === 'refs') kids.push(el('span', 'grow'), el('span', 'cs-muted', 'Comments and strings do not count'));
@@ -1118,6 +1159,13 @@ function copyTable(b: HTMLElement): void {
 }
 
 function renderResults(): void {
+  sumEl.classList.toggle('rp-sum', mode === 'replace');
+  resEl.setAttribute('role', mode === 'replace' ? 'group' : 'tree');
+  if (mode === 'replace') {
+    rep.renderSummary(sumEl);
+    rep.renderResults(resEl);
+    return;
+  }
   renderSummary();
   resEl.classList.toggle('stale', stale);
   resEl.setAttribute('aria-busy', String(!!run?.searching));
@@ -1303,7 +1351,7 @@ function instanceList(list: readonly FoldedInstance[]): HTMLElement {
   for (const i of list) {
     const place = i.path?.length ? i.path.map(r => status?.orgs?.[r]?.name ?? r).join(' › ') : i.where;
     const row = btn('cs-irow', `Open ${i.name || i.businessId}`, () => openObject(i.rid, i, {
-      origin: { kind: 'search', label: run?.label ?? labelOf(), mode, ...(mode === 'text' ? { query } : {}) },
+      origin: { kind: 'search', label: run?.label ?? labelOf(), mode: searchMode(), ...(mode === 'text' ? { query } : {}) },
     }), el('span', 'nm', i.name || i.businessId || i.rid), i.businessId ? el('span', 'ui-id', i.businessId) : '', el('span', 'wh', place));
     box.append(row);
   }
@@ -1496,7 +1544,7 @@ function searchFraction(p: CodeSearchProgress): number {
 }
 
 function renderStatus(): void {
-  const facts: Kid[] = [];
+  const facts: Kid[] = mode === 'replace' ? rep.facts() : [];
   if (run?.searching && run.list.progress) facts.push(el('span', 'cov', progressText(run.list.progress)));
   if (run?.outcome) facts.push(el('span', 'cov', coverageText(run.outcome.coverage, Date.now(), run.indexState, run.outcome.ms, feedNow)));
   // Enter opens the selected hit: this repeats an unchanged search.
@@ -1505,8 +1553,11 @@ function renderStatus(): void {
   if (run?.outcome && scope?.rids) facts.push(el('span', 'cov', scopeText(objName(scope.obj), scope.covered)));
   // Without an index, the sentence that explains it belongs to the empty
   // state; once a search ran, the link below carries it as its tooltip.
-  if (status && !(run && status.state === 'none')) facts.push(el('span', 'idx', indexText(status)));
-  if (status && (status.state === 'none' || (status.state === 'ready' && !status.roots?.some(r => r.key === ORG))) && !connection) {
+  // The Replace tab says only whose copy it works on; Refresh follows below.
+  if (status && mode === 'replace' && (status.state === 'ready' || status.state === 'refreshing') && status.syncedAt) {
+    facts.push(el('span', 'idx', `Copy of ${new Date(status.syncedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`));
+  } else if (status && !(run && status.state === 'none')) facts.push(el('span', 'idx', indexText(status)));
+  if (mode !== 'replace' && status && (status.state === 'none' || (status.state === 'ready' && !status.roots?.some(r => r.key === ORG))) && !connection) {
     const tip = status.state === 'none'
       ? `${indexText(status)} Keep a copy on this computer: what it gives and what it costs.`
       : 'Save a copy of this server\'s code on this computer: what it gives and what it costs';
@@ -1519,16 +1570,16 @@ function renderStatus(): void {
       : st === 'paused' ? btn('cs-link', 'Continue making the copy', () => { void syncIndex(false, true); }, 'Resume')
       : btn('cs-link', status.copy ? 'Ask the server what changed since this copy and read only that' : 'List every object again and read what changed (paced; asks the server again which properties hold code)', () => { void syncIndex(true, true); }, 'Refresh'));
     // A copy can be removed from the footer: complete, stopped or failed.
-    if (st === 'paused' || st === 'failed' || (st === 'ready' && status.copy)) facts.push(btn('cs-link', 'Delete the copy of this server\'s code on this computer', () => { void removeIndex(); }, 'Remove copy'));
+    if (mode !== 'replace' && (st === 'paused' || st === 'failed' || (st === 'ready' && status.copy))) facts.push(btn('cs-link', 'Delete the copy of this server\'s code on this computer', () => { void removeIndex(); }, 'Remove copy'));
   }
   const line = el('div', 'facts', ...facts);
   line.title = facts.map(f => (f instanceof HTMLElement && !(f instanceof HTMLButtonElement) ? f.textContent : '')).filter(Boolean).join(' ');
   // Hint bar from the registry (lib/shortcuts.ts).
   const hint = (id: ShortcutId, word = shortcutDef(id).hint ?? '') => el('span', '', ...shortcutLabels(id).flatMap((k, i) => (i ? [' ', kbd(k)] : [kbd(k)])), ` ${word}`);
-  const keys = run?.hits.length
+  const keys = mode === 'replace' ? [] : run?.hits.length
     ? [hint('codesearch.move'), hint('codesearch.context'), hint('codesearch.open'), hint('codesearch.openEditor'), hint('codesearch.again'), hint('codesearch.back')]
     : [hint('codesearch.open', 'search'), hint('codesearch.back', 'clear'), hint('sheet.open', 'all keys')];
-  statusEl.replaceChildren(line, attrs(el('div', 'keys', ...keys), { 'aria-hidden': 'true' }));
+  statusEl.replaceChildren(line, ...(keys.length ? [attrs(el('div', 'keys', ...keys), { 'aria-hidden': 'true' })] : []));
 }
 
 function renderAll(): void {
@@ -1630,6 +1681,17 @@ async function loadStatus(): Promise<void> {
 
 function activate(a: CodeSearchFrameActivation): void {
   if (a.context) context = a.context;
+  // The Replace tab, filled in by another window; nothing is searched or changed until the user acts.
+  if (a.mode === 'replace') {
+    if (a.query !== undefined) { query = a.query; input.value = a.query; }
+    rep.set(a.replace);
+    setMode('replace');
+    rep.leaveResult();
+    rep.invalidate();
+    renderAll();
+    input.focus();
+    return;
+  }
   // Back from the object window: the results (and selection) are still here.
   if (a.restore && run && (!a.query || (mode === 'text' && a.query === query))) { input.focus(); renderAll(); updateSelection(); return; }
   if (a.restore && !a.query && !a.target && !a.scope) { input.focus(); renderAll(); return; }

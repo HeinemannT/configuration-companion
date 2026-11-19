@@ -4,6 +4,8 @@
 // (type-only) — messages depend on types, never the reverse.
 import type { AccessRequest } from './access-workspace/model';
 import type { AccessDestination } from './access-workspace/entry';
+import type { ColorOp, FileOp } from './colors-images/write-ops';
+import type { ImageFile, ImageFolder } from './colors-images/image-files';
 import type { ActionVerdicts } from './access-mode';
 import type { CustomChange, ListItem, TypePropertySchema } from './property-schema';
 import type { ChangeInput, ChangeRecord } from './change-record';
@@ -25,6 +27,7 @@ import type {
   HistoryEntry,
   InspectorSettings,
   LayoutNode,
+  ObjectWindowDraft,
   ObjectWindowFocus,
   ObjectWindowOrigin,
   PropertyApplication,
@@ -99,6 +102,31 @@ export type InspectMessage =
   | { type: 'TOGGLE_INSPECT' }
   | { type: 'SET_INSPECT_STATE'; active: boolean }
   | { type: 'INSPECT_STATE'; active: boolean }
+  // Point and tell (page mode, built separately): panel -> worker -> page toggle, and the page's state back to the panel.
+  | { type: 'TOGGLE_POINT_TELL' }
+  | { type: 'POINT_TELL_STATE'; active: boolean }
+  // Worker -> page: set (not toggle) the mode, and ask whether it is on (the page answers { active }).
+  | { type: 'POINT_TELL_SET'; active: boolean }
+  | { type: 'POINT_TELL_QUERY' }
+  // Worker -> page: the right-click entry "New page here".
+  | { type: 'POINT_TELL_NEW_PAGE' }
+  // Page -> worker: leave Point and tell and open Blueprint on this tab (staged changes wait in the page).
+  | { type: 'POINT_TELL_STAGE' }
+  // Page -> worker: the text properties and code of the objects the notes point at (one batched read).
+  | { type: 'POINT_TELL_READ_NOW'; items: Array<{ rid: string; className: string }> }
+  // Page -> worker: where a new page may go (the viewed page's nearest ancestors, nearest first).
+  | { type: 'POINT_TELL_PARENTS'; rid: string }
+  | { type: 'POINT_TELL_PARENTS_DATA'; ok: boolean; parents?: Array<{ rid: string; type: string; name: string }>; error?: string }
+  // Page -> worker: create the empty page a blank-page sketch stands for. phase 'preview': a dry run on the server, which issues a one-time receipt; 'commit': write it (the receipt, the same plan) and read it back.
+  | { type: 'POINT_TELL_CREATE_PAGE'; phase: 'preview' | 'commit'; plan: { parentRid: string; kind: 'Scorecard' | 'ModelPage'; id: string; name: string }; environment: string; previewId?: string }
+  | { type: 'POINT_TELL_CREATE_PAGE_RESULT'; ok: boolean; previewId?: string; environment?: string; rid?: string; id?: string; error?: string; outcomeUnknown?: boolean }
+  // Page -> worker: a picture of the visible part of the sender's tab (the tab must be the one shown).
+  | { type: 'POINT_TELL_CAPTURE' }
+  // Page -> worker: the voice-comment setting (stored in the extension, which the page cannot read); `noticed` records that the first-use line was shown.
+  | { type: 'POINT_TELL_VOICE'; noticed?: boolean }
+  | { type: 'POINT_TELL_VOICE_DATA'; prefs: { on: boolean; lang: 'auto' | 'en-US' | 'de-DE'; noticed: boolean } }
+  | { type: 'POINT_TELL_CAPTURE_DATA'; ok: boolean; dataUrl?: string; error?: string }
+  | { type: 'POINT_TELL_NOW_DATA'; ok: boolean; objects?: Record<string, { text: Record<string, string>; code: Record<string, string>; omitted: string[] }>; error?: string }
   // Standalone create/edit routes render native property editors without
   // data-rid attributes. Resolve the owning EditPage's ordered EditFields so
   // the content script can badge those controls like normal page widgets.
@@ -240,6 +268,11 @@ export type ProfileMessage =
 // ── EC Execution ─────────────────────────────────────────────────
 export type EcMessage =
   | { type: 'EC_EXECUTE'; code: string; objectRid?: string; property?: string; transactional?: boolean; environment?: string }
+  // Parses a script on the server without running it (a branch that never runs,
+  // code-replace.ts). `verdict`: the server read the script and refused it;
+  // without it the check itself failed and says nothing about the script.
+  | { type: 'EC_SYNTAX_CHECK'; code: string; environment?: string }
+  | { type: 'EC_SYNTAX_RESULT'; ok: boolean; message?: string; verdict?: boolean }
   // `durationMs` is the SW-measured EC round-trip. The panel surfaces it in
   // the status bar latency chip — it's the user-perceived signal of how
   // responsive BMP is to actual work (vs health-check pings).
@@ -258,7 +291,8 @@ export type EcMessage =
   // for them (refused with `conflict` when BMP holds something else).
   | ({ type: 'SAVE_IDENTITY'; rid: string; environment?: string; expect?: IdentityPatch; objectLabel?: ObjectLabel } & IdentityPatch)
   | ({ type: 'SAVE_IDENTITY_RESULT' } & IdentitySaveResult)
-  | { type: 'OPEN_EDITOR'; rid: string; property?: string; scrollToLine?: number; scrollToText?: string }
+  // `proposal`: the whole new text of the property, shown in the editor as a diff to accept or reject (Point and tell).
+  | { type: 'OPEN_EDITOR'; rid: string; property?: string; scrollToLine?: number; scrollToText?: string; proposal?: string }
   | { type: 'FETCH_EDITOR_CONTEXT'; rid: string; property?: string }
   | { type: 'EDITOR_CONTEXT_DATA'; rid: string; context: import('./editor-types').EditorContext }
   | {
@@ -404,7 +438,7 @@ export type ObjectViewMessage =
   // `from` names the calling object and line ("Reached from …, line N").
   // `focus`: land on this property and line (marked, scrolled into view).
   // `origin`: the search that led here, the first step of the trail.
-  | { type: 'OPEN_OBJECT_VIEW'; rid: string; name?: string; objectType?: string; businessId?: string; reveal?: boolean; from?: { rid: string; name?: string; line?: number }; focus?: ObjectWindowFocus; origin?: ObjectWindowOrigin }
+  | { type: 'OPEN_OBJECT_VIEW'; rid: string; name?: string; objectType?: string; businessId?: string; reveal?: boolean; from?: { rid: string; name?: string; line?: number }; focus?: ObjectWindowFocus; origin?: ObjectWindowOrigin; draft?: ObjectWindowDraft }
   // The pointer rests on a badge: start the root read as background work so
   // a double-click that follows opens at once. Read-only.
   | { type: 'PREFETCH_OBJECT_VIEW'; rid: string; objectType?: string }
@@ -502,7 +536,7 @@ export type CodeSearchMessage =
   // hands its query over). `scope`: search under this object. `target`:
   // the object "Used in code" looks for. `context`: the object the window was opened
   // from (offered as scope and target). `restore`: only bring it forward.
-  | { type: 'OPEN_CODE_SEARCH'; query?: string; mode?: 'text' | 'refs'; scope?: CodeSearchObject; target?: CodeSearchObject; context?: CodeSearchObject; restore?: boolean }
+  | { type: 'OPEN_CODE_SEARCH'; query?: string; replace?: string; mode?: 'text' | 'refs' | 'replace'; scope?: CodeSearchObject; target?: CodeSearchObject; context?: CodeSearchObject; restore?: boolean }
   // The local code index of the current server (lib/code-index-*).
   // SYNC starts (or joins) a refresh; STATUS answers at once and is also
   // broadcast while the index changes.
@@ -559,7 +593,7 @@ export type CodeSearchMessage =
 // environment, a bad root, start, day or RID) says `refused`.
 export type TransportMessage =
   // Open the Transport window on the active tab of the panel's window.
-  | { type: 'OPEN_TRANSPORT' }
+  | { type: 'OPEN_TRANSPORT'; tab?: 'numeric' }
   // Objects under one root changed after `since` (YYYY-MM-DD).
   | { type: 'TRANSPORT_SCAN'; requestId: string; environment: string; root: string; since: string }
   | {
@@ -733,7 +767,38 @@ export type TransportMessage =
     outcomeUnknown?: boolean;
     error?: string; errorKind?: import('./error-kind').BmpErrorKind; cancelled?: boolean; refused?: boolean;
   }
-  | { type: 'TRANSPORT_CANCEL'; requestId: string };
+  | { type: 'TRANSPORT_CANCEL'; requestId: string }
+  // Numeric IDs (the Transport window's third tab): the objects under one
+  // root, the ones with an ID that starts with a digit in full and the others
+  // by ID only (the proposals follow the IDs around them).
+  | { type: 'NUMERIC_IDS_SCAN'; requestId: string; environment: string; root: string }
+  | {
+    type: 'NUMERIC_IDS_SCAN_RESULT'; requestId: string; environment: string; ok: boolean;
+    rows?: import('./transport-read').TransportScanRow[];
+    context?: import('./transport-read').NumericContextRow[];
+    more?: boolean; missingRoot?: boolean;
+    error?: string; errorKind?: import('./error-kind').BmpErrorKind; cancelled?: boolean; refused?: boolean;
+  }
+  // Who created up to TRANSPORT_READ_BATCH objects and whether BMP marks them as its own.
+  | { type: 'NUMERIC_IDS_ORIGINS'; requestId: string; environment: string; rids: string[] }
+  | {
+    type: 'NUMERIC_IDS_ORIGINS_RESULT'; requestId: string; environment: string; ok: boolean;
+    origins?: import('./transport-read').TransportOriginRead[];
+    error?: string; errorKind?: import('./error-kind').BmpErrorKind; cancelled?: boolean; refused?: boolean;
+  }
+  // Change the IDs of up to NUMERIC_IDS_BATCH objects on the window's own
+  // workspace: a preview, or committed (`transactional`) only with
+  // `confirmed: true`, which only the confirmation sets. Every object is
+  // addressed by its old ID and checked against its RID; one that is gone,
+  // moved or whose new ID is taken is skipped and reported in the log.
+  | { type: 'NUMERIC_IDS_RUN'; requestId: string; environment: string; items: import('./numeric-id-write').IdChange[]; transactional: boolean; confirmed?: boolean }
+  | {
+    type: 'NUMERIC_IDS_RUN_RESULT'; requestId: string; environment: string; ok: boolean;
+    log?: string;
+    /** A committed run whose answer did not arrive: it may have been applied. */
+    outcomeUnknown?: boolean;
+    error?: string; errorKind?: import('./error-kind').BmpErrorKind; cancelled?: boolean; refused?: boolean;
+  };
 
 /** An object named by the code search window (scope, target, context). */
 export interface CodeSearchObject { rid: string; name?: string; type?: string; businessId?: string }
@@ -875,7 +940,10 @@ export type LayoutMessage =
   // the dynamic content-script registrations and, when a tab is named, inject into it right away
   // (registered scripts only cover future loads) + refresh its detection/page info.
   | { type: 'SITE_ACCESS_CHANGED'; tabId?: number }
-  | { type: 'LAYOUT_LOAD'; rid: string; prefer?: 'template' | 'instance' }
+  | { type: 'LAYOUT_LOAD'; rid: string; prefer?: 'template' | 'instance'; for?: 'point-tell' }
+  // Point and tell on a templated page: which template widget each instance widget on screen stands for.
+  | { type: 'LAYOUT_LINKS'; rid: string }
+  | { type: 'LAYOUT_LINKS_RESULT'; ok: boolean; links?: Record<string, string>; error?: string }
   // `env` = the page's environment token at load time; Blueprint echoes it back on apply so the SW
   // can reject a commit aimed at a different environment (the profile was pointed elsewhere mid-edit).
   | { type: 'LAYOUT_LOAD_RESULT'; ok: boolean; env?: string; ctx?: BlueprintCtx; model?: LModel; baseline?: LModel; orphans?: LayoutNode[]; error?: string }
@@ -1006,6 +1074,18 @@ export type AiMessage =
   | { type: 'AI_EDITOR_CONTEXT'; source: AiContextSource | null }
   | { type: 'AI_GET_EDITOR_CONTEXT' };
 
+// ── Colors and images (a page in its own tab: handlers/colors-images.ts) ──
+export type ColorsImagesTab = 'colors' | 'images';
+export type ColorsImagesMessage =
+  | { type: 'OPEN_COLORS_IMAGES'; tab?: ColorsImagesTab }
+  | { type: 'COLORS_IMAGES_NAVIGATE'; tabId: number; environment: string; tab: ColorsImagesTab }
+  | { type: 'IMAGE_INDEX'; force?: boolean }
+  | { type: 'IMAGE_INDEX_DATA'; ok: boolean; environment: string; fetchedAt?: number; folders?: ImageFolder[]; files?: ImageFile[]; error?: string }
+  | { type: 'IMAGE_BYTES'; rids: string[] }
+  | { type: 'IMAGE_BYTES_DATA'; ok: boolean; items: Array<{ rid: string; mime?: string; base64?: string; error?: string }>; error?: string }
+  | { type: 'COLORS_IMAGES_WRITE'; environment: string; colors?: ColorOp[]; files?: FileOp[] }
+  | { type: 'COLORS_IMAGES_WRITE_RESULT'; ok: boolean; written: number; error?: string; outcomeUnknown?: boolean };
+
 export type InspectorMessage =
   | { type: 'OPEN_ACCESS_WORKSPACE'; environment?: string; destination?: AccessDestination }
   | { type: 'ACCESS_WORKSPACE_NAVIGATE'; tabId: number; environment: string; destination: AccessDestination }
@@ -1016,6 +1096,6 @@ export type InspectorMessage =
   | DetectionMessage | ActivityMessage
   | HistoryMessage | FavoritesMessage | ContextMenuMessage
   | ObjectViewMessage | ObjectPaneMessage
-  | CompareMessage | CodeSearchMessage | TransportMessage | ScriptHistoryMessage
+  | CompareMessage | CodeSearchMessage | TransportMessage | ScriptHistoryMessage | ColorsImagesMessage
   | ColorMessage | NotificationMessage | LayoutMessage | StylePresetMessage | PagePrefsMessage
   | AiMessage;

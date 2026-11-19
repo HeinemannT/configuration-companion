@@ -65,6 +65,25 @@ describe('linked colour picker states', () => {
     expect(onPick).toHaveBeenCalledWith('brand_red Brand red');
   });
 
+  it('reads again only when Refresh is pressed, and says when the colors were read', () => {
+    const { sendMessage } = open();
+    onColorSetsData({ type: 'COLOR_SETS_DATA', environment: 'pro@https://bmp.example', sets: savedSets, fetchedAt: new Date(2026, 10, 19, 8, 40).getTime() });
+    expect(document.querySelector('.cp-foot .cr-read')?.textContent).toBe('Read 19 Nov 08:40');
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenLastCalledWith({ type: 'FETCH_COLOR_SETS' });
+    (document.querySelector('.cp-foot .cr-refresh') as HTMLButtonElement).click();
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage).toHaveBeenLastCalledWith({ type: 'FETCH_COLOR_SETS', force: true });
+    expect((document.querySelector('.cp-foot .cr-refresh') as HTMLButtonElement).disabled).toBe(true);
+    onColorSetsData({ type: 'COLOR_SETS_DATA', environment: 'pro@https://bmp.example', sets: savedSets, fetchedAt: new Date(2026, 10, 19, 9, 5).getTime() });
+    expect(document.querySelector('.cp-foot .cr-read')?.textContent).toBe('Read 19 Nov 09:05');
+  });
+
+  it('has no read line before the colors are in', () => {
+    open();
+    expect(document.querySelector('.cp-foot .cr-foot')).toBeNull();
+  });
+
   it('distinguishes a successful empty workspace from a load failure', () => {
     open();
     onColorSetsData({

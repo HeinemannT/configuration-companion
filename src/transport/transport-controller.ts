@@ -81,6 +81,8 @@ export interface TransportConnection {
   environment: string;
   /** The workspace's name for people (file names). */
   label: string;
+  /** The user the connection runs commands as ('' when not known). */
+  user?: string;
 }
 
 /** Local storage for the draft (chrome.storage.local in the window). */
@@ -575,7 +577,7 @@ const planKey = (p: FindPlan, chosen: ReadonlySet<TransportRoot>): string => {
 
 export class TransportController {
   /** The tab shown. */
-  tab: 'find' | 'transport' = 'find';
+  tab: 'find' | 'transport' | 'numeric' = 'find';
   /** The transport log is open (over either tab). */
   logOpen = false;
   /** How Find finds its objects. */
@@ -741,6 +743,13 @@ export class TransportController {
     }
   }
 
+  /** The rows of an area when the last Find scan read the whole of it (no day, not cut): Numeric IDs uses them instead of reading the area again. */
+  completeRows(root: TransportRoot): TransportScanRow[] | null {
+    if (this.scannedScope !== 'changed' || this.scannedSince !== '') return null;
+    const a = this.areas.find(x => x.root === root);
+    return a && a.status === 'done' && !a.more ? a.rows : null;
+  }
+
   /** Resolves when no scan runs. */
   private untilIdle(): Promise<void> {
     return this.run ? new Promise(resolve => { this.idleWaiters.push(resolve); }) : Promise.resolve();
@@ -772,7 +781,7 @@ export class TransportController {
 
   // ── tabs ────────────────────────────────────────────────────────
 
-  showTab(tab: 'find' | 'transport'): void {
+  showTab(tab: 'find' | 'transport' | 'numeric'): void {
     if (this.tab === tab && !this.logOpen) return;
     if (this.logOpen) this.closeLog();
     this.tab = tab;

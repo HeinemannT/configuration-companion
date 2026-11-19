@@ -4,7 +4,7 @@
  * module supplies the concrete tabs, DOM operations, and Chrome listeners.
  */
 
-import { shortcutLabel, withShortcut } from '../lib/shortcuts';
+import { shortcutLabel } from '../lib/shortcuts';
 import { escapeLayers } from '../lib/escape-layers';
 import { installCheatSheetKey } from '../lib/cheat-sheet';
 import type { BmpObject, InspectorMessage } from '../lib/types';
@@ -18,6 +18,8 @@ import type { Tab } from './tabs/tab-types';
 import { ConnectTab } from './tabs/connect-tab';
 import { BrowseTab } from './tabs/browse-tab';
 import { LogTab } from './tabs/log-tab';
+import { UtilitiesTab } from './tabs/utilities-tab';
+import { applyPrimaryActions, buildPrimaryActions, type PrimaryActionsState } from './header-actions';
 import { AiTab } from './tabs/ai-tab';
 import { provisionalConnectionSnapshot } from '../lib/connection-snapshot';
 import { objectChip } from '../lib/object-chip';
@@ -30,7 +32,7 @@ import { copyText } from '../lib/copy-feedback';
 import { statusFlash } from '../lib/dom';
 import { icon, mountShellSprites } from './icons';
 import { bandView, serverControlView } from './connection-view';
-import { applyServerControl, buildServerControl, showPanelInactive } from './server-control';
+import { applyServerControl, buildServerControl, glanceAtPage, setMarkWorking, showPanelInactive } from './server-control';
 import { NextCheckClock, chromeNextCheckDeps } from './next-check';
 import { openBmp } from './open-bmp';
 import { installPanelShowInLog } from '../lib/show-in-log';
@@ -66,6 +68,7 @@ function openInObjectWindow(rid: string) {
 const tabs: Record<PanelTabId, Tab> = {
   connect: new ConnectTab(sendMessage),
   browse: new BrowseTab(sendMessage, openInObjectWindow),
+  utilities: new UtilitiesTab(sendMessage),
   ai: new AiTab(sendMessage),
   log: new LogTab(sendMessage),
 };
@@ -78,6 +81,8 @@ const browseTab = tabs.browse as BrowseTab;
 let aiEnabled = false;
 function computeAiEnabled(): boolean { return !!S.settings.ai; }
 
+/** The current object the mark last glanced for (enrichment repaints the pill too). */
+let glancedRid: string | null = null;
 const logTab = tabs.log as LogTab;
 logTab.onActivityChange(() => updateStatusBar());
 onWorkStatus(status => logTab.showWorkStatus(status));
@@ -162,22 +167,23 @@ chrome.runtime.onMessage.addListener((msg: InspectorMessage) => {
 /** Every tab that can exist, in bar order. Used for id/label lookups + the
  *  stored-active-tab validity check. The AI slot is only rendered when
  *  configured — see tabOrder(). */
-const ALL_TABS = ['connect', 'browse', 'ai', 'log'] as const;
+const ALL_TABS = ['connect', 'browse', 'utilities', 'ai', 'log'] as const;
 
 /** The tabs actually rendered right now: base three, plus AI (before Log)
  *  when a provider key is configured. */
 function tabOrder(): PanelTabId[] {
   return aiEnabled
-    ? ['connect', 'browse', 'ai', 'log']
-    : ['connect', 'browse', 'log'];
+    ? ['connect', 'browse', 'utilities', 'ai', 'log']
+    : ['connect', 'browse', 'utilities', 'log'];
 }
 
 const TAB_LABELS: Record<string, string> = {
-  connect: 'Connect', browse: 'Browse', ai: 'AI', log: 'Log',
+  connect: 'Connect', browse: 'Browse', utilities: 'Utilities', ai: 'AI', log: 'Log',
 };
 const TAB_TITLES: Record<string, string> = {
   connect: 'Servers and settings',
   browse: 'Find objects, and the structure of the page you are on (press / to search)',
+  utilities: 'Code Search, Transport, Access, Colors and Images',
   ai: 'Ask about your workspace: a tool-using AI chat grounded in your context',
   log: 'Your saves, runs and errors',
 };
@@ -254,9 +260,6 @@ function ensureAiTab(): void {
   app.querySelector('.tab-content')?.replaceWith(buildTabContent());
 }
 
-const iconBtn = (id: string, iconId: string, label: string, title = label) =>
-  h('button', { class: 'ui-ibtn header-icon-btn', id, type: 'button', 'aria-label': label, title }, icon(iconId));
-
 /** The connection band: one sentence, one primary action, Retry, Details. */
 function buildBand(): HTMLElement {
   return h('div', { class: 'conn-band ui', id: 'conn-band', hidden: true },
@@ -290,40 +293,12 @@ const nextCheck = new NextCheckClock(chromeNextCheckDeps((text) => {
 function buildApp(): void {
   mountShellSprites(document);
   mountLiveRegions(document);
-  const canUseBlueprint = S.connState.blueprintSupported !== false;
   const header = h('div', { class: 'header ui' },
     // The switcher carries the mark in its status ring (server-control.ts).
     buildServerControl(),
     h('span', { class: 'hdr-sp' }),
-    h('span', { class: 'header-tools' },
-      iconBtn('open-codesearch', 'i-search', 'Code Search'),
-      iconBtn('open-transport', 'i-share', 'Transport (beta)'),
-      iconBtn('open-extended', 's-terminal', 'Open Extended Code', 'Open the Extended Code editor'),
-      iconBtn('open-access-workspace', 's-shield', 'Access: roles and policies', accessTitle()),
-    ),
-    h('span', { class: 'hdr-vsep', 'aria-hidden': 'true' }),
-    // Page modes — Inspect and Blueprint are mutually exclusive live-page overlays.
-    h('div', { class: 'hdr-modes', role: 'group', 'aria-label': 'Page modes' },
-      h('button', {
-        class: 'ui-ibtn hdr-mode inspect-toggle',
-        id: 'toggle-inspect',
-        type: 'button',
-        'aria-label': 'Toggle inspect overlays',
-        'aria-pressed': S.inspectActive ? 'true' : 'false',
-        title: `${withShortcut('Toggle inspect overlays', 'browser.inspect')}. Rebind at chrome://extensions/shortcuts`,
-      }, icon('s-crosshair')),
-      h('button', {
-        class: 'ui-ibtn hdr-mode blueprint-toggle',
-        id: 'toggle-blueprint',
-        type: 'button',
-        'aria-label': 'Toggle blueprint layout overlay',
-        'aria-pressed': S.blueprintActive ? 'true' : 'false',
-        disabled: !canUseBlueprint,
-        title: canUseBlueprint
-          ? 'Toggle the blueprint layout editor overlay on the live BMP page'
-          : 'Blueprint requires BMP 5.6.3 or newer',
-      }, icon('s-blueprint')),
-    ),
+    // The four main actions: Inspect, Blueprint, Point and tell, Extended Code. Everything else is in Utilities.
+    buildPrimaryActions(primaryActionsState()),
   );
 
   const tabBar = buildTabBar();
@@ -383,10 +358,8 @@ function buildApp(): void {
 
   app.querySelector('#toggle-inspect')?.addEventListener('click', () => sendMessage({ type: 'TOGGLE_INSPECT' }));
   app.querySelector('#toggle-blueprint')?.addEventListener('click', () => sendMessage({ type: 'BLUEPRINT_TOGGLE' }));
+  app.querySelector('#toggle-point-tell')?.addEventListener('click', () => sendMessage({ type: 'TOGGLE_POINT_TELL' })); // Point and tell
   app.querySelector('#open-extended')?.addEventListener('click', () => sendMessage({ type: 'OPEN_EXTENDED' }));
-  app.querySelector('#open-codesearch')?.addEventListener('click', () => sendMessage({ type: 'OPEN_CODE_SEARCH' }));
-  app.querySelector('#open-transport')?.addEventListener('click', () => sendMessage({ type: 'OPEN_TRANSPORT' }));
-  app.querySelector('#open-access-workspace')?.addEventListener('click', () => sendMessage({ type: 'OPEN_ACCESS_WORKSPACE' }));
   app.querySelector('#header-status')?.addEventListener('click', (e) => showServerMenu(e.currentTarget as HTMLElement));
   // Keyboard: ArrowDown on the switcher opens its menu.
   app.querySelector<HTMLElement>('#header-status')?.addEventListener('keydown', (e) => {
@@ -406,22 +379,19 @@ function renderActiveTab() {
 
 // ── Header/Status helpers ────────────────────────────────────────
 
+/** What the header's action buttons read: the panel's mode flags and the page and server state. */
+function primaryActionsState(): PrimaryActionsState {
+  return {
+    inspectActive: S.inspectActive,
+    blueprintActive: S.blueprintActive,
+    pointTellActive: S.pointTellActive,
+    blueprintSupported: S.connState.blueprintSupported !== false,
+    bmpDetected: S.bmpDetected,
+  };
+}
+
 function updateToggle() {
-  const btn = document.getElementById('toggle-inspect');
-  if (btn) {
-    btn.classList.toggle('active', S.inspectActive);
-    btn.setAttribute('aria-pressed', S.inspectActive ? 'true' : 'false');
-  }
-  const bp = document.getElementById('toggle-blueprint');
-  if (bp instanceof HTMLButtonElement) {
-    const supported = S.connState.blueprintSupported !== false;
-    bp.classList.toggle('active', S.blueprintActive);
-    bp.setAttribute('aria-pressed', S.blueprintActive ? 'true' : 'false');
-    bp.disabled = !supported;
-    bp.title = supported
-      ? 'Toggle the blueprint layout editor overlay on the live BMP page'
-      : 'Blueprint requires BMP 5.6.3 or newer';
-  }
+  applyPrimaryActions(app, primaryActionsState());
 }
 
 /** Request a connection test and show it as running until the answer. The
@@ -512,18 +482,7 @@ function updateHeaderStatus() {
   if (control) {
     applyServerControl(control, serverControlView(S.connState, S.settings));
   }
-  const access = document.getElementById('open-access-workspace');
-  if (access) access.title = accessTitle();
-  const modes = document.querySelector<HTMLElement>('.hdr-modes');
-  if (modes) {
-    modes.classList.toggle('no-page', S.bmpDetected === false);
-    modes.title = S.bmpDetected === false ? 'Open a BMP page to inspect its layout' : '';
-  }
-}
-
-function accessTitle(): string {
-  const profile = activeProfile();
-  return 'Access: roles and policies' + (profile ? '\n' + profile.label : '\nChoose a server first') + '\nOpens in a browser tab';
+  applyPrimaryActions(app, primaryActionsState());
 }
 
 /** The header's server switcher: one item per server, then Connect, then
@@ -574,6 +533,9 @@ function updateStatusBar() {
     activity.classList.toggle('is-working', logTab.isWorking);
     activity.classList.toggle('is-idle', !logTab.latestActivityMsg);
   }
+  // The mark reads along while the same work is running.
+  const control = document.getElementById('header-status');
+  if (control) setMarkWorking(control, logTab.isWorking);
 
   // Cached objects: only next to a working connection.
   const count = bar.querySelector<HTMLElement>('.status-bar-count');
@@ -631,6 +593,13 @@ function updateContextPill(): void {
   // or enrichment that repaints the pill must also refresh the chips, or the
   // chip badge stays on the sparse (grey) identity forever.
   (tabs['ai'] as AiTab | undefined)?.contextChanged();
+  // A new current object: the mark glances at the page it came from.
+  const rid = S.context?.rid ?? null;
+  if (rid && rid !== glancedRid) {
+    const control = document.getElementById('header-status');
+    if (control) glanceAtPage(control);
+  }
+  glancedRid = rid;
   const old = document.getElementById('status-bar-context');
   const next = renderContextPill();
   if (!old || !next) return;

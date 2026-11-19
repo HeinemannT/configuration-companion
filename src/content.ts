@@ -63,6 +63,8 @@ declare global {
     /** Published by content-blueprint.js: runs one command. This `window` is
      *  the content scripts' isolated world, which page script cannot see. */
     __crevBpCmd?: (detail: unknown) => void;
+    /** Published by content-blueprint.js: whether Point and tell is on in this tab (the page owns that mode). */
+    __crevPtActive?: boolean;
   }
 }
 
@@ -75,7 +77,10 @@ type BlueprintCmd =
   | { cmd: 'disable' }
   | { cmd: 'resetOverlayCaches' }
   | { cmd: 'setResumePrefer'; prefer: 'template' | 'instance' }
-  | { cmd: 'select'; rid: string };
+  | { cmd: 'select'; rid: string }
+  | { cmd: 'pointTellEnable' }
+  | { cmd: 'pointTellNewPage' }
+  | { cmd: 'pointTellDisable' };
 
 /** Send a command to the (lazily-injected) Blueprint editor.
  *
@@ -173,11 +178,21 @@ let blueprintInjected = false;
  *  `sendBlueprintCmd`, which buffers it until the entry script is listening (so the enable — and any
  *  disable that races behind it — is delivered in order, never dropped). */
 function activateBlueprint(): void {
-  if (!blueprintInjected) {
-    blueprintInjected = true;
-    sendFireForget({ type: 'INJECT_BLUEPRINT' });
-  }
+  ensureBlueprintBundle();
   sendBlueprintCmd({ cmd: 'enable' });
+}
+
+/** The page bundle (Blueprint and Point and tell share it) is requested once per content-script instance. */
+function ensureBlueprintBundle(): void {
+  if (blueprintInjected) return;
+  blueprintInjected = true;
+  sendFireForget({ type: 'INJECT_BLUEPRINT' });
+}
+
+/** Point and tell on or off for this tab. The mode lives in the page bundle; it publishes its state. */
+function setPointTell(active: boolean): void {
+  if (active) { ensureBlueprintBundle(); sendBlueprintCmd({ cmd: 'pointTellEnable' }); }
+  else if (window.__crevBpEntryReady || window.__crevBpPendingCmds?.length) sendBlueprintCmd({ cmd: 'pointTellDisable' });
 }
 
 // ── Inspect mode ─────────────────────────────────────────────────
@@ -201,6 +216,7 @@ function setInspectMode(active: boolean) {
   // page of the toggled window), so pages do not sync it between themselves.
   persistInspect(active);
   if (active) {
+    setPointTell(false); // Inspect and Point and tell never share a page
     injectStyles();
     syncInspectSurface();
   } else {
@@ -551,6 +567,12 @@ function oneShotMessageListener(msg: InspectorMessage, _sender: chrome.runtime.M
     if (msg.active) activateBlueprint(); else sendBlueprintCmd({ cmd: 'disable' });
     return false;
   }
+  // Point and tell: the panel's toggle (relayed by the worker), the worker's explicit set, and its question.
+  if (msg.type === 'TOGGLE_POINT_TELL') { setPointTell(window.__crevPtActive !== true); return false; }
+  if (msg.type === 'POINT_TELL_SET') { setPointTell(msg.active === true); return false; }
+  // The right-click entry "New page here": Point and tell is turned on (when it is not) and asks for the page's name.
+  if (msg.type === 'POINT_TELL_NEW_PAGE') { if (window.__crevPtActive !== true) setPointTell(true); sendBlueprintCmd({ cmd: 'pointTellNewPage' }); return false; }
+  if (msg.type === 'POINT_TELL_QUERY') { sendResponse({ active: window.__crevPtActive === true }); return false; }
   // The worker asks before it turns Blueprint off (shortcut, panel toggle, Inspect on): the editor
   // answers through its one exit check, which asks the user when changes are unsaved.
   if (msg.type === 'BLUEPRINT_REQUEST_EXIT') {
@@ -702,6 +724,7 @@ function resetContentState() {
   removeOverlays(s);
   teardownFrameOverlayModule();
   sendBlueprintCmd({ cmd: 'disable' });
+  setPointTell(false);
   document.getElementById(OVERLAY_STYLE_ID)?.remove();
   document.getElementById('crev-tooltip')?.remove();
   document.getElementById('crev-toast-container')?.remove();
@@ -772,7 +795,8 @@ try {
     if (r) {
       window.__crevBpResumePrefer = r.prefer;
       const askResume = (tries: number): void => {
-        if (document.querySelector('[data-rid]')) {
+        // A page with nothing on it yet (a page just created) has no [data-rid]: its breadcrumb is the sign that BMP has drawn it.
+        if (document.querySelector('[data-rid], .corpo-breadcrumbs__item')) {
           sendFireForget({ type: 'BLUEPRINT_RESUME' });
           if (r.message) showToast(r.message, 'success', undefined, { long: true }); // the apply result, shown once Blueprint is back
           return;

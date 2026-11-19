@@ -699,6 +699,8 @@
 /* swatch popup — reuses .bp-pick chrome; the grid host scrolls within the panel */
 #crev-blueprint-layer .bp-swatch-pop{width:300px}
 #crev-blueprint-layer .bp-swatch-host{overflow:auto;padding:0 12px 10px}
+#crev-blueprint-layer .bp-swatch-pop .cr-foot{border-top:var(--bp-hair) solid var(--bp-line-1);color:var(--bp-muted);font-family:'BPInter',sans-serif}
+#crev-blueprint-layer .bp-swatch-pop .cr-refresh:hover:not(:disabled){color:var(--bp-cyan)}
 
 /* shared swatch grid (renderSwatchGrid) — same classes as the side panel, themed for the light overlay */
 #crev-blueprint-layer .sw-loading,#crev-blueprint-layer .sw-empty{padding:10px;text-align:center;color:var(--bp-muted);font:12px 'BPInter',sans-serif}
@@ -1387,3 +1389,13 @@
 #crev-blueprint-layer .crev-property-picker__empty{padding:8px 10px;font:400 11px 'BPInter',system-ui,sans-serif}
 #crev-blueprint-layer .bp-ep-ed-body .crev-property-picker__field{height:26px}
 #crev-blueprint-layer .bp-ep-ed-body .crev-property-picker__input{font-size:10.5px}
+
+/* Changes staged from Point and tell notes, grouped by note in the pending tray */
+#crev-blueprint-layer .bp-tray-note{display:flex;align-items:center;gap:8px;margin:10px 0 4px;min-width:0}
+#crev-blueprint-layer .bp-tray-note:first-of-type{margin-top:0}
+#crev-blueprint-layer .bp-note-num{display:inline-flex;align-items:center;justify-content:center;flex:none;width:18px;height:18px;border-radius:50%;background:var(--bp-violet);color:#fff;font:700 10px/1 var(--bp-mono)}
+#crev-blueprint-layer .bp-note-num[hidden]{display:none}
+#crev-blueprint-layer .bp-note-text{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 11.5px 'BPInter',sans-serif;color:var(--bp-text)}
+#crev-blueprint-layer .bp-note-x{flex:none;padding:2px 6px;border:0;border-radius:4px;background:transparent;color:var(--bp-muted);font:500 11px 'BPInter',sans-serif;cursor:pointer}
+#crev-blueprint-layer .bp-note-x:hover{background:var(--bp-violet-soft);color:var(--bp-violet)}
+#crev-blueprint-layer .bp-tray-skip{padding:2px 4px 2px 26px;color:var(--bp-muted);font:11.5px/1.35 'BPInter',sans-serif}

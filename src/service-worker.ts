@@ -34,7 +34,8 @@ setFrameTabPreparer(ensureContentScript);
 import { shouldAcceptPanelClaim, type PanelClaim } from './lib/panel-ownership';
 import { restoreActivity, logActivity } from './lib/activity';
 import { logPageDiagnostic } from './lib/page-diagnostics';
-import { registerContextMenus } from './lib/context-menus';
+import { registerContextMenus, POINT_TELL_MENU_ID, NEW_PAGE_MENU_ID } from './lib/context-menus';
+import { newPageHere, togglePointTell } from './lib/handlers/point-tell';
 import { createSettingsReady, loadStoredSettings, handleSessionCookieChanged, settingsLoadedCleanly, onSettingsStatus, settingsStatus, redactSettings } from './lib/settings';
 import { registerTabListeners, sendPageInfoToPanel, lastFocusedWindowId, seedActiveTabs } from './lib/tab-awareness';
 import { boundForTab, displayProfileOf, forgetWindow, liveScopes, noteTabUrl, profileOfTab, restoreWindowState, scopeFor } from './lib/profile-scope';
@@ -51,6 +52,7 @@ import { logIdForError, takeHeldLogEntry } from './lib/toast-log';
 import { lockExtensionStorage } from './lib/storage-access';
 import { forgetEnrichBudget } from './lib/enrich-budget';
 import { sweepLaunchContexts } from './lib/local-data';
+import { pointTellOnInWindow } from './lib/point-tell-state';
 
 // Deliberately global so the exact loaded build is visible from the service
 // worker DevTools console, even when manifest.version has not changed.
@@ -372,6 +374,9 @@ async function handleContextMenuClick(info: chrome.contextMenus.OnClickData, tab
   if (!tabId) return;
   const ctxRid = getContextRid(tabId);
   const menuIdEarly = typeof info.menuItemId === 'string' ? info.menuItemId : '';
+  // Needs no object. Choosing it is an invocation on this tab: Chrome grants activeTab (Screenshot).
+  if (menuIdEarly === NEW_PAGE_MENU_ID) { void newPageHere(tabId).catch(e => log.swallow('sw:newPageMenu', e)); return; }
+  if (menuIdEarly === POINT_TELL_MENU_ID) { void togglePointTell(ctx, { tabId }).catch(e => log.swallow('sw:pointTellMenu', e)); return; }
   // Code search needs no object: without one it opens empty.
   if (!ctxRid && menuIdEarly === 'crev-search-code') { void openCodeSearchWindow({ tabId }); return; }
   if (!ctxRid) return;
@@ -539,6 +544,8 @@ function initPanelPort(port: chrome.runtime.Port) {
         // connect so a reopened sidebar reflects the current toggle state (mirrors INSPECT_STATE).
         safeSend(port, { type: 'INSPECT_STATE', active: inspectActiveByWindow.get(windowId) === true });
         safeSend(port, { type: 'BLUEPRINT_STATE', active: blueprintActiveByWindow.get(windowId) === true });
+        // Point and tell lives in the page: ask the window's tab, push the answer when it comes.
+        void pointTellOnInWindow(windowId).then(active => { if (panelPortByWindow.get(windowId) === port) safeSend(port, { type: 'POINT_TELL_STATE', active }); });
         // The profile this window shows: its settings view, state and cache.
         const shown = scopeFor(displayProfileOf(windowId));
         if (!settingsLoadedCleanly()) safeSend(port, { type: 'SETTINGS_STATUS', ...settingsStatus() });
@@ -653,6 +660,10 @@ chrome.commands.onCommand.addListener((command, tab) => {
   }
   if (command === 'toggle-blueprint') {
     void toggleBlueprint();
+  }
+  if (command === 'toggle-point-tell') {
+    // A command is an invocation on this tab, which gives Chrome's activeTab (Screenshot needs it).
+    void togglePointTell(ctx, { ...(tab?.id != null ? { tabId: tab.id } : {}) }).catch(e => log.swallow('sw:pointTellCommand', e));
   }
   if (command === 'open-search') {
     // No default key (Chrome allows four suggested keys); the user can set

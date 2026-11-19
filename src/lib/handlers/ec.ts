@@ -11,6 +11,7 @@ import { resolveFrameTargetTabId } from '../frame-launcher';
 import { reportFrameOpenFailure } from '../frame-open-failure';
 import { errorMessage, log } from '../logger';
 import { userScript } from '../script-kinds';
+import { wrapForSyntaxCheck } from '../ec-syntax-check';
 import { invalidateRid, publishIdentity } from '../enrichment';
 import type { ActivityMeta } from '../types';
 import { activityObject, activityObjectLabel, ecActivityDetail } from '../activity-format';
@@ -102,6 +103,32 @@ register('EC_EXECUTE', async (msg, respond, meta) => {
     // A transport failure can occur after BMP received a write. Do not imply
     // rollback, or show this old workspace's toast over the new workspace.
     if (origin.isCurrent()) ctx.toast(`EC request failed: ${errMsg}`, 'error');
+  }
+});
+
+/** Parse a script on the server without running it: the text sits in a branch
+ *  that never runs (ec-syntax-check.ts). The script is the user's own
+ *  text (userScript): the server keeps the parsed tree of each distinct text
+ *  until it restarts (script-ledger.ts), so the caller checks a changed text
+ *  once. Not an execution: nothing is added to the script history or the Log. */
+register('EC_SYNTAX_CHECK', async (msg, respond, meta) => {
+  const ctx = ctxOf(meta);
+  if (!ctx.client) { respond({ type: 'EC_SYNTAX_RESULT', ok: false, message: 'Not connected' }); return; }
+  if (!environmentMatches(ctx, msg.environment)) {
+    respond({ type: 'EC_SYNTAX_RESULT', ok: false, message: environmentMismatchError(ctx, msg.environment) });
+    return;
+  }
+  try {
+    const result = await ctx.client.executeEc(userScript(wrapForSyntaxCheck(msg.code)), undefined, false);
+    if (result.ok && /parsed/.test(result.log ?? '')) { respond({ type: 'EC_SYNTAX_RESULT', ok: true }); return; }
+    // An answer from the server about the script has no error kind; a failed
+    // request (network, time-out, sign-in) says nothing about the script.
+    respond({
+      type: 'EC_SYNTAX_RESULT', ok: false, verdict: !result.errorKind && !result.ok,
+      message: result.ok ? 'The check gave no answer' : (result.log?.trim() || result.error || 'The server could not read this script'),
+    });
+  } catch (e) {
+    respond({ type: 'EC_SYNTAX_RESULT', ok: false, message: errorMessage(e) });
   }
 });
 
@@ -247,7 +274,7 @@ register('OPEN_EDITOR', (msg, _respond, meta) => {
     msg.rid,
     msg.property,
     { tabId: meta.senderTabId, windowId: meta.panelWindowId },
-    { scrollToLine: msg.scrollToLine, scrollToText: msg.scrollToText },
+    { scrollToLine: msg.scrollToLine, scrollToText: msg.scrollToText, ...(typeof msg.proposal === 'string' && msg.proposal.length <= 200_000 ? { proposal: msg.proposal } : {}) },
     ctxOf(meta),
   );
   const ctx = ctxOf(meta);

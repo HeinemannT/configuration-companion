@@ -3,16 +3,18 @@
  *
  * The side panel header's server switcher: the mark inside the status ring,
  * two lines and the chevron, all in one button. The ring carries the state;
- * the mark never changes; only the spinner arc turns while connecting.
+ * the mark's markup never changes; the spinner arc turns while connecting
+ * and the mark's eyes blink, read and glance.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ServerControlView } from '../connection-view';
-import { applyServerControl, buildServerControl, ringMarkup, showPanelInactive } from '../server-control';
+import { applyServerControl, buildServerControl, glanceAtPage, ringMarkup, setMarkWorking, showPanelInactive } from '../server-control';
 
 const repoRoot = join(__dirname, '../../..');
 const shellCss = readFileSync(join(repoRoot, 'src/sidepanel/shell.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+const markCss = readFileSync(join(repoRoot, 'src/styles/mark.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').trim();
 
 const view = (change: Partial<ServerControlView> = {}): ServerControlView => ({
   name: 'Test server', word: 'alex', tone: 'muted', ring: 'ok', empty: false, title: 'Switch server. Connected to Test server.', ...change,
@@ -32,7 +34,7 @@ describe('header server switcher', () => {
     expect(control.tagName).toBe('BUTTON');
     expect(control.id).toBe('header-status');
     expect(control.getAttribute('aria-haspopup')).toBe('menu');
-    expect([...control.children].map(c => c.getAttribute('class'))).toEqual(['srv-ring', 'srv-text', 'ic ic-sm srv-chev']);
+    expect([...control.children].map(c => c.getAttribute('class'))).toEqual(['srv-ring crev-mark', 'srv-text', 'ic ic-sm srv-chev']);
     expect([...control.querySelector('.srv-text')!.children].map(c => c.className)).toEqual(['srv-name', 'srv-word']);
     expect(control.querySelector('.srv-ring')!.getAttribute('aria-hidden')).toBe('true');
     // No separate dot and no separate logo any more.
@@ -109,20 +111,66 @@ describe('header styles', () => {
     expect(arc).toContain('transform-origin: 18px 18px');
     expect(rule(shellCss, '.srv-ring .ring-arc')).toContain('stroke-linecap: round');
     expect(shellCss).toMatch(/@keyframes srv-ring-spin\s*\{\s*from\s*\{\s*transform: rotate\(-90deg\);\s*\}\s*to\s*\{\s*transform: rotate\(270deg\);\s*\}/);
-    // Nothing else animates in the header: not the mark, not the ring box.
+    // The ring box itself never animates; the mark's eyes have their own test.
     expect(shellCss.match(/animation:\s*srv-ring-spin/g)).toHaveLength(1);
     const reduced = shellCss.slice(shellCss.indexOf('@media (prefers-reduced-motion: reduce)'));
     expect(reduced).toMatch(/^@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.srv-ring\[data-ring="connecting"\] \.ring-arc\s*\{\s*animation: none;/);
   });
 
-  it('is 48 px high with 28 px tools, 24 px and no gaps in a narrow panel', () => {
+  it('moves only the eyes: a blink, reading while work runs, a glance at the page; still under reduced motion', () => {
+    vi.useFakeTimers();
+    try {
+      const control = buildServerControl();
+      const ring = control.querySelector('.srv-ring')!;
+      const markup = ring.innerHTML;
+      // Both eyes sit in the glance group and, inside it, the reading group.
+      expect(ring.querySelectorAll('.mark-look > .mark-eyes > circle')).toHaveLength(2);
+
+      setMarkWorking(control, true);
+      expect(ring.getAttribute('data-mood')).toBe('read');
+      setMarkWorking(control, false);
+      expect(ring.hasAttribute('data-mood')).toBe(false);
+
+      glanceAtPage(control);
+      expect(ring.getAttribute('data-look')).toBe('page');
+      vi.advanceTimersByTime(600);
+      glanceAtPage(control); // a second object: the glance starts over, it does not end early
+      vi.advanceTimersByTime(600);
+      expect(ring.getAttribute('data-look')).toBe('page');
+      vi.advanceTimersByTime(300);
+      expect(ring.hasAttribute('data-look')).toBe(false);
+      // State is carried by attributes on the ring; the markup never changes.
+      expect(ring.innerHTML).toBe(markup);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(rule(markCss, '.crev-mark .mark-eyes circle')).toMatch(/animation:\s*crev-mark-blink 13s infinite/);
+    expect(rule(markCss, '.crev-mark[data-mood="read"] .mark-eyes')).toMatch(/animation:\s*crev-mark-read/);
+    expect(rule(markCss, '.crev-mark[data-look="page"] .mark-look')).toContain('translateX(-1.5px)');
+    // Transforms only: no layout property in either keyframe set.
+    const frames = /@keyframes crev-mark-blink\s*\{([\s\S]*?\})\s*\}\s*@keyframes crev-mark-read\s*\{([\s\S]*?\})\s*\}/.exec(markCss)!;
+    for (const body of [frames[1], frames[2]]) {
+      expect(body.match(/[a-z-]+(?=\s*:)/g)!.every(p => p === 'transform')).toBe(true);
+    }
+    const reduced = markCss.slice(markCss.indexOf('@media (prefers-reduced-motion: reduce)'));
+    expect(reduced).toMatch(/\.crev-mark \.mark-eyes, \.crev-mark \.mark-eyes circle\s*\{\s*animation: none;/);
+    expect(reduced).toMatch(/\.crev-mark \.mark-look\s*\{\s*transition: none; transform: none;/);
+  });
+
+  it('is 48 px high with 28 px modes and a 32 px action, smaller in a narrow panel, named in a wide one', () => {
     const header = rule(shellCss, '.header');
     expect(header).toContain('height: 48px');
     expect(header).toMatch(/container:\s*sp-header \/ inline-size/);
     expect(rule(shellCss, '.srv-ring')).toContain('width: 36px');
-    expect(rule(shellCss, '.header .header-icon-btn,\n.header .hdr-mode')).toContain('width: 28px');
+    expect(rule(shellCss, '.header .hdr-mode')).toMatch(/width: 28px; height: 28px/);
+    expect(rule(shellCss, '.header .hdr-act')).toMatch(/width: 32px; height: 32px/);
     const narrow = shellCss.slice(shellCss.indexOf('@container sp-header (max-width: 340px)'));
-    expect(narrow).toMatch(/^@container sp-header \(max-width: 340px\)\s*\{\s*\.header \.header-icon-btn,\s*\.header \.hdr-mode\s*\{\s*width: 24px; height: 24px;\s*\}\s*\.header-tools, \.hdr-modes\s*\{\s*gap: 0;/);
+    expect(narrow).toMatch(/^@container sp-header \(max-width: 340px\)\s*\{\s*\.header \.hdr-mode\s*\{\s*width: 24px; height: 24px;\s*\}\s*\.header \.hdr-act\s*\{\s*width: 28px; height: 28px;/);
+    // Names show only when the header is wide enough for all four.
+    expect(rule(shellCss, '.hdr-lbl')).toContain('display: none');
+    const wide = shellCss.slice(shellCss.indexOf('@container sp-header (min-width: 560px)'));
+    expect(wide).toMatch(/^@container sp-header \(min-width: 560px\)\s*\{[\s\S]*?\.hdr-lbl\s*\{\s*display: inline;/);
     // The name truncates (the text column may shrink below its content).
     expect(rule(shellCss, '.srv-text')).toContain('min-width: 0');
     expect(rule(shellCss, '.srv-name,\n.srv-word')).toContain('text-overflow: ellipsis');

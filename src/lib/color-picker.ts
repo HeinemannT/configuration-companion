@@ -4,11 +4,11 @@
  * the workspace's colourset list, never typed. The set list is fetched via
  * FETCH_COLOR_SETS and served from a persistent per-profile cache
  * (color-set-cache.ts) — a successful fetch remains available across browser
- * sessions until its TTL expires; the ↻ button forces a reload when colours changed.
+ * sessions and is read again only on demand (the ↻ button).
  * The object window opens it with its own colour catalogue.
  */
-import { h, render, svg } from './dom';
-import { ICON_REFRESH } from './icons';
+import { colorReadFoot } from './color-read-foot';
+import { h, render } from './dom';
 import type { InspectorMessage } from './types';
 import type { WorkspaceColorCatalogue } from './workspace-color-catalogue';
 
@@ -39,14 +39,7 @@ export function openColorPicker(opts: PickerOpts): void {
     autocomplete: 'off', spellcheck: 'false',
     onInput: (e: Event) => { filter = (e.currentTarget as HTMLInputElement).value; drawBody(); },
   }) as HTMLInputElement;
-  // Manual refresh — busts the persistent cache when a colour changed in BMP.
-  const refreshBtn = h('button', {
-    class: 'cp-refresh', type: 'button', title: 'Reload colours from BMP',
-    onClick: () => {
-      catalogue.beginLoad();
-      opts.sendMessage({ type: 'FETCH_COLOR_SETS', force: true });
-    },
-  }, svg(ICON_REFRESH));
+  const footEl = h('div', { class: 'cp-foot' });
 
   const close = () => {
     document.removeEventListener('keydown', onKey, true);
@@ -104,6 +97,8 @@ export function openColorPicker(opts: PickerOpts): void {
       if (shown === 0) items.push(h('div', { class: 'cp-empty' }, q ? `No colours match “${filter}”.` : 'No colours found.'));
     }
     render(bodyEl, ...items);
+    // Colors are read only on demand: the date of the read, and Refresh.
+    render(footEl, ...(cache === null ? [] : [colorReadFoot({ at: catalogue.snapshot().fetchedAt, busy: loadState === 'loading', onRefresh: retry })]));
     position();
   }
 
@@ -119,7 +114,7 @@ export function openColorPicker(opts: PickerOpts): void {
 
   // No "clear" action: BMP doesn't unset a colour link via `:= MISSING`
   // (verified — it's a no-op), so we only offer picking a colour to link.
-  render(root, h('div', { class: 'cp-head' }, filterInput, refreshBtn), bodyEl);
+  render(root, h('div', { class: 'cp-head' }, filterInput), bodyEl, footEl);
   document.body.appendChild(backdrop);
   document.body.appendChild(root);
   document.addEventListener('keydown', onKey, true);

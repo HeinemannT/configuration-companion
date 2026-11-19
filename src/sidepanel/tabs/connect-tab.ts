@@ -26,6 +26,7 @@ import { dotTone, type DotTone } from '../connection-view';
 import { icon, mountShellSprites } from '../icons';
 import { announce } from '../announce';
 import { copyText } from '../../lib/copy-feedback';
+import { VOICE_KEY, readVoicePrefs, type VoicePrefs } from '../../lib/point-tell/voice';
 import { statusFlash } from '../../lib/dom';
 import { emptyState } from '../../lib/empty-state';
 
@@ -201,6 +202,8 @@ export class ConnectTab implements Tab {
   private aiModelMenuOpen = false;   // the unfiltered "browse all models" menu is open
   /** Collapsed server-row card vs the expanded config form. */
   private aiExpanded = false;
+  /** Voice comments in Point and tell: off until turned on here. Stored apart from the server settings. */
+  private voice: VoicePrefs = readVoicePrefs(undefined);
 
   /** Result of the connection test that follows a profile save, shown under
    *  that profile's row until the next save or a different selection. */
@@ -216,6 +219,13 @@ export class ConnectTab implements Tab {
       if (profile) this.openEditor(profile);
     });
     onSiteAccessChanged(() => { void this.refreshAccess(); });
+    try {
+      void chrome.storage.local.get(VOICE_KEY).then(r => {
+        this.voice = readVoicePrefs(r[VOICE_KEY]);
+        const panel = getTabPanel('connect');
+        if (panel && !this.editing) this.render(panel);
+      }).catch(() => {});
+    } catch { /* no extension storage here */ }
   }
 
   /** The open server form's fields that differ from what it opened with (none: no form). */
@@ -529,6 +539,15 @@ export class ConnectTab implements Tab {
       this.settingRow('enrich-all', 'Include non-widget objects',
         'Also labels inline elements (tables, others)',
         shared.settings.enrichMode === 'all'),
+      this.settingRow('voice-on', 'Voice comments',
+        "Speech is turned into text by the browser's speech service",
+        this.voice.on),
+      h('label', { class: 'setting-row', id: 'voice-lang-row' },
+        h('span', { class: 'setting-text' }, h('span', { class: 'setting-name' }, 'Voice language')),
+        h('select', { class: 'field-input', id: 'voice-lang', 'aria-label': 'Voice language' },
+          h('option', { value: 'auto' }, 'Browser language'),
+          h('option', { value: 'en-US' }, 'English'),
+          h('option', { value: 'de-DE' }, 'Deutsch'))),
       // Local extension data belongs with Preferences. The persistent status
       // bar already carries the cache count, so this row only explains and
       // manages the stored data.
@@ -578,6 +597,16 @@ export class ConnectTab implements Tab {
       shared.settings = { ...shared.settings, autoDetect };
       this.send({ type: 'SAVE_SETTINGS', settings: { autoDetect } });
     });
+
+    const langSel = container.querySelector<HTMLSelectElement>('#voice-lang');
+    if (langSel) langSel.value = this.voice.lang;
+    const saveVoice = (next: VoicePrefs): void => { this.voice = next; try { void chrome.storage.local.set({ [VOICE_KEY]: next }); } catch { /* not stored */ } };
+    container.querySelector('#voice-on')?.addEventListener('change', (e) => {
+      const on = (e.target as HTMLInputElement).checked;
+      // Turning it on again says once more where the audio goes.
+      saveVoice({ ...this.voice, on, ...(on ? { noticed: false } : {}) });
+    });
+    langSel?.addEventListener('change', () => saveVoice({ ...this.voice, lang: langSel.value as VoicePrefs['lang'] }));
 
     container.querySelector('#enrich-all')?.addEventListener('change', (e) => {
       const enrichMode = (e.target as HTMLInputElement).checked ? 'all' as const : 'widgets' as const;

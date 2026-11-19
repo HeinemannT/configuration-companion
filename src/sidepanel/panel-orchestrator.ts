@@ -18,7 +18,7 @@ import { resetObjectPreview } from '../lib/object-chip';
 import { statusFlash } from '../lib/dom';
 import type { Tab } from './tabs/tab-types';
 
-export type PanelTabId = 'connect' | 'browse' | 'ai' | 'log';
+export type PanelTabId = 'connect' | 'browse' | 'utilities' | 'ai' | 'log';
 
 interface LiveLogTab extends Tab {
   showWorkStatus(status: WorkStatus): void;
@@ -162,6 +162,10 @@ export function createPanelOrchestrator(
         break;
       case 'BLUEPRINT_STATE':
         S.blueprintActive = msg.active;
+        host.updateToggle();
+        break;
+      case 'POINT_TELL_STATE': // Point and tell: the page's state, shown on its header button
+        S.pointTellActive = msg.active;
         host.updateToggle();
         break;
       case 'CACHE_STATS':

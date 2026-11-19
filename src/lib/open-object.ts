@@ -3,7 +3,7 @@
  * OPEN_OBJECT_VIEW message, used by every surface (content script badges and
  * hover card, Blueprint, code search, Compare, editor, Studio, side panel).
  */
-import type { InspectorMessage, ObjectWindowFocus, ObjectWindowOrigin } from './types';
+import type { InspectorMessage, ObjectWindowDraft, ObjectWindowFocus, ObjectWindowOrigin } from './types';
 import { sendFireForget } from './messaging';
 
 /** What the opener already knows of the object; the window paints its title
@@ -21,6 +21,8 @@ export interface OpenObjectOptions {
   origin?: ObjectWindowOrigin;
   /** Reveal the object in its parent's tree. */
   reveal?: boolean;
+  /** Stage this change in the window's own draft, for the user to review and save there. */
+  draft?: ObjectWindowDraft;
 }
 
 /** The one builder of OPEN_OBJECT_VIEW. The server environment is not part of
@@ -35,6 +37,7 @@ export function openObjectViewMessage(rid: string, known?: KnownIdentity | null,
     ...(opts.from ? { from: opts.from } : {}),
     ...(opts.focus ? { focus: opts.focus } : {}),
     ...(opts.origin ? { origin: opts.origin } : {}),
+    ...(opts.draft ? { draft: opts.draft } : {}),
   };
 }
 

@@ -17,10 +17,14 @@
  * Pure parsing + the shared typeInference cache → unit-tested. Mirrors
  * starExpansion's async "schema not loaded yet → wait on subscribe" pattern.
  */
-import type { CompletionContext, CompletionResult } from '@codemirror/autocomplete';
+import type { Completion, CompletionContext, CompletionResult } from '@codemirror/autocomplete';
+import type { EditorState } from '@codemirror/state';
 import type { TypeSchemaProp, TypeOptionSet } from '../../lib/types';
-import { getInference, getSchema, intersectionSchema, ensureSchemaNow, getOption, getOptions, ensureOptionsNow, getRefType, ensureRefType, subscribe, isElementContext } from './typeInference';
+import { getInference, getSchema, inferExpression, intersectionSchema, ensureSchemaNow, getOption, getOptions, ensureOptionsNow, getRefType, ensureRefType, subscribe, isElementContext } from './typeInference';
 import { ID_SPACE_PREFIXES } from '../../lib/ec-grammar';
+import { getTableModels } from './table/doc-models';
+import { tableAt, type TableModel } from './table/model';
+import { columnAtOffset, planAddColumn, resolveTable, type TypeEnv } from './table/analysis';
 
 /** BMP class names are PascalCase, and the SW schema/options guard requires it,
  *  but EC accepts a camelCase SELECT target (`SELECT ceRiskAssessment`). Upper-
@@ -386,8 +390,16 @@ function resolveContext(state: CompletionContext['state'], pos: number): { types
     const types = call.receiver === 'self'
       ? resolveSelfType(line.text, call.receiverStart)
       : inferredTypes(call.receiver);
-    if (!types) return null;
-    return { types, from, method: call.method };
+    if (types) return { types, from, method: call.method };
+    // Receiver untyped (a `LIST().table()` variable): the table model may know the row type.
+    return tableContext(state, from);
+  }
+
+  // (A2) Inside a table statement the call receiver is often not an identifier
+  // (`.table().addColumn("Label", <here>`) or the call spans lines (addRow values).
+  if (!(wordStart > 0 && line.text[wordStart - 1] === '.')) {
+    const tc = tableContext(state, from);
+    if (tc) return tc;
   }
 
   // (D) General `<object>.<prop>` dot-member — the unified resolver. Covers
@@ -412,20 +424,87 @@ function resolveContext(state: CompletionContext['state'], pos: number): { types
   return null;
 }
 
+/** Environment for the table model: the same inference and schema state the rest of this file uses. */
+const completionEnv: TypeEnv = {
+  elementTypes(expr) {
+    const inf = inferExpression(expr);
+    return inf.kind === 'list' ? inf.types : null;
+  },
+  schema: getSchema,
+  canonical: t => t,
+};
+
+/** Property-name position inside a recognised table statement, with the row type from the model. */
+function tableContext(state: EditorState, from: number): { types: string[]; from: number; method: string } | null {
+  const { text, tables } = getTableModels(state.doc);
+  const t = tableAt(tables, from);
+  if (!t) return null;
+  const resolved = resolveTable(t, completionEnv);
+
+  const col = columnAtOffset(t, from);
+  if (col?.call) {
+    const first = col.call.args[0];
+    // Past the label argument: the slot after the first comma.
+    const past = first ? /^\s*,/.test(text.slice(first.to, from)) || col.call.args.length > 1 && from > first.to : false;
+    if (past && resolved.rowTypes) return { types: resolved.rowTypes, from, method: 'addColumn' };
+    return null;
+  }
+  const tc = t.tableCall;
+  if (from > tc.open && from <= (tc.close ?? tc.scanEnd) && resolved.rowTypes) {
+    return { types: resolved.rowTypes, from, method: 'table' };
+  }
+  for (const row of t.rows) {
+    if (from <= row.call.open || from > (row.call.close ?? row.call.scanEnd)) continue;
+    const first = row.call.args[0];
+    if (!first || from <= first.to) return null;
+    const li = row.forEach ? t.levels.indexOf(row.forEach) : -1;
+    const types = li >= 0 ? resolved.levelTypes[li] : null;
+    return types ? { types, from, method: 'addRow' } : null;
+  }
+  return null;
+}
+
+/** Apply a chosen property inside an addColumn call: one edit that writes the column
+ *  and the matching value in every addRow. Models are re-read from the live document
+ *  because the user may have typed more of the word since the list opened. */
+function applyAddColumn(p: TypeSchemaProp): NonNullable<Completion['apply']> {
+  return (view, _completion, from, to) => {
+    const { text, tables } = getTableModels(view.state.doc);
+    const t: TableModel | null = tableAt(tables, from);
+    const word = { from, to };
+    const column = t ? columnAtOffset(t, from) : null;
+    const changes = t
+      ? planAddColumn(text, t, column, { accessor: p.accessor, label: p.label || p.accessor }, word)
+      : [{ from, to, insert: p.accessor }];
+    // Edits before the word (a filled-in label) move the cursor target.
+    let delta = 0;
+    for (let i = 1; i < changes.length; i++) if (changes[i].to <= from) delta += changes[i].insert.length - (changes[i].to - changes[i].from);
+    const wordInsert = changes[0].insert;
+    view.dispatch({
+      changes,
+      selection: { anchor: from + delta + wordInsert.length },
+      userEvent: 'input.complete',
+      scrollIntoView: true,
+    });
+  };
+}
+
 function lookup(types: string[]): TypeSchemaProp[] | undefined {
   return types.length > 1 ? intersectionSchema(types) : getSchema(types[0]);
 }
 
-function build(props: TypeSchemaProp[], from: number, method?: string, member?: boolean): CompletionResult | null {
+function build(props: TypeSchemaProp[], from: number, method?: string, member?: boolean, usedInTable?: ReadonlySet<string>): CompletionResult | null {
   const filtered = method ? props.filter(p => propFilterFor(method)(p.configClass)) : props;
   if (!filtered.length) return null;
+  const addColumn = method === 'addColumn';
   return {
     from,
     options: filtered.map(p => ({
       label: p.accessor,
-      detail: p.label || (p.systemobject ? 'system' : 'property'),
+      detail: (p.label || (p.systemobject ? 'system' : 'property')) + (usedInTable?.has(p.accessor) ? ' \u00b7 in table' : ''),
       info: p.description,
       type: 'property',
+      ...(addColumn ? { apply: applyAddColumn(p) } : {}),
       // Custom props always rank above system ones (id/name/parent/…). In a
       // `obj.` DOT-MEMBER position the user explicitly referenced an object and
       // wants its fields, so the WHOLE property set outranks the generic method
@@ -433,7 +512,7 @@ function build(props: TypeSchemaProp[], from: number, method?: string, member?: 
       // otherwise an object with only system props (e.g. Organisation) buries
       // `name`/`id`/`location` below ~30 methods. In a WHERE / method-arg slot
       // there are no competing methods, so the original ±1 split is kept.
-      boost: member ? (p.systemobject ? 1 : 2) : (p.systemobject ? -1 : 1),
+      boost: (member ? (p.systemobject ? 1 : 2) : (p.systemobject ? -1 : 1)) - (usedInTable?.has(p.accessor) ? 3 : 0),
     })),
     validFor: /^[\w]*$/,
   };
@@ -480,12 +559,24 @@ function ctxTypes(ctx: { types?: string[]; ref?: string }): string[] | undefined
   return undefined;
 }
 
+/** Accessors already used by the table's columns, so the list can rank unused ones first. */
+function usedColumns(state: EditorState, at: number): Set<string> {
+  const t = tableAt(getTableModels(state.doc).tables, at);
+  const used = new Set<string>();
+  if (t) for (const c of t.columns) if (c.propIdent && !(c.call && at > c.call.open && at <= (c.call.close ?? c.call.scanEnd))) used.add(c.propIdent);
+  return used;
+}
+
 export function propertyCompletions(context: CompletionContext): CompletionResult | Promise<CompletionResult | null> | null {
   const ctx = resolveContext(context.state, context.pos);
   if (!ctx) return null;
   return awaitCompletion(
     context,
-    () => { const ts = ctxTypes(ctx); if (!ts) return null; const p = lookup(ts); return p ? build(p, ctx.from, ctx.method, ctx.member) : null; },
+    () => {
+      const ts = ctxTypes(ctx); if (!ts) return null;
+      const p = lookup(ts); if (!p) return null;
+      return build(p, ctx.from, ctx.method, ctx.member, ctx.method === 'addColumn' ? usedColumns(context.state, ctx.from) : undefined);
+    },
     () => {
       // Stage 1 (ref path only): resolve ns.bid → class. Stage 2: fetch schema
       // once the class is known. ensure() re-runs per notify, so both progress.

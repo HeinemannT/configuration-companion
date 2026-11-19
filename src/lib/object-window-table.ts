@@ -20,7 +20,7 @@
 import type { FullObject, PropValue } from './object-read';
 import type { StructureRule } from './object-structure';
 
-export type FieldWidget = 'text' | 'mono' | 'bool' | 'enum' | 'num' | 'ref' | 'ro' | 'color';
+export type FieldWidget = 'text' | 'mono' | 'bool' | 'enum' | 'num' | 'ref' | 'ro' | 'color' | 'image';
 
 export interface FieldDef {
   /** Property name in the read (`props`). */
@@ -110,6 +110,8 @@ export const EXPRESSIONS: Readonly<Record<string, ExpressionDef>> = {
 };
 
 const DESC: FieldDef = { prop: 'description', label: 'Description', widget: 'text' };
+/** The image of a button or an image view: picked from the workspace's image files. */
+const IMAGE_FILE: FieldDef = { prop: 'imageFile', label: 'Image file', widget: 'image' };
 const NAME: FieldDef = { prop: 'name', label: 'Name', widget: 'text' };
 const KEY: FieldDef = { prop: 'key', label: 'Key', widget: 'mono' };
 
@@ -492,6 +494,8 @@ export const TYPES: Readonly<Record<string, TypeInfo>> = {
     ],
     layout: WIDGET_LAYOUT,
   }),
+  // The image of an image view is picked from the workspace's image files.
+  ImageView: simple('Image view', 'k-object', '--fam-layout', { groups: [{ title: 'General', fields: [NAME, DESC, IMAGE_FILE] }, AUDIT] }),
   // Flow: the button → its action object (transport group, edit page …) →
   // that object's children, with the Code marker.
   ActionButton: simple('Action button', 'k-button', '--fam-button', {
@@ -499,7 +503,7 @@ export const TYPES: Readonly<Record<string, TypeInfo>> = {
     slots: [CODE_SLOT],
     blocks: ['expression', 'initExpression', 'afterExpression', 'refreshExpression', 'editExpression'],
     groups: [
-      { title: 'General', fields: [DESC, { prop: 'buttonText', label: 'Button text', widget: 'text' }] },
+      { title: 'General', fields: [DESC, { prop: 'buttonText', label: 'Button text', widget: 'text' }, IMAGE_FILE] },
       { title: 'Configuration', fields: [
         { prop: 'actionType', label: 'Action type', widget: 'enum' },
         { prop: 'refreshStrategy', label: 'Refresh strategy', widget: 'enum' },

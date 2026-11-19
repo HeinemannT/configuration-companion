@@ -17,10 +17,10 @@ describe('color-set-cache', () => {
 
   it('misses for an unknown environment, hits after a set, and isolates environments', async () => {
     const c = await import('../color-set-cache');
-    expect(await c.getColorSets('p1', 101)).toBeNull();
+    expect(await c.getColorSets('p1')).toBeNull();
     await c.setColorSets('p1', SETS, 100);
-    expect(await c.getColorSets('p1', 101)).toEqual({ sets: SETS, fetchedAt: 100, stale: false });
-    expect(await c.getColorSets('p2', 101)).toBeNull();
+    expect(await c.getColorSets('p1')).toEqual({ sets: SETS, fetchedAt: 100, stale: false });
+    expect(await c.getColorSets('p2')).toBeNull();
   });
 
   it('persists to storage.local across an MV3 service-worker module reset', async () => {
@@ -29,33 +29,35 @@ describe('color-set-cache', () => {
 
     vi.resetModules();
     const b = await import('../color-set-cache');
-    expect(await b.getColorSets('p1', 101)).toEqual({ sets: SETS, fetchedAt: 100, stale: false });
+    expect(await b.getColorSets('p1')).toEqual({ sets: SETS, fetchedAt: 100, stale: false });
   });
 
-  it('marks entries stale only after the TTL boundary', async () => {
+  it('never expires a stored copy by itself', async () => {
     const c = await import('../color-set-cache');
     await c.setColorSets('p1', SETS, 100);
-    expect((await c.getColorSets('p1', 100 + c.COLOR_SET_TTL_MS))?.stale).toBe(false);
-    expect((await c.getColorSets('p1', 101 + c.COLOR_SET_TTL_MS))?.stale).toBe(true);
+    expect((await c.getColorSets('p1'))?.stale).toBe(false);
+    const fetcher = vi.fn(async () => [] as ColorSetData[]);
+    await expect(c.loadColorSets('p1', fetcher)).resolves.toMatchObject({ sets: SETS, source: 'cache' });
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it('invalidates a persisted environment and prevents it returning after reload', async () => {
     const c = await import('../color-set-cache');
     await c.setColorSets('p1', SETS, 100);
     c.invalidateColorSets('p1');
-    await vi.waitFor(async () => expect(await c.getColorSets('p1', 101)).toBeNull());
+    await vi.waitFor(async () => expect(await c.getColorSets('p1')).toBeNull());
 
     vi.resetModules();
     const reloaded = await import('../color-set-cache');
-    expect(await reloaded.getColorSets('p1', 101)).toBeNull();
+    expect(await reloaded.getColorSets('p1')).toBeNull();
   });
 
   it('coalesces concurrent misses into one fetch and returns a fresh cache hit afterwards', async () => {
     const c = await import('../color-set-cache');
     let release!: (sets: ColorSetData[]) => void;
     const fetcher = vi.fn(() => new Promise<ColorSetData[]>(resolve => { release = resolve; }));
-    const first = c.loadColorSets('p1', fetcher, false, Date.now());
-    const second = c.loadColorSets('p1', fetcher, false, Date.now());
+    const first = c.loadColorSets('p1', fetcher, false);
+    const second = c.loadColorSets('p1', fetcher, false);
     await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
     release(SETS);
 
@@ -83,12 +85,12 @@ describe('color-set-cache', () => {
     expect(failed).toHaveBeenCalledTimes(2);
   });
 
-  it('returns an expired last-known-good entry as explicitly stale when refresh fails', async () => {
+  it('returns the stored copy as explicitly stale when a forced refresh fails', async () => {
     const c = await import('../color-set-cache');
     await c.setColorSets('p1', SETS, 100);
     const failed = vi.fn(async () => { throw new Error('BMP timed out'); });
 
-    await expect(c.loadColorSets('p1', failed, false, 101 + c.COLOR_SET_TTL_MS)).resolves.toEqual({
+    await expect(c.loadColorSets('p1', failed, true)).resolves.toEqual({
       sets: SETS,
       fetchedAt: 100,
       stale: true,

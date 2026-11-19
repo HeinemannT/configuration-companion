@@ -30,6 +30,7 @@ import { codeReadCache } from './code-scope-read';
 import { clearFeeds } from './code-feed';
 import { nameCatalogs } from './object-search';
 import { forgetProfileColorSets } from './color-set-cache';
+import { forgetProfileImageIndex } from './image-index-cache';
 import { forgetProfile as forgetProfileSchemas } from './type-schema-cache';
 
 /** What a purge does with one key family. */
@@ -68,6 +69,7 @@ export const STORED_KEYS: readonly StoredKey[] = [
   // Settings: kept by both on purpose (profiles, AI key, preferences).
   { key: 'crev_settings', match: 'exact', area: 'local', onProfile: 'keep', onReset: 'keep', what: 'settings and server profiles' },
   { key: 'crev_settings_backup', match: 'exact', area: 'local', onProfile: 'keep', onReset: 'keep', what: 'settings backup' },
+  { key: 'crev_pt_voice', match: 'exact', area: 'local', onProfile: 'keep', onReset: 'keep', what: 'Point and tell voice comments setting' },
   // Per-profile stores (`crev_<profileId>_<suffix>`).
   ...(['cache', 'cache_date', 'history', 'script_history'] as const).map((suffix): StoredKey => ({
     key: PROFILE_KEY, match: 'prefix', suffix: `_${suffix}`, area: 'local', onProfile: 'profile-key', onReset: 'remove', what: `per-profile ${suffix}` })),
@@ -85,6 +87,7 @@ export const STORED_KEYS: readonly StoredKey[] = [
   { key: 'crev_editor_session_', match: 'prefix', area: 'session', onProfile: 'env-value', onReset: 'remove', what: 'editor session context' },
   // Server caches.
   { key: 'crev_color_sets_v2', match: 'exact', area: 'local', onProfile: 'entries', onReset: 'remove', what: 'colour-set cache (by environment)' },
+  { key: 'crev_image_index_v1', match: 'exact', area: 'local', onProfile: 'entries', onReset: 'remove', what: 'image file list cache (by environment)' },
   { key: 'crev_schema_cache_v2', match: 'exact', area: 'local', onProfile: 'server-id-entries', onReset: 'remove', what: 'type schema cache' },
   { key: 'crev_root_category_cache_v1', match: 'exact', area: 'local', onProfile: 'server-id-entries', onReset: 'remove', what: 'root category cache' },
   { key: 'crev_script_ledger:', match: 'prefix', area: 'local', onProfile: 'server-url-key', onReset: 'remove', what: 'script ledger of a server' },
@@ -93,6 +96,10 @@ export const STORED_KEYS: readonly StoredKey[] = [
   { key: 'crev_transport_draft:', match: 'prefix', area: 'local', onProfile: 'env-key', onReset: 'remove', what: 'Transport draft of a workspace' },
   // Transport (beta): what undoes the last apply to a target (`crev_transport_undo:<environment>|<target>`).
   { key: 'crev_transport_undo:', match: 'prefix', area: 'local', onProfile: 'env-key', onReset: 'remove', what: 'Transport undo of the last apply' },
+  // Code Search, Replace tab: what puts back the last replace of a workspace (`crev_replace_undo:<environment>`).
+  { key: 'crev_replace_undo:', match: 'prefix', area: 'local', onProfile: 'env-key', onReset: 'remove', what: 'Undo of the last replace in code' },
+  // Numeric IDs: what puts back the last change of IDs and their code of a workspace (`crev_numeric_ids_undo:<environment>`).
+  { key: 'crev_numeric_ids_undo:', match: 'prefix', area: 'local', onProfile: 'env-key', onReset: 'remove', what: 'Undo of the last numeric ID change' },
   // Access.
   { key: 'access-pending:', match: 'prefix', area: 'local', onProfile: 'env-key', onReset: 'remove', what: 'Access apply recovery pointer' },
   { key: 'crev_access_mode_recents', match: 'exact', area: 'local', onProfile: 'entries', onReset: 'remove', what: 'Access mode recents (by profile)' },
@@ -101,6 +108,8 @@ export const STORED_KEYS: readonly StoredKey[] = [
   { key: 'companion-access', match: 'exact', area: 'indexeddb', onProfile: 'env-key', onReset: 'remove', what: 'Access workspace drafts' },
   { key: 'companion-access-operations', match: 'exact', area: 'indexeddb', onProfile: 'env-value', onReset: 'remove', what: 'Access apply journals' },
   { key: 'crev-code-index', match: 'exact', area: 'indexeddb', onProfile: 'keep', onReset: 'keep', what: 'code index (cleared by the caller: clearCodeIndex)' },
+  // Context menus: whether this browser session has ensured the entries (see context-menus.ts).
+  { key: 'crev_menus_ready', match: 'exact', area: 'session', onProfile: 'keep', onReset: 'remove', what: 'context menu entries ensured this session' },
   // Page-layer preferences (served to content scripts by handlers/page-prefs.ts).
   { key: 'crev_overlay_bounds_', match: 'prefix', area: 'local', onProfile: 'keep', onReset: 'remove', what: 'in-page window positions' },
   { key: 'crev_blueprint_portable_ids', match: 'exact', area: 'local', onProfile: 'keep', onReset: 'remove', what: 'Blueprint portable-ID recipe' },
@@ -124,6 +133,11 @@ export const STORED_KEYS: readonly StoredKey[] = [
   { key: 'crev_bp_resume', match: 'exact', area: 'page', onProfile: 'keep', onReset: 'keep', what: 'Blueprint resume flag (page sessionStorage, one reload)' },
   { key: 'crev_bp_target:', match: 'prefix', area: 'page', onProfile: 'keep', onReset: 'keep', what: 'Blueprint edit target chosen for a page (page sessionStorage)' },
   { key: 'crev_inspect', match: 'exact', area: 'page', onProfile: 'keep', onReset: 'keep', what: 'Inspect on/off (page sessionStorage)' },
+  { key: 'crev_pt_marks:', match: 'prefix', area: 'page', onProfile: 'keep', onReset: 'keep', what: 'Point and tell notes of a page (page sessionStorage, this tab only)' },
+  { key: 'crev_pt_copy:', match: 'prefix', area: 'page', onProfile: 'keep', onReset: 'keep', what: 'What the last copy of notes showed the AI (page sessionStorage)' },
+  { key: 'crev_pt_stage:', match: 'prefix', area: 'page', onProfile: 'keep', onReset: 'keep', what: 'A pasted answer handed to Blueprint, read once (page sessionStorage)' },
+  { key: 'crev_pt_staged:', match: 'prefix', area: 'page', onProfile: 'keep', onReset: 'keep', what: 'Which notes the staged changes belong to (page sessionStorage)' },
+  { key: 'crev_pt_noticed', match: 'exact', area: 'page', onProfile: 'keep', onReset: 'keep', what: 'The first-copy notice was shown (page sessionStorage)' },
 ];
 
 /** `crev_` text in the source that is not a storage key. */
@@ -287,6 +301,7 @@ export async function clearProfileLocalData(
   // Caches with a memory copy drop that profile's entries there first, so a
   // later write-back cannot restore them.
   await forgetProfileColorSets(profileId).catch(e => log.swallow('localData:colorSets', e));
+  await forgetProfileImageIndex(profileId).catch(e => log.swallow('localData:imageIndex', e));
   await forgetProfileSchemas(profileId).catch(e => log.swallow('localData:schemas', e));
   await purgeArea('local', (entry, key, value) => profilePurge(entry, key, value, scope));
   await purgeArea('session', (entry, key, value) => profilePurge(entry, key, value, scope));
@@ -308,6 +323,7 @@ export async function clearAllLocalData(_profileIds: readonly string[] = []): Pr
   clearFeeds();
   nameCatalogs.clear();
   await forgetProfileColorSets().catch(e => log.swallow('localData:colorSets', e));
+  await forgetProfileImageIndex().catch(e => log.swallow('localData:imageIndex', e));
   const reset = (entry: StoredKey) => entry.onReset === 'remove' ? { remove: true as const } : null;
   await purgeArea('local', reset);
   await purgeArea('session', reset);

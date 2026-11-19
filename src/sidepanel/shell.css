@@ -106,21 +106,35 @@ body {
 .ui .srv-chev { width: 14px; height: 14px; color: var(--text-helper); }
 .srvctl:hover .srv-chev { color: var(--text-secondary); }
 
-.header .header-icon-btn,
-.header .hdr-mode { width: 28px; height: 28px; }
 .hdr-sp { flex: 1 1 0; min-width: var(--space-1); }
-.header-tools, .hdr-modes { display: inline-flex; align-items: center; gap: 2px; flex: none; }
-.hdr-vsep { width: 1px; height: 16px; margin: 0 4px; flex: none; background: var(--border-subtle); }
-.ui .hdr-mode[aria-pressed="true"] { background: var(--brand-bg); color: var(--text-brand); }
+
+/* The four main actions: the page modes in one segmented track (the pressed
+ * one is filled), then Extended Code, which opens the editor, so it is a
+ * plain outlined button that never shows pressed. Icons only; the names
+ * appear when the header is wide (below). */
+.hdr-actions { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.hdr-modes { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border-radius: var(--radius-lg); background: var(--layer-01); }
+.header .hdr-mode { width: 28px; height: 28px; }
+.header .hdr-act { width: 32px; height: 32px; border-radius: var(--radius-lg); box-shadow: inset 0 0 0 1px var(--border-subtle); }
+.header .hdr-act:hover { box-shadow: inset 0 0 0 1px var(--border-strong); }
+.hdr-lbl { display: none; }
+.ui .hdr-mode[aria-pressed="true"] { background: var(--brand-bg); color: var(--text-brand); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand) 30%, transparent); }
 .hdr-modes.no-page .hdr-mode:not([aria-pressed="true"]) { color: var(--text-placeholder); }
 
-/* A narrow panel: smaller tools without gaps, so the state ("Sign in to
- * BMP") still fits; the server name truncates first. */
+/* A narrow panel: smaller buttons, so the state ("Sign in to BMP") still
+ * fits; the server name truncates first. */
 @container sp-header (max-width: 340px) {
-  .header .header-icon-btn,
   .header .hdr-mode { width: 24px; height: 24px; }
-  .header-tools, .hdr-modes { gap: 0; }
-  .hdr-vsep { margin: 0 2px; }
+  .header .hdr-act { width: 28px; height: 28px; }
+  .hdr-actions { gap: 4px; }
+}
+
+/* A wide panel: each button carries its name. */
+@container sp-header (min-width: 560px) {
+  .header .hdr-mode, .header .hdr-act { width: auto; padding: 0 var(--space-2); gap: 6px; font-size: var(--ui-fs-sm); font-weight: 500; }
+  .header .hdr-mode { height: 28px; }
+  .header .hdr-act { height: 32px; padding: 0 10px; color: var(--text-secondary); }
+  .hdr-lbl { display: inline; white-space: nowrap; }
 }
 
 /* ── Tab bar (role=tablist) ─────────────────────── */
@@ -246,7 +260,7 @@ body {
 
 .tab-panel { display: none; padding: var(--space-3) var(--space-4) var(--space-4); }
 .tab-panel.active { display: block; }
-#panel-connect.active, #panel-log.active { padding: 0; }
+#panel-connect.active, #panel-log.active, #panel-utilities.active { padding: 0; }
 
 @keyframes detection-spin {
   to { transform: rotate(360deg); }

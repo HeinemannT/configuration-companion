@@ -1,0 +1,27 @@
+/* The mark's moods (lib/companion-mark.ts richMarkSvg, content-pointtell/mascot.ts): which part shows. The motion itself is
+ * Web Animations from mascot.ts, only while a reaction plays. Transforms and opacity only; nothing loops. */
+#crev-pointtell-layer .pt-mascot .mk-body { transform-box: view-box; transform-origin: 15px 24px; }
+#crev-pointtell-layer .pt-mascot .mk-body[data-pose="doze"] { transform: translateY(.5px) rotate(5deg); transition: transform 500ms ease-in-out; }
+#crev-pointtell-layer .pt-mascot .mk-face { transition: transform 90ms linear; }
+#crev-pointtell-layer .pt-mascot .mk-eye > * { opacity: 0; transition: opacity 60ms linear; }
+#crev-pointtell-layer .pt-mascot .mk-eye[data-s="op"] .mk-open,
+#crev-pointtell-layer .pt-mascot .mk-eye[data-s="sh"] .mk-sleep,
+#crev-pointtell-layer .pt-mascot .mk-eye[data-s="hp"] .mk-glad,
+#crev-pointtell-layer .pt-mascot .mk-eye[data-s="sq"] .mk-squint,
+#crev-pointtell-layer .pt-mascot .mk-eye[data-s="dz"] .mk-dizzy { opacity: 1; }
+#crev-pointtell-layer .pt-mascot .mk-open, #crev-pointtell-layer .pt-mascot .mk-dizzy { transform-box: fill-box; transform-origin: 50% 50%; }
+#crev-pointtell-layer .pt-mascot .mk-ln { fill: none; stroke: #1c1033; stroke-width: 1.15; stroke-linecap: round; stroke-linejoin: round; }
+#crev-pointtell-layer .pt-mascot .mk-dizzy { stroke-width: .85; }
+#crev-pointtell-layer .pt-mascot .mk-brows path { fill: none; stroke: #1c1033; stroke-width: .95; stroke-linecap: round; opacity: 0; transform-box: fill-box; transform-origin: 50% 50%; transition: opacity 80ms linear, transform 120ms ease-out; }
+#crev-pointtell-layer .pt-mascot[data-b] .mk-brows path { opacity: 1; }
+#crev-pointtell-layer .pt-mascot[data-b="up"] .mk-brows path { transform: translateY(-1px); }
+#crev-pointtell-layer .pt-mascot[data-b="wince"] .mk-bl { transform: translateY(-.2px) rotate(19deg); }
+#crev-pointtell-layer .pt-mascot[data-b="wince"] .mk-br { transform: translateY(-.2px) rotate(-19deg); }
+#crev-pointtell-layer .pt-mascot[data-b="ask"] .mk-bl { transform: translateY(.3px); }
+#crev-pointtell-layer .pt-mascot[data-b="ask"] .mk-br { transform: translateY(-1.3px) rotate(-3deg); }
+#crev-pointtell-layer .pt-mascot .mk-zz { fill: none; stroke: #6a22d8; stroke-width: .9; stroke-linecap: round; stroke-linejoin: round; opacity: 0; transition: opacity 500ms ease-out; }
+#crev-pointtell-layer .pt-mascot .mk-body[data-pose="doze"] .mk-zz { opacity: .8; }
+@media (prefers-reduced-motion: reduce) {
+  #crev-pointtell-layer .pt-mascot .mk-body, #crev-pointtell-layer .pt-mascot .mk-face, #crev-pointtell-layer .pt-mascot .mk-eye > *,
+  #crev-pointtell-layer .pt-mascot .mk-brows path, #crev-pointtell-layer .pt-mascot .mk-zz { transition: none; }
+}

@@ -234,6 +234,42 @@ export function findCodeRefs(text: string): CodeRef[] {
   return out.map(r => ({ ...r, line: lineOf(starts, r.start) }));
 }
 
+/** A stretch of a script that is not code: a comment or a string literal. */
+export interface CodeSpan {
+  start: number;
+  end: number;
+  kind: 'comment' | 'string';
+}
+
+/** The comments and string literals of `text`, in text order, found the way
+ *  `findCodeRefs` skips them (so the two always agree on what is code). */
+export function codeSpans(text: string): CodeSpan[] {
+  const out: CodeSpan[] = [];
+  const n = text.length;
+  let i = 0;
+  while (i < n) {
+    const c = text[i];
+    if (c === '/' && text[i + 1] === '/') {
+      const e = text.indexOf('\n', i);
+      const end = e < 0 ? n : e;
+      out.push({ start: i, end, kind: 'comment' });
+      i = end;
+    } else if (c === '/' && text[i + 1] === '*') {
+      const e = text.indexOf('*/', i + 2);
+      const end = e < 0 ? n : e + 2;
+      out.push({ start: i, end, kind: 'comment' });
+      i = end;
+    } else if (c === '"' || c === "'") {
+      const end = stringEnd(text, i);
+      out.push({ start: i, end, kind: 'string' });
+      i = end;
+    } else {
+      i++;
+    }
+  }
+  return out;
+}
+
 /** One entry per referenced object, in first-use order, with every line
  *  that names it. */
 export interface CodeRefUse {

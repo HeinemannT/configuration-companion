@@ -17,9 +17,9 @@
  */
 
 import { attrs, btn, el, icon } from '../lib/dom';
-import { typeBadge } from '../lib/type-badge';
-import { svg } from '../lib/dom';
-import { ICON_FOLDER } from '../lib/icons';
+import { areasFilter, rowBadge, searchBox } from './find-controls';
+import type { NumericIdsController } from './numeric-ids-controller';
+import { mountNumericIds } from './numeric-ids-view';
 import { copyWithFeedback } from '../lib/copy-feedback';
 import type { UndoRecord } from '../lib/transport-undo';
 import { FILE_LIMIT_KB_MAX, FILE_LIMIT_KB_MIN, isTransportRoot, sizeKb, uploadText, TRANSPORT_SCAN_CAP, TRANSPORT_SCAN_TOTAL, type BundlePart, type BundleWarning, type TransportRoot } from '../lib/transport-bundle';
@@ -30,7 +30,7 @@ import {
   areaKey, type AreaResult, type BrowseNode, type Change, type DirectState, type NeedKind, type GroupKey, type TargetState, type TransportController,
 } from './transport-controller';
 import {
-  AREA_LABELS, AREA_ORDER, areasValue, changedValue, dayText, downloadName, filtersActive, hasShownChildren, isDefaultArea, isNumericId, MATCH, orderedAreas, plural,
+  AREA_LABELS, AREA_ORDER, changedValue, dayText, downloadName, filtersActive, hasShownChildren, isNumericId, MATCH, orderedAreas, plural,
   shortTime, subLabel, usersOf, visibleNodes, wordsOf, type SinceKey, type SubSpec, type TreeNode, type TreeShow,
 } from './transport-model';
 import {
@@ -44,6 +44,12 @@ export interface TransportViewOptions {
   download?: (name: string, text: string) => void;
   /** Write to the clipboard (tests replace it). */
   copy?: (text: string) => Promise<boolean>;
+  /** The Numeric IDs tab (its state); without it the window has two tabs. */
+  numeric?: NumericIdsController;
+  /** The workspace's name, for the Numeric IDs confirmation. */
+  workspace?: () => string;
+  /** Opens Code Search, where the code copy is made. */
+  openCodeSearch?: () => void;
 }
 
 /** Lines of a part shown before "Show all". */
@@ -221,22 +227,19 @@ export function mountTransportView(host: HTMLElement, ctl: TransportController, 
   const tabCount = el('span', 'tr-tab-n');
   const tabTransport = attrs(btn('tr-tab', undefined, () => ctl.showTab('transport'), 'Transport', tabCount), { role: 'tab', 'data-tab': 'transport', id: 'tr-tab-transport', 'aria-controls': 'tr-transport' });
   const logBtn = btn('tr-logbtn ui-tbtn', 'Transport log of this workspace', () => { void ctl.openLog(); }, icon('i-clock'), 'Log');
-  const tabs = attrs(el('div', 'tr-tabs', tabFind, tabTransport), { role: 'tablist', 'aria-label': 'Transport' });
+  // Numeric IDs: changes IDs on this workspace, no target and no transport.
+  const numericCtl = opts.numeric;
+  const numericView = numericCtl ? mountNumericIds(numericCtl, { now, ...(opts.workspace ? { workspace: opts.workspace } : {}), ...(opts.openCodeSearch ? { openCodeSearch: opts.openCodeSearch } : {}) }) : null;
+  const numericCount = el('span', 'tr-tab-n');
+  const drawNumericCount = (): void => { numericCount.textContent = numericCtl && numericCtl.opened && numericCtl.areaModels.length ? ` ${numericCtl.count.toLocaleString('en-US')}` : ''; };
+  const offNumeric = numericCtl?.onChange(drawNumericCount);
+  const tabNumeric = attrs(btn('tr-tab', undefined, () => ctl.showTab('numeric'), 'Numeric IDs', numericCount), { role: 'tab', 'data-tab': 'numeric', id: 'tr-tab-numeric', 'aria-controls': 'tr-numeric' });
+  const tabs = attrs(el('div', 'tr-tabs', tabFind, tabTransport, ...(numericCtl ? [tabNumeric] : [])), { role: 'tablist', 'aria-label': 'Transport' });
   const top = el('div', 'tr-top', tabs, el('span', 'tr-sp'), logBtn);
 
   // ── find bar: one box and three filter buttons ──────────────────
-  const queryInput = attrs(el('input', 'tr-q') as HTMLInputElement, { type: 'search', placeholder: 'ID or name, or paste IDs', 'aria-label': 'Find', spellcheck: 'false', autocomplete: 'off' });
-  queryInput.addEventListener('input', () => ctl.setBox(queryInput.value));
   // Lines pasted into the box become one line, separated by commas: a list.
-  queryInput.addEventListener('paste', e => {
-    const text = e.clipboardData?.getData('text') ?? '';
-    if (!/[\r\n]/.test(text)) return;
-    e.preventDefault();
-    const list = text.trim().split(/\s*[\r\n]+\s*/).join(', ');
-    queryInput.setRangeText(list, queryInput.selectionStart ?? queryInput.value.length, queryInput.selectionEnd ?? queryInput.value.length, 'end');
-    ctl.setBox(queryInput.value);
-  });
-  const queryField = el('span', 'tr-qf ui-search', icon('i-search'), queryInput);
+  const { field: queryField, input: queryInput } = searchBox({ placeholder: 'ID or name, or paste IDs', label: 'Find', onInput: text => ctl.setBox(text), pasteLines: true });
 
   const chev = () => icon('i-chev', 'ic-sm ui-disc-chev');
   const fbClear = (cls: string, label: string, fn: () => void) => { const b = btn(`fb-x ${cls}`, label, fn, icon('i-x', 'ic-sm')); b.hidden = true; return b; };
@@ -268,25 +271,12 @@ export function mountTransportView(host: HTMLElement, ctl: TransportController, 
   const changedWrap = el('span', 'fb-wrap tr-changed-wrap', changedBox, changedPop);
 
   // Areas
-  const whereVal = el('span', 'fb-v');
-  const whereBtn = attrs(btn('fb-b tr-where', undefined, () => setPopover('areas', pop.hidden !== false), el('span', 'fb-l', 'Areas:'), ' ', whereVal, chev()), { 'aria-haspopup': 'true', 'aria-expanded': 'false' });
-  const whereClear = fbClear('tr-areasclear', 'Back to the default areas', () => ctl.resetAreas());
-  const whereBox = el('span', 'fb tr-areasbox', whereBtn, whereClear);
-  const pop = attrs(el('div', 'tr-pop ui-menu pop-areas'), { role: 'group', 'aria-label': 'Areas to look in' });
-  pop.hidden = true;
-  const areaBoxes = new Map<TransportRoot, HTMLInputElement>();
-  const areaOption = (root: TransportRoot) => {
-    const box = attrs(el('input', 'tr-area-ck') as HTMLInputElement, { type: 'checkbox', 'data-root': root });
-    areaBoxes.set(root, box);
-    return el('label', 'tr-opt', box, el('span', '', AREA_LABELS[root]));
-  };
-  pop.append(...AREA_ORDER.filter(isDefaultArea).map(areaOption), el('div', 'tr-pop-sep'), ...AREA_ORDER.filter(r => !isDefaultArea(r)).map(areaOption), el('p', 'tr-pop-note', NOT_TRANSPORTED));
-  pop.addEventListener('change', e => {
-    const t = e.target as HTMLInputElement;
-    const root = t.dataset.root as TransportRoot | undefined;
-    if (root) ctl.setAreaChoice(root, t.checked);
+  const areas = areasFilter({
+    areas: AREA_ORDER, note: NOT_TRANSPORTED,
+    onChoose: (root, on) => ctl.setAreaChoice(root, on), onReset: () => ctl.resetAreas(),
+    onToggle: open => setPopover('areas', open),
   });
-  const whereWrap = el('span', 'fb-wrap tr-where-wrap', whereBox, pop);
+  const { btn: whereBtn, pop, wrap: whereWrap } = areas;
 
   // This page
   const pageBtn = attrs(btn('fb-b plain tr-page', undefined, () => ctl.setOnPage(!ctl.onPage), 'This page'), { 'aria-pressed': 'false' });
@@ -370,7 +360,7 @@ export function mountTransportView(host: HTMLElement, ctl: TransportController, 
   // ── transport log ───────────────────────────────────────────────
   const logView = el('div', 'tr-main tr-logview');
 
-  const root = el('div', 'tr ui', top, findPanel, transportPanel, logView);
+  const root = el('div', 'tr ui', top, findPanel, transportPanel, ...(numericView ? [numericView.panel] : []), logView);
   host.replaceChildren(root);
 
   // Delegated result list events.
@@ -420,6 +410,8 @@ export function mountTransportView(host: HTMLElement, ctl: TransportController, 
   }
   list.addEventListener('click', e => {
     const t = e.target as HTMLElement;
+    const go = t.closest<HTMLElement>('.tr-tag.go');
+    if (go) { ctl.showTab('numeric'); return; }
     const caret = t.closest<HTMLElement>('.tr-caret');
     if (caret) {
       if (inTree(caret)) { if (caret.dataset.key) ctl.toggleBrowse(caret.dataset.key); return; }
@@ -483,10 +475,7 @@ export function mountTransportView(host: HTMLElement, ctl: TransportController, 
     newOnly.disabled = !day;
     newOnly.setAttribute('aria-checked', String(ctl.filters.newOnly));
 
-    whereVal.textContent = areasValue(ctl.chosen);
-    whereBox.classList.toggle('set', !ctl.defaultAreas);
-    whereClear.hidden = ctl.defaultAreas;
-    for (const [r, box] of areaBoxes) box.checked = ctl.chosen.has(r);
+    areas.draw(ctl.chosen, ctl.defaultAreas);
 
     pageBox.classList.toggle('set', ctl.onPage);
     pageBtn.setAttribute('aria-pressed', String(ctl.onPage));
@@ -611,19 +600,6 @@ export function mountTransportView(host: HTMLElement, ctl: TransportController, 
     return b;
   }
 
-  /** The type badge of a row. A class the type table does not know gets a code from its
-   *  name (Category: CAT, ListPropertySet: LPS) instead of one code for all, and a Category a folder. */
-  function rowBadge(className: string): HTMLElement {
-    const badge = typeBadge(className, { size: 'xs' });
-    const label = badge.querySelector('.lbl');
-    if (label?.textContent !== 'OBJ' || !className) return badge;
-    const capitals = className.match(/[A-Z]/g) ?? [];
-    label.textContent = capitals.length >= 3 ? capitals.slice(0, 3).join('') : className.slice(0, 3).toUpperCase();
-    badge.classList.add('plain');
-    if (className === 'Category') badge.querySelector('.tile')?.replaceChildren(svg(ICON_FOLDER));
-    return badge;
-  }
-
   interface RowSpec {
     row?: TransportScanRow;
     id: string;
@@ -669,7 +645,7 @@ export function mountTransportView(host: HTMLElement, ctl: TransportController, 
       const tags = el('span', 'tr-tags');
       if (ctl.isNew(r)) tags.append(el('span', 'tr-tag new', 'new'));
       if (r.linkedTo) tags.append(linkedTag(r.linkedTo));
-      if (numeric) tags.append(attrs(el('span', 'tr-tag auto', 'auto ID'), { title: NUMERIC_ID_TITLE }));
+      if (numeric) tags.append(opts.numeric ? attrs(plainBtn('tr-tag auto go', 'auto ID'), { title: `${NUMERIC_ID_TITLE} Click to change it under Numeric IDs.` }) : attrs(el('span', 'tr-tag auto', 'auto ID'), { title: NUMERIC_ID_TITLE }));
       const who = r.modifiedBy === 'System' ? '' : r.modifiedBy;
       kids.push(
         tags,
@@ -1900,13 +1876,19 @@ export function mountTransportView(host: HTMLElement, ctl: TransportController, 
 
   function drawTabs(): void {
     const t = ctl.logOpen ? null : ctl.tab;
-    for (const b of [tabFind, tabTransport]) {
+    for (const b of [tabFind, tabTransport, tabNumeric]) {
       const on = b.dataset.tab === t;
       b.classList.toggle('on', on);
       b.setAttribute('aria-selected', String(on));
     }
     findPanel.hidden = ctl.logOpen || ctl.tab !== 'find';
     transportPanel.hidden = ctl.logOpen || ctl.tab !== 'transport';
+    if (numericView) {
+      const showing = !ctl.logOpen && ctl.tab === 'numeric';
+      numericView.panel.hidden = !showing;
+      if (showing && numericCtl) { numericCtl.open(); numericView.draw(); }
+      drawNumericCount();
+    }
     logView.hidden = !ctl.logOpen;
   }
 
@@ -1959,6 +1941,8 @@ export function mountTransportView(host: HTMLElement, ctl: TransportController, 
   return {
     dispose: () => {
       off();
+      offNumeric?.();
+      numericView?.dispose();
       stopTick();
       resizeObs?.disconnect();
       document.removeEventListener('mousedown', onDocDown);

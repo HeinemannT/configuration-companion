@@ -559,6 +559,8 @@
 .ai-bar--err { border-color: var(--danger); }
 .ai-bar-icon { display: inline-flex; color: var(--accent-bright); }
 .ai-bar-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* A problem with a proposal (a syntax error): the sentence in full, wrapped. */
+.ai-bar-note { white-space: normal; max-width: 46ch; line-height: 1.35; }
 .ai-bar-actions { display: flex; gap: var(--space-1); }
 
 /* ── BMP object identity ─────────────────────────────────────────

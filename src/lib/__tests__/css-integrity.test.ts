@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const FILES = ['src/content-overlay.css', 'src/content-blueprint.css'];
+const FILES = ['src/content-overlay.css', 'src/content-blueprint.css', 'src/content-pointtell.css'];
 
 /** Every rule whose loss lets an overlay element leak into page flow. `selector`
  *  is matched as a standalone base rule (selector directly followed by `{ … }`),
@@ -40,6 +40,17 @@ const LOAD_BEARING: Array<{ file: string; selector: string; must: string[] }> = 
   { file: 'src/content-overlay.css',   selector: '#crev-locate-spot',     must: ['pointer-events: none'] },
   // content-blueprint.css — the full-page editing layer
   { file: 'src/content-blueprint.css', selector: '#crev-blueprint-layer', must: ['position:absolute', 'z-index'] },
+  // Point and tell: the layer's floor. Its bar, pins, note field and the pointer surface set position and
+  // z-index inline in JS (content-pointtell/*), asserted in content-pointtell/__tests__/layer.test.ts.
+  { file: 'src/content-pointtell.css', selector: '#crev-pointtell-layer', must: ['position:absolute', 'z-index', 'pointer-events:none'] },
+  // The ink canvas is positioned inline (content-pointtell/ink-canvas.ts); the sheet keeps it click-through
+  // so a lost rule can never let it swallow the pointer meant for the surface under it.
+  { file: 'src/content-pointtell.css', selector: '#crev-pointtell-layer .pt-ink', must: ['pointer-events:none'] },
+  // The paper of a drawn tab or page: its sheet, veil and columns are positioned inline in JS (content-pointtell/paper.ts);
+  // the sheet only paints them. A lost rule must not leave the paper transparent over the page's own widgets.
+  { file: 'src/content-pointtell.css', selector: '#crev-pointtell-layer .pt-paper-col', must: ['background'] },
+  { file: 'src/content-pointtell.css', selector: '#crev-pointtell-layer .pt-veil', must: ['background'] },
+  { file: 'src/content-pointtell.css', selector: '#crev-pointtell-layer .pt-tab-label', must: ['white-space:nowrap'] },
   // The command bar may overflow at narrow BMP widths, but this chip must retain its intrinsic
   // width. Otherwise its badge paints outside the shrunken flex box and overlaps the edit target.
   { file: 'src/content-blueprint.css', selector: '#crev-blueprint-layer .bp-page-chip', must: ['flex:0 0 auto'] },

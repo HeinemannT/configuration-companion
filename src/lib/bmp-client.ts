@@ -23,6 +23,7 @@ import {
   type EcOutputEntry,
 } from './bmp-types';
 import { colorLinkBid } from './color-util';
+import { fileLinkRhs, isFileLinkProp, OBJECT_FILE_PROPS } from './file-link-props';
 import { styleAssignRhs, INVALID_COLOR_BID } from './style-ec';
 import type {
   ColorSetData, AccessTraceAction, AccessTraceNode, AccessSubject, BmpObject,
@@ -340,6 +341,7 @@ export const OBJECT_IDENTITY_PROPS = ['name', 'id'] as const;
 export const OBJECT_GATE_PROPS = ['useShowExpression', 'useEnableExpression'] as const;
 export const OBJECT_CHANGE_PROPS_SET: ReadonlySet<string> = new Set([
   ...PANE_PROPS,
+  ...OBJECT_FILE_PROPS,
   ...OBJECT_TEXT_PROPS,
   ...OBJECT_IDENTITY_PROPS,
   ...OBJECT_GATE_PROPS,
@@ -1005,6 +1007,30 @@ export class BmpClient {
         };
       }
       return { ok: true, text: await res.text() };
+    } catch (e) {
+      return { ok: false, error: this.transport.formatError(e) };
+    }
+  }
+
+  /** The bytes of a FileResource (the same download as downloadResource, not
+   *  read as text), for an image thumbnail. At most `maxBytes`: a larger
+   *  file is not read. rid stays a string (Java long). */
+  async downloadResourceBytes(rid: string, maxBytes = 2_000_000): Promise<{ ok: boolean; bytes?: Uint8Array; contentType?: string; error?: string }> {
+    if (!RID_SHAPE.test(rid)) return { ok: false, error: `Invalid RID: ${rid}` };
+    const u = new URL(`${this.transport.baseUrl}web/download`);
+    u.searchParams.set('propName', 'content');
+    u.searchParams.set('rid', rid);
+    try {
+      await assertHostAccess(u.toString());
+      const res = await fetch(u.toString(), { credentials: 'include', cache: 'no-store' });
+      if (!res.ok) {
+        return { ok: false, error: res.status === 401 || res.status === 403 ? 'Portal login required to show the image.' : `Download HTTP ${res.status}` };
+      }
+      const declared = Number(res.headers.get('content-length') ?? '');
+      if (Number.isFinite(declared) && declared > maxBytes) return { ok: false, error: 'The file is too large to show.' };
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      if (bytes.length > maxBytes) return { ok: false, error: 'The file is too large to show.' };
+      return { ok: true, bytes, contentType: res.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() };
     } catch (e) {
       return { ok: false, error: this.transport.formatError(e) };
     }
@@ -1750,6 +1776,13 @@ ${r.log ?? ''}`));
       const value = p === 'required'
         ? String(changes[p]).toLowerCase() === 'true'
         : changes[p];
+      if (isFileLinkProp(p)) {
+        // A link to a file: `lookup(<rid>)`, or `""` to clear it.
+        const link = fileLinkRhs(changes[p]);
+        if (link === null) return { ok: false, error: `Invalid file RID "${String(changes[p])}"` };
+        assignments.push(`${p} := ${link}`);
+        continue;
+      }
       const rhs = styleAssignRhs(p, value, ecScalarLiteral);
       if (rhs === INVALID_COLOR_BID) return { ok: false, error: `Invalid colour id "${colorLinkBid(changes[p])}"` };
       assignments.push(`${p} := ${rhs}`);

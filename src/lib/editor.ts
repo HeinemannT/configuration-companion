@@ -69,7 +69,7 @@ export async function openEditorWindow(
   rid: string,
   preferredProperty?: string,
   target?: { tabId?: number; windowId?: number },
-  opts?: { scrollToLine?: number; scrollToText?: string },
+  opts?: { scrollToLine?: number; scrollToText?: string; proposal?: string },
   requester?: SwContext,
 ) {
   const requestedAt = Date.now();
@@ -102,6 +102,7 @@ export async function openEditorWindow(
     loading: true,
     scrollToLine: opts?.scrollToLine,
     scrollToText: opts?.scrollToText,
+    ...(opts?.proposal ? { proposal: opts.proposal } : {}),
   };
 
   const launchSession = await beginEditorLaunchSession(rid, loadingContext);
@@ -125,6 +126,7 @@ export async function openEditorWindow(
       property: preferredProperty,
       scrollToLine: opts?.scrollToLine,
       scrollToText: opts?.scrollToText,
+      ...(opts?.proposal ? { proposal: opts.proposal } : {}),
     },
     tabId: targetTabId,
   });
@@ -163,7 +165,7 @@ export async function buildEditorContext(
   rid: string,
   preferredProperty?: string,
   target?: { tabId?: number; windowId?: number },
-  opts?: { scrollToLine?: number; scrollToText?: string },
+  opts?: { scrollToLine?: number; scrollToText?: string; proposal?: string },
   bound?: SwContext,
 ): Promise<EditorContext> {
   await getCtx().settingsReady;
@@ -251,6 +253,7 @@ export async function buildEditorContext(
     useLookup: client?.supportsLookup !== false,
     scrollToLine: opts?.scrollToLine,
     scrollToText: opts?.scrollToText,
+    ...(opts?.proposal ? { proposal: opts.proposal } : {}),
   };
   return ctx;
 }

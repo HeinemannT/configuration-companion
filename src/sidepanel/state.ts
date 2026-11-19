@@ -28,6 +28,8 @@ export const S = {
   bmpDetected: null as boolean | null,
   inspectActive: false,
   blueprintActive: false,
+  // Point and tell is on (POINT_TELL_STATE).
+  pointTellActive: false,
   cacheCount: 0,
   favoriteEntries: [] as FavoriteEntry[],
   // The tab's current position (CONTEXT_RID_DATA): the object last pointed at

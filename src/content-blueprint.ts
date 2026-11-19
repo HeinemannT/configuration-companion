@@ -28,6 +28,7 @@ import { blueprintFontFaceCss } from './content-blueprint/font-face';
 import { rememberTarget, rememberedTarget } from './content-blueprint/resume-note';
 import { isTempId } from './lib/layout/model';
 import { clearDockRoom } from './content-blueprint/bar-place';
+import { clearStaged } from './lib/point-tell/store';
 
 export { isBlueprintActive };
 
@@ -39,6 +40,8 @@ export { isBlueprintActive };
 let ridResolver: () => string | undefined = () => extractUrlRids().rid;
 export function setBlueprintRidResolver(fn: () => string | undefined): void { ridResolver = fn; }
 const currentPageRid = (): string | undefined => ridResolver();
+/** The BMP object this page shows, by the same rule (Point and tell uses it too). */
+export const getBlueprintPageRid = currentPageRid;
 
 // Blueprint can be toggled the instant a page loads, before BMP has rendered its React tree — on a
 // landing page (no ?rid=) the page rid comes from the fiber, which isn't populated yet. Rather than
@@ -273,6 +276,7 @@ export function disableBlueprint(): void {
   // review surface mounted until it settles; tearing down now would discard
   // the only authoritative outcome even though cancel() correctly no-ops.
   if (bp.applySession?.state.phase === 'applying') return;
+  if (bp.loadedRid) clearStaged(bp.loadedRid); // staged-from-notes changes are gone with the session: the notes are plain notes again
   keepEditing(); // an open discard confirm belongs to this session
   cancelGesture(); // rip out any in-flight drag/resize listeners + body-level ghost/line elements
   clearHintTimer(); // a pending flashHint render() must not fire after teardown

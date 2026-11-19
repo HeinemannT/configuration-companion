@@ -6,10 +6,15 @@
  *
  * Ring geometry (36 px): circle r=17, stroke 2; the 28 px mark sits at (4, 4)
  * with a 2 px gap to the ring. The mark is `icons/mark-28.svg`, inlined at
- * build time, and never changes with the state. Colours and the connecting
- * spin are in shell.css (`.srv-ring[data-ring]`).
+ * build time; its markup never changes with the state. Colours and the
+ * connecting spin are in shell.css (`.srv-ring[data-ring]`).
+ *
+ * The mark's eyes move a little, all in styles/mark.css and transforms only: a
+ * blink now and then, reading left to right while work runs
+ * (`data-mood="read"`), and a glance at the page when its object changes
+ * (`data-look="page"`). Nothing moves under reduced motion.
  */
-import markSource from '../../icons/mark-28.svg?raw';
+import { markSvg, setMarkMood } from '../lib/companion-mark';
 import { h, svg } from '../lib/dom';
 import { icon } from './icons';
 import type { ServerControlView } from './connection-view';
@@ -18,10 +23,11 @@ import type { ServerControlView } from './connection-view';
 const RING_C = 2 * Math.PI * 17;
 const ARC = 24;
 
-const MARK = markSource
-  .replace(/\s(?:role|aria-label)="[^"]*"/g, '')
-  .trim()
-  .replace('<svg ', '<svg x="4" y="4" ');
+const MARK = markSvg({ x: 4, y: 4 });
+
+/** How long the eyes stay on the page after a glance. */
+const GLANCE_MS = 900;
+const glanceTimers = new WeakMap<Element, ReturnType<typeof setTimeout>>();
 
 /** The ring and the mark as one 36 px SVG (no ids: safe to repeat). */
 export function ringMarkup(): string {
@@ -38,7 +44,7 @@ export function buildServerControl(): HTMLButtonElement {
     class: 'srvctl', id: 'header-status', type: 'button',
     'aria-haspopup': 'menu', 'aria-expanded': 'false',
   },
-    h('span', { class: 'srv-ring', 'data-ring': 'none', 'aria-hidden': 'true' }, svg(ringMarkup())),
+    h('span', { class: 'srv-ring crev-mark', 'data-ring': 'none', 'aria-hidden': 'true' }, svg(ringMarkup())),
     h('span', { class: 'srv-text' },
       h('span', { class: 'srv-name' }),
       h('span', { class: 'srv-word' }),
@@ -60,6 +66,20 @@ export function applyServerControl(control: HTMLElement, v: ServerControlView): 
   control.classList.toggle('empty', v.empty);
   control.title = v.title;
   control.setAttribute('aria-label', [v.name, v.word, 'switch server'].filter(Boolean).join(', '));
+}
+
+/** The eyes read left to right while the panel waits for work to finish. */
+export function setMarkWorking(control: HTMLElement, working: boolean): void {
+  setMarkMood(control.querySelector('.srv-ring'), working);
+}
+
+/** The eyes glance at the page (the panel sits beside it) and come back. */
+export function glanceAtPage(control: HTMLElement): void {
+  const ring = control.querySelector('.srv-ring');
+  if (!ring) return;
+  clearTimeout(glanceTimers.get(ring));
+  ring.setAttribute('data-look', 'page');
+  glanceTimers.set(ring, setTimeout(() => ring.removeAttribute('data-look'), GLANCE_MS));
 }
 
 /** Another panel took over this window: a neutral ring and the reason. */

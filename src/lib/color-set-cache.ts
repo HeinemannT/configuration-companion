@@ -3,15 +3,15 @@
  *
  * Colors are configuration metadata and change infrequently. Persisting them
  * in storage.local avoids repeating a multi-second EC query after every browser
- * restart. Expired data is retained only as an explicit stale fallback when a
- * refresh fails; errors and partial query results never replace a good entry.
+ * restart. A stored copy never expires by itself: it is a dated snapshot that
+ * is read again only on demand (force). A failed forced refresh returns the old
+ * copy marked stale; errors and partial query results never replace a good entry.
  */
 import type { ColorSetData } from './types';
 import { log } from './logger';
 
 const STORAGE_KEY = 'crev_color_sets_v2';
 const CACHE_VERSION = 2;
-export const COLOR_SET_TTL_MS = 24 * 60 * 60_000;
 
 interface CacheEntry {
   version: typeof CACHE_VERSION;
@@ -69,14 +69,14 @@ async function persist(): Promise<void> {
   }
 }
 
-export async function getColorSets(environment: string, now = Date.now()): Promise<ColorSetCacheHit | null> {
+export async function getColorSets(environment: string): Promise<ColorSetCacheHit | null> {
   await load();
   const entry = mem.get(environment);
   if (!entry) return null;
   return {
     sets: entry.sets,
     fetchedAt: entry.fetchedAt,
-    stale: now - entry.fetchedAt > COLOR_SET_TTL_MS,
+    stale: false,
   };
 }
 
@@ -91,7 +91,7 @@ export async function setColorSets(
 }
 
 /**
- * Load fresh colors or refresh an expired/forced entry. Concurrent callers for
+ * Load colors on a first miss or refresh them when forced. Concurrent callers for
  * one environment share the same query. When a refresh fails, a previous good
  * entry is returned as explicitly stale; a first-load failure still rejects.
  */
@@ -99,10 +99,9 @@ export async function loadColorSets(
   environment: string,
   fetcher: () => Promise<ColorSetData[]>,
   force = false,
-  now = Date.now(),
 ): Promise<ColorSetLoadResult> {
-  const cached = await getColorSets(environment, now);
-  if (!force && cached && !cached.stale) return { ...cached, source: 'cache' };
+  const cached = await getColorSets(environment);
+  if (!force && cached) return { ...cached, source: 'cache' };
 
   const existing = pending.get(environment);
   if (existing) return existing;

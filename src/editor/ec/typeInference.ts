@@ -525,6 +525,22 @@ function parseRhs(
   return { kind: 'unknown', reason: 'unrecognised assignment shape', line };
 }
 
+/** Type of an expression written somewhere other than an assignment (a forEach
+ *  or table receiver): the same shapes as an assignment's right side, resolved
+ *  against the variables of the last scan. Read-only: it never asks BMP to
+ *  resolve a root category (assignments already do that on their own). */
+export function inferExpression(expression: string): TypeInference {
+  const s = expression.trim();
+  const rootNav = ROOT_NAV_RE.exec(s);
+  if (rootNav) {
+    const cached = rootCategoryCache.get(rootNav[1]);
+    return typeof cached === 'string'
+      ? { kind: 'list', types: [cached], line: 0 }
+      : { kind: 'unknown', reason: `root.${rootNav[1]} not resolved`, line: 0 };
+  }
+  return parseRhs(s, 0, state.vars, new Map());
+}
+
 // ── Async helpers ─────────────────────────────────────────────
 
 let pendingFetches = 0;

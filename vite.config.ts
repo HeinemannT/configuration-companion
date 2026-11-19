@@ -139,6 +139,7 @@ function extensionPlugin(): Plugin {
         { dir: 'objectview', file: 'window' },
         { dir: 'diff', file: 'diff' },
         { dir: 'codesearch', file: 'codesearch' },
+        { dir: 'colors-images', file: 'colors-images' },
         { dir: 'transport', file: 'transport' },
         { dir: 'studio', file: 'studio' },
         { dir: 'studio', file: 'sandbox' },
@@ -227,6 +228,7 @@ export default defineConfig({
         'objectview/window': resolve(import.meta.dirname, 'src/objectview/window.html'),
         'diff/diff': resolve(import.meta.dirname, 'src/diff/diff.html'),
         'codesearch/codesearch': resolve(import.meta.dirname, 'src/codesearch/codesearch.html'),
+        'colors-images/colors-images': resolve(import.meta.dirname, 'src/colors-images/colors-images.html'),
         'transport/transport': resolve(import.meta.dirname, 'src/transport/transport.html'),
         'studio/studio': resolve(import.meta.dirname, 'src/studio/studio.html'),
         // Sandboxed page (manifest sandbox.pages) — runs arbitrary CVO code.

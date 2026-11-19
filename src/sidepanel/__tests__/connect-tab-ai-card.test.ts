@@ -272,9 +272,9 @@ describe('AI Assistant card states', () => {
     expect(prefs.querySelector('#auto-detect')).toBeTruthy();
     expect(prefs.querySelector('.connect-local-data')?.textContent).toContain('9 KB stored in this browser');
     expect(prefs.querySelector('.connect-local-data')?.textContent).toContain('Clear cache');
-    // The browser commands from the registry: four with defaults plus Search the configuration.
-    expect(sections[2].querySelectorAll('.connect-shortcut-list dt')).toHaveLength(5);
-    expect(sections[2].querySelector('.connect-shortcut-list')?.textContent).toContain('Search the configuration');
+    // The browser commands from the registry: four with defaults plus Point and tell and Search the configuration.
+    expect(sections[2].querySelectorAll('.connect-shortcut-list dt')).toHaveLength(6);
+    expect(sections[2].querySelector('.connect-shortcut-list')?.textContent).toContain('Turn Point and tell on or off');
     expect(sections[2].querySelector('.connect-shortcut-tip')?.textContent).toBe('Open in the address bar: chrome://extensions/shortcuts');
 
     // Open state survives a re-render.

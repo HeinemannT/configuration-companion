@@ -683,7 +683,22 @@ export function redo(): void {
   flashHint(`Redo · ${pendingLabel(m)}`);
   render();
 }
-export function discard(): void { disarmDiscard(); if (bp.baseline) { bp.history = new History(bp.baseline); bp.selectedId = null; render(); } }
+export function discard(): void { disarmDiscard(); if (bp.baseline) { bp.history = new History(bp.baseline); bp.selectedId = null; bp.noteOrigins = new Map(); bp.noteReports = null; render(); } }
+
+/** Take back everything one note staged, as one undo step. */
+export function discardNote(n: number): void {
+  const m = model();
+  if (!m || !bp.baseline) return;
+  let next = m;
+  for (const [id, origin] of bp.noteOrigins) {
+    if (origin !== n) continue;
+    next = findNode(bp.baseline, id) ? restoreNode(next, bp.baseline, id) : remove(next, id);
+  }
+  for (const [id, origin] of [...bp.noteOrigins]) if (origin === n) bp.noteOrigins.delete(id);
+  // What the note staged is taken back: it no longer counts as applied if the rest goes through.
+  for (const rep of bp.noteReports ?? []) if (rep.n === n) rep.results = rep.results.filter(r => r.verdict !== 'ok');
+  mutate(next);
+}
 
 /** Two-step Discard confirm (non-intrusive: the SAME button just changes label). First click ARMS it —
  *  the button reads "Click again to discard" for a few seconds; a second click within that window actually discards. It

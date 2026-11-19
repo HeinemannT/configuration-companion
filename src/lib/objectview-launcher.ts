@@ -13,14 +13,14 @@ import { launchFrame, resolveFrameTargetTabId } from './frame-launcher';
 import { environmentToken } from './environment';
 import { log } from './logger';
 import { prefetchObjectRoot } from './handlers/object-window';
-import type { ObjectWindowFocus, ObjectWindowOrigin } from './types';
+import type { ObjectWindowDraft, ObjectWindowFocus, ObjectWindowOrigin } from './types';
 
 export const OBJECT_WINDOW_RESOURCE_KEY = 'objectview:window';
 
 export async function openObjectViewWindow(
   rid: string,
   target?: { tabId?: number; windowId?: number },
-  known: { name?: string; type?: string; businessId?: string; reveal?: boolean; from?: { rid: string; line?: number }; focus?: ObjectWindowFocus; origin?: ObjectWindowOrigin } = {},
+  known: { name?: string; type?: string; businessId?: string; reveal?: boolean; from?: { rid: string; line?: number }; focus?: ObjectWindowFocus; origin?: ObjectWindowOrigin; draft?: ObjectWindowDraft } = {},
   requester?: SwContext,
 ) {
   await getCtx().settingsReady;
@@ -63,6 +63,7 @@ export async function openObjectViewWindow(
       ...(known.from ? { from: known.from } : {}),
       ...(known.focus ? { focus: known.focus } : {}),
       ...(known.origin ? { origin: known.origin } : {}),
+      ...(known.draft ? { draft: known.draft } : {}),
     },
     tabId: tabId ?? target?.tabId,
     windowId: target?.windowId,

@@ -89,7 +89,7 @@ describe('Configuration Companion icon assets', () => {
   });
 
   it('uses the mark of the matching size where the mark appears', () => {
-    expect(read('src/sidepanel/server-control.ts')).toContain("icons/mark-28.svg?raw");
+    expect(read('src/lib/companion-mark.ts')).toContain("icons/mark-28.svg?raw");
     expect(read('src/sidepanel/sidepanel.html')).toContain('icons/mark-28.svg');
     expect(read('src/access/access.html')).toMatch(/<link rel="icon" href="[^"]*icons\/mark-16\.svg">/);
     expect(read('src/lib/empty-state.ts')).toContain("icons/mascot.svg?raw");

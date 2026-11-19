@@ -52,6 +52,14 @@ export interface AiAssistHost {
   contextSource?: () => AiContextSource | null
 }
 
+/** Where a proposal comes from, and a check to run on it. */
+export interface ProposeOptions {
+  /** The bar's words (default: "AI proposed a change"). */
+  title?: string
+  /** Run once the diff is shown: a problem sentence to put on the bar, or null when there is none. */
+  check?: (code: string) => Promise<string | null>
+}
+
 export interface AiAssist {
   /** Open or focus the compact prompt. */
   open: () => void
@@ -62,7 +70,7 @@ export interface AiAssist {
   /** Raise the standard merge-diff proposal for externally supplied code (the
    *  chat tab's Apply → AI_APPLY_PROPOSAL). Replaces the whole active slot;
    *  Accept / Reject work exactly like an inline Edit proposal. */
-  propose: (code: string) => void
+  propose: (code: string, opts?: ProposeOptions) => void
   /** Insert externally supplied code at the current cursor (the chat tab's
    *  Insert → AI_INSERT_AT_CURSOR). Additive, not a slot replace, but still
    *  behind the standard merge-diff Accept/Reject so nothing lands unreviewed. */
@@ -501,12 +509,13 @@ export function createAiAssist(host: AiAssistHost): AiAssist {
     )
   }
 
-  function showBarAccept(): void {
+  function showBarAccept(title = 'AI proposed a change', problem?: string): void {
     const bar = ensureBar()
-    bar.className = 'ai-bar'
+    bar.className = problem ? 'ai-bar ai-bar--err' : 'ai-bar'
     bar.replaceChildren(
       h('span', { class: 'ai-bar-icon' }, svg(ICON_SPARKLE)),
-      h('span', { class: 'ai-bar-text' }, 'AI proposed a change'),
+      h('span', { class: 'ai-bar-text' }, title),
+      ...(problem ? [h('span', { class: 'ai-bar-note ai-status--err', title: problem }, problem)] : []),
       h('div', { class: 'ai-bar-actions' },
         h('button', { class: 'btn btn-accent btn-small', onClick: acceptProposal }, 'Accept'),
         h('button', { class: 'btn btn-ghost btn-small', onClick: rejectProposal }, 'Reject'),
@@ -569,7 +578,7 @@ export function createAiAssist(host: AiAssistHost): AiAssist {
 
   /** External proposal (AI_APPLY_PROPOSAL from the chat tab): replace the whole
    *  active slot with `code` behind the standard merge-diff Accept/Reject. */
-  function propose(code: string): void {
+  function propose(code: string, opts?: ProposeOptions): void {
     const view = host.surface()?.view
     if (!view) return
     // Duplicate delivery guard: the panel's chrome.runtime.sendMessage reaches
@@ -577,6 +586,8 @@ export function createAiAssist(host: AiAssistHost): AiAssist {
     // already staged as the pending proposal, the second arrival must not
     // clear the Accept/Reject bar (it would silently auto-accept).
     if (pending && view.state.doc.toString() === code) return
+    // A proposal still waiting is taken back first: the new one is a diff against the script, not against the old proposal.
+    if (pending) rejectProposal()
     cancelActive()
     clearProposal()
     closeBar()
@@ -584,7 +595,11 @@ export function createAiAssist(host: AiAssistHost): AiAssist {
     requestSelection = null
     if (code === requestBefore) { showBarNoChange(); return }
     applyProposal(code)
-    showBarAccept()
+    showBarAccept(opts?.title)
+    // A check (a syntax check of the proposed script) comes back after the diff is shown; its problem goes on the bar.
+    if (opts?.check) {
+      void opts.check(code).then(problem => { if (problem && pending && view.state.doc.toString() === code) showBarAccept(opts.title, problem) }, () => { /* no answer: the diff stands */ })
+    }
   }
 
   /** External insertion (AI_INSERT_AT_CURSOR from the chat tab): splice `code`

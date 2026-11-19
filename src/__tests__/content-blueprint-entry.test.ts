@@ -22,13 +22,23 @@ const setBlueprintRidResolver = vi.fn();
 const setBlueprintResumePrefer = vi.fn();
 const resetColorSets = vi.fn();
 const resetFlowRefsCache = vi.fn();
+const enablePointTell = vi.fn();
+const disablePointTell = vi.fn();
+let blueprintActive = false;
 
 vi.mock('../content-blueprint', () => ({
   enableBlueprint: (...a: unknown[]) => enableBlueprint(...a),
   disableBlueprint: (...a: unknown[]) => disableBlueprint(...a),
   setBlueprintRidResolver: (...a: unknown[]) => setBlueprintRidResolver(...a),
   setBlueprintResumePrefer: (...a: unknown[]) => setBlueprintResumePrefer(...a),
+  selectBlueprintRid: vi.fn(),
+  isBlueprintActive: () => blueprintActive,
 }));
+vi.mock('../content-pointtell/index', () => ({
+  enablePointTell: (...a: unknown[]) => enablePointTell(...a),
+  disablePointTell: (...a: unknown[]) => disablePointTell(...a),
+}));
+vi.mock('../content-blueprint/actions', () => ({ requestExit: vi.fn(async () => true) }));
 vi.mock('../content-blueprint/colors', () => ({
   resetColorSets: (...a: unknown[]) => resetColorSets(...a),
 }));
@@ -47,6 +57,7 @@ beforeEach(() => {
   const w = window as unknown as Record<string, unknown>;
   try { (w.__crevBpEntryTeardown as (() => void) | undefined)?.(); } catch { /* noop */ }
   vi.clearAllMocks();
+  blueprintActive = false;
   // Reset the bridge hooks + re-injection guard between cases.
   delete w.__crevBpResolver;
   delete w.__crevBpResumePrefer;
@@ -183,5 +194,43 @@ describe('command routing', () => {
     await loadEntry();
     dispatch({ cmd: 'setResumePrefer', prefer: 'template' });
     expect(setBlueprintResumePrefer).toHaveBeenCalledWith('template');
+  });
+});
+
+describe('Point and tell commands', () => {
+  const dispatch = (detail: unknown) =>
+    (window as unknown as { __crevBpCmd: (d: unknown) => void }).__crevBpCmd(detail);
+
+  it('pointTellEnable and pointTellDisable reach the mode', async () => {
+    await loadEntry();
+    dispatch({ cmd: 'pointTellEnable' });
+    expect(enablePointTell).toHaveBeenCalledTimes(1);
+    dispatch({ cmd: 'pointTellDisable' });
+    expect(disablePointTell).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not turn on while Blueprint is open', async () => {
+    await loadEntry();
+    blueprintActive = true;
+    dispatch({ cmd: 'pointTellEnable' });
+    expect(enablePointTell).not.toHaveBeenCalled();
+  });
+
+  it('Blueprint on sends Point and tell away first', async () => {
+    await loadEntry();
+    dispatch({ cmd: 'enable' });
+    expect(disablePointTell.mock.invocationCallOrder[0]).toBeLessThan(enableBlueprint.mock.invocationCallOrder[0]);
+  });
+
+  it('a buffered enable then disable ends with the mode off, in order', async () => {
+    (window as any).__crevBpPendingCmds = [{ cmd: 'pointTellEnable' }, { cmd: 'pointTellDisable' }];
+    await loadEntry();
+    expect(enablePointTell.mock.invocationCallOrder[0]).toBeLessThan(disablePointTell.mock.invocationCallOrder[0]);
+  });
+
+  it('teardown leaves the mode', async () => {
+    await loadEntry();
+    (window as any).__crevBpEntryTeardown();
+    expect(disablePointTell).toHaveBeenCalled();
   });
 });

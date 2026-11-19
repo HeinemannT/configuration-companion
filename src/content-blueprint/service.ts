@@ -17,8 +17,12 @@ import { descriptionViewSourceType } from '../lib/layout/description-view';
 import type { FlowRefListItem } from '../lib/layout/sync';
 import { BP_RESUME_KEY } from '../lib/blueprint-resume';
 import { appliedMessage, encodeResume } from './resume-note';
-import { bp } from './state';
+import { bp, model } from './state';
+import { diff } from '../lib/layout/diff';
+import { planStepId } from '../lib/layout/types';
 import { applyPendingSelect } from './actions';
+import { applyPendingStage, survivingNotes } from './point-tell-handoff';
+import { finishStaged } from '../lib/point-tell/store';
 import { render } from './view';
 import type { ApplyResolution, ApplySessionIO } from './apply-session';
 
@@ -36,6 +40,7 @@ function rebase(m: LModel): void {
   bp.baseline = m;
   bp.history = new History(m);
   bp.selectedId = null;
+  bp.noteOrigins = new Map(); bp.noteReports = null; // staged-from-notes grouping belongs to the model it was staged on
   // Drop the on-demand wired-ref children cache: after a rebase onto freshly-fetched content (a partial
   // apply, or a stale-guard reload), the cached children of an off-page InputSet/EditPage may be stale
   // (e.g. an add that landed under it). model() re-injects this cache every read, and fetchFlowRefChildren
@@ -127,6 +132,7 @@ export async function loadPage(rid: string, prefer: 'template' | 'instance' = 't
   void fetchPropertySchemas([...editPageTypes, ...descriptionViewSources]);
   const orphans = res.orphans?.length ?? 0;
   if (orphans) showToast(`Blueprint: ${orphans} widget${orphans === 1 ? ' is' : 's are'} bound to this page but placed on no tab or container, so the editor does not show ${orphans === 1 ? 'it' : 'them'}`, 'info');
+  applyPendingStage(); // notes Point and tell handed over: staged on this fresh model
   if (bp.pendingSelectRid) applyPendingSelect(); // renders
   else render();
   return true;
@@ -244,6 +250,13 @@ export async function fetchFlowRefChildren(refId: string, refClass: string): Pro
   }
 }
 
+/** The notes whose staged changes went into the apply are finished; a note whose changes were taken back first stays. */
+function settleNotes(): void {
+  const m = model();
+  const inPlan = new Set(bp.baseline && m ? diff(bp.baseline, m).map(planStepId) : []);
+  finishStaged(bp.loadedRid, survivingNotes(bp.noteReports, inPlan));
+}
+
 /** Translate a settled Apply Session into the existing Blueprint presentation and navigation effects. */
 export function presentApplyResolution(result: ApplyResolution): void {
   bp.applySession = null;
@@ -261,6 +274,7 @@ export function presentApplyResolution(result: ApplyResolution): void {
     render();
     return;
   }
+  settleNotes(); // the notes behind these changes are settled (an apply that did not go through returned above)
   if (result.kind === 'unverified') {
     stashResume(result.message);
     showToast(result.message, result.commitReportedOk ? 'success' : 'error');

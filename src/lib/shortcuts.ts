@@ -79,6 +79,7 @@ export const SHORTCUTS = d({
   'browser.inspect': { keys: ['Ctrl+Shift+X'], mac: ['Mod+Shift+X'], scope: 'browser', label: 'Turn Inspect on or off', inText: true, by: 'browser', command: 'toggle-inspect' },
   'browser.blueprint': { keys: ['Ctrl+Shift+H'], mac: ['Mod+Shift+K'], scope: 'browser', label: 'Turn Blueprint on or off', inText: true, by: 'browser', command: 'toggle-blueprint' },
   'browser.extended': { keys: ['Ctrl+Shift+E'], mac: ['Mod+Shift+E'], scope: 'browser', label: 'Open Extended Code', inText: true, by: 'browser', command: 'open-extended' },
+  'browser.pointTell': { keys: [], scope: 'browser', label: 'Turn Point and tell on or off', inText: true, by: 'browser', command: 'toggle-point-tell' },
   'browser.search': { keys: [], scope: 'browser', label: 'Search the configuration', inText: true, by: 'browser', command: 'open-search' },
 
   // Every extension window.

@@ -43,6 +43,7 @@ import {
 const isTextKind = (k: PropertyKind) => k === 'text' || k === 'multiline';
 import { identityBusinessIdError } from '../../lib/object-identity';
 import { colorLinkBid } from '../../lib/color-util';
+import { fileLinkText, isFileLinkProp } from '../../lib/file-link-props';
 import {
   colorLinkEditor, enumEditor, numberEditor, propertyAccessorEditor, sliderEditor, stringEditor, textAreaEditor,
   displayValue as draftDisplay, type EnumOption, type PropEditorContext,
@@ -271,6 +272,9 @@ export interface ViewHandlers {
   access(obj: FullObject): void;
   /** Open the colour-link picker; `apply` stages the picked bid. */
   pickColor?(anchor: HTMLElement, currentBid: string | null, apply: (bid: string) => void): void;
+  /** The image picker of a button's image file (lib/image-picker.ts). A pick
+   *  goes to `onChange` as the RID of the file, '' for None; the window stages it. */
+  imageEditor?(spec: ImageEditorSpec): HTMLElement;
   /** Start the "Used by" scan of an object. */
   scanInbound?(obj: FullObject): void;
   /** Read "In code" of an object from the local code index. */
@@ -389,6 +393,19 @@ function enumText(v: PropValue): string {
 }
 
 /** Display string for a value in the curated grid and the property list. */
+/** What the image editor of a property row needs from the window. */
+export interface ImageEditorSpec {
+  /** The RID of the linked file ('' for none) and its name and ID when known. */
+  rid: string;
+  name: string;
+  id: string;
+  /** The object's background color: a button's buttonBackgroundColor (else headerColor), as the color object's RID and, when the window has it, its ID. */
+  colorRid: string;
+  colorBid: string;
+  dirty: boolean;
+  onChange: (rid: string) => void;
+}
+
 export function displayValue(v: PropValue): string {
   switch (v.kind) {
     case 'enum': return v.text;
@@ -2065,7 +2082,7 @@ export class ObjectWindowView {
     const e = this.entry(obj.rid, prop);
     const tail: Node[] = [];
     if (e?.kind === 'value') {
-      tail.push(dia(`${f.label} unsaved`), attrs(el('span', 'ow-was', `was ${draftDisplay(e.base)}`), { title: e.base }),
+      tail.push(dia(`${f.label} unsaved`), attrs(el('span', 'ow-was', `was ${isFileLinkProp(prop) ? this.fileWords(e.base) : draftDisplay(e.base)}`), { title: e.base }),
         button('ui-ibtn ui-ibtn-sm', `Revert ${f.label}`, () => this.handlers.revert(obj.rid, prop), icon('i-undo')));
     }
     if (e?.kind === 'reset') {
@@ -2080,6 +2097,11 @@ export class ObjectWindowView {
     }
     const control = how?.route === 'props' ? this.editor(obj, prop, f, v, how.def, how.multiline) : this.readValue(obj, f, v);
     return el('span', 'ow-cell', control, ...tail);
+  }
+
+  /** A file link in words: the file's name and ID, "No image" for none. */
+  private fileWords(rid: string): string {
+    return fileLinkText(rid, r => { const k = this.resolve(r); return k.known ? (k.name && k.businessId && k.name !== k.businessId ? `${k.name} (${k.businessId})` : k.name || k.businessId) : undefined; });
   }
 
   private readValue(obj: FullObject, f: FieldDef, v: PropValue): Node {
@@ -2121,6 +2143,18 @@ export class ObjectWindowView {
       case 'enum': node = enumEditor(ctx, def?.options ?? []); break;
       case 'number': node = numberEditor(ctx, { unit: def?.unit, ...(def?.range ?? {}) }); break;
       case 'slider': node = sliderEditor(ctx, def!.range!); break;
+      case 'image': {
+        const rid = value.trim();
+        const known = rid ? this.resolve(rid) : null;
+        node = this.handlers.imageEditor
+          ? this.handlers.imageEditor({
+            rid, name: known?.known ? known.name : '', id: known?.known ? known.businessId : '',
+            colorRid: obj.references.buttonBackgroundColor?.[0] ?? obj.references.headerColor?.[0] ?? '',
+            colorBid: colorLinkBid(this.current(obj, 'headerColor')) || (this.resolve(obj.references.buttonBackgroundColor?.[0] ?? '').businessId), dirty, onChange: ctx.onChange,
+          })
+          : el('span', 'ow-val', rid ? this.fileWords(rid) : 'No image');
+        break;
+      }
       case 'property': {
         const choices = this.model?.choices[obj.rid];
         node = propertyAccessorEditor(ctx, choices?.options, choices ?? { loading: true });

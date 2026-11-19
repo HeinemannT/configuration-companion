@@ -21,7 +21,8 @@ import { colorLinkBid } from '../lib/color-util';
 import { styleOptions } from '../lib/style-props';
 import { renderSwatchGrid } from '../lib/swatch-grid';
 import { bp, model, PALETTE, MOST_USED } from './state';
-import { colorRgb, colorInfo, colorSets, colorSetsStatus, ensureColorSets } from './colors';
+import { colorRgb, colorInfo, colorSets, colorSetsReadAt, colorSetsStatus, ensureColorSets } from './colors';
+import { colorReadFoot } from '../lib/color-read-foot';
 import { type Rect, ridElementMap, unionRect, anchorRect, setIcon, mkBtn, mkIconBtn, docX, docY } from './geometry';
 
 /** Hairline divider inside a toolbar row. */
@@ -731,6 +732,8 @@ function swatchPopup(byRid: Map<string, Element>): HTMLElement {
   search.addEventListener('input', () => { q = search.value; paint(); });
   paint();
   panel.append(head, search, host);
+  // Colors are read only on demand: the date of the read, and Refresh.
+  if (colorSets() !== null) panel.append(colorReadFoot({ at: colorSetsReadAt(), busy: colorSetsStatus() === 'loading', onRefresh: () => { void ensureColorSets(true); } }));
   back.appendChild(panel);
   setTimeout(() => search.focus(), 0);
   return back;

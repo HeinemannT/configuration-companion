@@ -221,7 +221,7 @@ export function addTab(m: LModel, tabsetId: string, name = 'New Tab'): { model: 
  *  widgets are rehomed onto it so they bind to a real cell instead of the phantom RESULT placement. Pure
  *  model transform; the compiler emits the tabset via `root.portal.add(TabSet …)` (see ec.ts). No-op
  *  unless the page is result-only. Returns the Main tab's staged id (so the caller can select it). */
-export function createTabset(m: LModel): { model: LModel; id: string } {
+export function createTabset(m: LModel, opts: { tabName?: string; tabsetName?: string } = {}): { model: LModel; id: string } {
   const id = tempId('tab');
   if (!m.resultOnly) return { model: m, id };
   return {
@@ -230,10 +230,10 @@ export function createTabset(m: LModel): { model: LModel; id: string } {
       // tab so the diff emits a reparent (container := Main), mirroring the old eager create-tabset move.
       const carried = c.tabs.flatMap(t => t.children);
       c.tabsetId = tempId('tabset');
-      c.tabsets = [{ id: c.tabsetId, name: '» New TabSet', virtual: true }];
-      c.tabs = [{ id, kind: 'tab', className: 'Tab', name: 'Main', tabsetId: c.tabsetId, cols: { L: 6 }, children: carried }];
+      c.tabsets = [{ id: c.tabsetId, name: opts.tabsetName ?? '» New TabSet', virtual: true }];
+      c.tabs = [{ id, kind: 'tab', className: 'Tab', name: opts.tabName ?? 'Main', tabsetId: c.tabsetId, cols: { L: 6 }, children: carried }];
       c.tabsetVirtual = true;
-      c.tabsetName = '» New TabSet';
+      c.tabsetName = opts.tabsetName ?? '» New TabSet';
       c.resultOnly = false;
     }),
     id,

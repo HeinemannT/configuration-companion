@@ -9,9 +9,9 @@ import { openTransportWindow } from '../transport-launcher';
 import { resolveFrameTargetTabId } from '../frame-launcher';
 import { reportFrameOpenFailure } from '../frame-open-failure';
 
-register('OPEN_TRANSPORT', async (_msg, _respond, meta) => {
+register('OPEN_TRANSPORT', async (msg, _respond, meta) => {
   const target = { tabId: meta.senderTabId, windowId: meta.panelWindowId };
-  const disposition = await openTransportWindow(target);
+  const disposition = await openTransportWindow(target, msg.tab === 'numeric' ? 'numeric' : undefined);
   // Nothing opened (no BMP page in the panel's window): the panel says why.
   if (disposition === 'failed') await reportFrameOpenFailure(ctxOf(meta), meta.panelWindowId, await resolveFrameTargetTabId(target));
 });

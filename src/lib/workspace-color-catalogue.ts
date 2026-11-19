@@ -8,6 +8,8 @@ export interface ColorCatalogueSnapshot {
   sets: ColorSetData[] | null;
   status: ColorCatalogueStatus;
   error: string | null;
+  /** Epoch ms the sets were read from the server, or null when not known. */
+  fetchedAt: number | null;
 }
 
 type Subscriber = () => void;
@@ -22,13 +24,14 @@ export class WorkspaceColorCatalogue {
   private setsValue: ColorSetData[] | null = null;
   private statusValue: ColorCatalogueStatus = 'idle';
   private errorValue: string | null = null;
+  private fetchedAtValue: number | null = null;
   private readonly index = new ColorSetIndex();
   private readonly subscribers = new Set<Subscriber>();
   private generation = 0;
   private inFlight: Promise<boolean> | null = null;
 
   snapshot(): ColorCatalogueSnapshot {
-    return { sets: this.setsValue, status: this.statusValue, error: this.errorValue };
+    return { sets: this.setsValue, status: this.statusValue, error: this.errorValue, fetchedAt: this.fetchedAtValue };
   }
 
   lookup(bid: string | null | undefined): ColorRef | null { return this.index.lookup(bid); }
@@ -53,6 +56,7 @@ export class WorkspaceColorCatalogue {
       return;
     }
     this.setsValue = message.sets;
+    this.fetchedAtValue = message.fetchedAt ?? null;
     this.index.load(message.sets);
     this.statusValue = message.stale ? 'stale' : 'ready';
     this.publish();
@@ -89,6 +93,7 @@ export class WorkspaceColorCatalogue {
     this.setsValue = null;
     this.statusValue = 'idle';
     this.errorValue = null;
+    this.fetchedAtValue = null;
     this.index.clear();
     this.publish();
   }

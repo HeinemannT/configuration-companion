@@ -6,12 +6,12 @@ import type { ApplySession } from '../apply-session';
 import { disableBlueprint } from '../../content-blueprint';
 import { bp, resetModel, resetState } from '../state';
 
-const sendRequest = vi.fn<() => Promise<InspectorMessage | undefined>>();
+const sendRequest = vi.fn<(message?: unknown) => Promise<InspectorMessage | undefined>>();
 const render = vi.fn();
 const showToast = vi.fn();
 
 vi.mock('../../lib/messaging', () => ({
-  sendRequest: () => sendRequest(),
+  sendRequest: (message?: unknown) => sendRequest(message),
 }));
 vi.mock('../view', () => ({ render: () => render() }));
 vi.mock('../../lib/toast', () => ({ showToast: (...args: unknown[]) => showToast(...args) }));
@@ -75,6 +75,24 @@ describe('Blueprint auxiliary-data states', () => {
 
     expect(colorSets()).toEqual([]);
     expect(colorSetsStatus()).toBe('ready');
+  });
+
+  it('reads the colors again only when asked to, and keeps the date of the read', async () => {
+    sendRequest.mockResolvedValueOnce({ type: 'COLOR_SETS_DATA', environment: 'test', sets: [{ id: 's1', name: 'One', colors: [] }], fetchedAt: 1_700_000_000_000 });
+    const { colorSets, colorSetsReadAt, ensureColorSets } = await import('../colors');
+
+    await ensureColorSets();
+    await ensureColorSets();
+    expect(sendRequest).toHaveBeenCalledTimes(1);
+    expect(sendRequest).toHaveBeenLastCalledWith({ type: 'FETCH_COLOR_SETS' });
+    expect(colorSetsReadAt()).toBe(1_700_000_000_000);
+
+    sendRequest.mockResolvedValueOnce({ type: 'COLOR_SETS_DATA', environment: 'test', sets: [{ id: 's2', name: 'Two', colors: [] }], fetchedAt: 1_700_000_900_000 });
+    await ensureColorSets(true);
+    expect(sendRequest).toHaveBeenCalledTimes(2);
+    expect(sendRequest).toHaveBeenLastCalledWith({ type: 'FETCH_COLOR_SETS', force: true });
+    expect(colorSets()?.[0]?.name).toBe('Two');
+    expect(colorSetsReadAt()).toBe(1_700_000_900_000);
   });
 
   it('keeps a stale saved colour result usable and exposes its state', async () => {

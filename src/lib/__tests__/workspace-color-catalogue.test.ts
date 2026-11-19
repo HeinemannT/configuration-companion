@@ -17,6 +17,17 @@ describe('workspace colour catalogue', () => {
     expect(catalogue.snapshot()).toMatchObject({ sets: [], status: 'ready', error: null });
   });
 
+  it('keeps the date of the read and drops it with a reset', () => {
+    const catalogue = new WorkspaceColorCatalogue();
+    expect(catalogue.snapshot().fetchedAt).toBeNull();
+    catalogue.receive({ type: 'COLOR_SETS_DATA', environment: 'demo', sets: savedSets, fetchedAt: 1_700_000_000_000 });
+    expect(catalogue.snapshot().fetchedAt).toBe(1_700_000_000_000);
+    catalogue.receive({ type: 'COLOR_SETS_DATA', environment: 'demo', sets: [], error: 'BMP timed out' });
+    expect(catalogue.snapshot().fetchedAt).toBe(1_700_000_000_000);
+    catalogue.reset();
+    expect(catalogue.snapshot().fetchedAt).toBeNull();
+  });
+
   it('keeps last-known-good colours indexed when a refresh fails', () => {
     const catalogue = new WorkspaceColorCatalogue();
     catalogue.receive({ type: 'COLOR_SETS_DATA', environment: 'demo', sets: savedSets });

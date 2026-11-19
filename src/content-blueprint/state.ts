@@ -7,11 +7,11 @@ import type { TypeSchemaProp } from '../lib/types';
 import type { LModel, PlanNote, NodeStyle, FlowNode } from '../lib/layout/types';
 import type { StylePreset } from '../lib/style-presets';
 import { PAINT_STYLE_PROPS } from '../lib/style-props';
-import { CHART_TYPES } from '../lib/type-registry';
 import type { BlueprintCtx } from '../lib/layout/sync';
 import { History } from '../lib/layout/history';
 import { DEFAULT_PORTABLE_ID_CONFIG, type PortableIdConfig } from '../lib/layout/portable-ids';
 import type { ApplySession } from './apply-session';
+import type { PtNoteReport } from '../lib/point-tell/stage';
 
 export const STYLE_ID = 'crev-blueprint-style';
 
@@ -48,6 +48,9 @@ export interface BpState {
   propertySchemas: Map<string, TypeSchemaProp[]>;
   propertySchemaPending: Set<string>;
   propertySchemaErrors: Map<string, string>;
+  /** Point and tell staged changes from notes: object id -> the note that asked for it, and what each note came to. Null when nothing was staged from notes. */
+  noteOrigins: Map<string, number>;
+  noteReports: PtNoteReport[] | null;
   applySession: ApplySession | null; // the frozen review-to-commit attempt
   applyOutcome: ApplyOutcome | null; // non-null → a persistent stale/partial/failed outcome panel is docked (cleared on dismiss / new apply / discard / reset)
   discardArm: boolean;          // Discard button armed ("Click again to discard"): first click arms, second discards; auto-disarms after a few seconds
@@ -135,7 +138,7 @@ export interface BpState {
 function freshState(): Omit<BpState, 'gen'> {
   return {
     active: false, baseline: null, ctx: null, env: null, history: null,
-    layer: null, selectedId: null, pendingSelectRid: null, editPageNativeTabId: null, editPageViewKeys: new Map(), propertySchemas: new Map(), propertySchemaPending: new Set(), propertySchemaErrors: new Map(), applySession: null, applyOutcome: null, discardArm: false, discardTimer: 0, actionMenuOpen: false, settingsOpen: false, idConfig: { ...DEFAULT_PORTABLE_ID_CONFIG }, idConfigStatus: 'idle', picker: null, pickerOpts: null,
+    layer: null, selectedId: null, pendingSelectRid: null, editPageNativeTabId: null, editPageViewKeys: new Map(), noteOrigins: new Map(), noteReports: null, propertySchemas: new Map(), propertySchemaPending: new Set(), propertySchemaErrors: new Map(), applySession: null, applyOutcome: null, discardArm: false, discardTimer: 0, actionMenuOpen: false, settingsOpen: false, idConfig: { ...DEFAULT_PORTABLE_ID_CONFIG }, idConfigStatus: 'idle', picker: null, pickerOpts: null,
     flowSettings: null, rowEditor: null, flowPicker: null, flowRefList: null, flowRefChildren: new Map(), flowRefChildrenPending: new Set(), flowFolds: new Set(), trayCardsOpen: new Set(),
     movePicker: null, tabMenu: null, tabsetPickerOpen: false, swatch: null, swatchExpanded: new Set(['Basics']),
     brush: { mode: 'off', held: null }, brushMask: new Set(PAINT_STYLE_PROPS), paintPanel: null, presets: [], presetStatus: 'idle', renameId: null,
@@ -170,6 +173,7 @@ export function resetModel(): boolean {
   // An Apply Session is page-scoped. Cancelling at this reload chokepoint makes its late preflight,
   // impact, or commit result inert and prevents its review from appearing over the next page.
   bp.applySession?.cancel(); bp.applySession = null;
+  bp.noteOrigins = new Map(); bp.noteReports = null; // notes staged for the page being left
   bp.applyOutcome = null; // a stale/partial outcome refers to the page being left
   // The intentional-reload flag is nav-scoped: a real post-apply reload replaces the document (→ fresh
   // false), so if `reloading` is still set here the reload never happened (apply aborted after stashResume).
@@ -199,55 +203,5 @@ export const model = (): LModel | null => {
   return m;
 };
 
-/** Curated add palette — the common, verified-addable widget types grouped for the picker. Display
- *  names are friendly; the key is the BMP className. (A full per-host live-derived palette is a
- *  later refinement — these all add cleanly to a Scorecard/template container.) */
-/** Quick-access widgets shown in a "Most used" section at the top of the add picker. A fixed shortlist
- *  (not customizable) — the full PALETTE below still lists every type, so this is a convenience, not the
- *  only path. All verified addable via a bare `_sc.add(<className>)` (incl. CreateObjectView). */
-export const MOST_USED: { key: string; name: string }[] = [
-  { key: 'InputView', name: 'Input View' },
-  { key: 'ExtendedTable', name: 'Extended Table' },
-  { key: 'DescriptionView', name: 'Description View' },
-  { key: 'TextElement', name: 'Text Element' },
-  { key: 'ActionButton', name: 'Action Button' },
-  { key: 'CreateObjectView', name: 'Create Object View' },
-];
-
-const CHART_NAMES: Record<(typeof CHART_TYPES)[number], string> = {
-  BarChart: 'Bar Chart',
-  PieChart: 'Pie Chart',
-  LineChart: 'Line Chart',
-  AreaChart: 'Area Chart',
-  WaterfallChart: 'Waterfall Chart',
-  BubbleChart: 'Bubble Chart',
-  RadarChart: 'Radar Chart',
-  TreeChart: 'Tree Chart',
-  GanttChart: 'Gantt Chart',
-  NetworkChart: 'Network Chart',
-  PolarChart: 'Polar Chart',
-  BarLineChart: 'Bar & Line Chart',
-  RiskChart: 'Risk Chart',
-  RiskRadarChart: 'Risk Radar Chart',
-};
-
-/** Keep Blueprint creation coverage aligned with the chart types the rest of
- *  Companion can identify, inspect, and edit. A hand-picked chart subset made
- *  live RiskChart cells visible but impossible to add. */
-export const CHART_PALETTE = CHART_TYPES.map(key => ({ key, name: CHART_NAMES[key] }));
-
-export const PALETTE: { group: string; items: { key: string; name: string }[] }[] = [
-  { group: 'Status', items: [
-    { key: 'SimpleStatus', name: 'Simple Status' }, { key: 'Status', name: 'Status' },
-    { key: 'FunctionStatus', name: 'Function Status' }, { key: 'Trend', name: 'Trend' } ] },
-  { group: 'Charts', items: CHART_PALETTE },
-  { group: 'Tables & Lists', items: [
-    { key: 'ExtendedTable', name: 'Extended Table' }, { key: 'RiskList', name: 'Risk List' },
-    { key: 'CheckList', name: 'Check List' }, { key: 'IssueList', name: 'Issue List' } ] },
-  { group: 'Text & Media', items: [
-    { key: 'TextElement', name: 'Text Element' }, { key: 'DescriptionView', name: 'Description View' },
-    { key: 'ImageView', name: 'Image View' }, { key: 'Spacer', name: 'Spacer' } ] },
-  { group: 'Input & Action', items: [
-    { key: 'InputView', name: 'Input View' }, { key: 'ActionButton', name: 'Action Button' },
-    { key: 'CustomVisualization', name: 'Custom Visualization' }, { key: 'URLView', name: 'URL View' } ] },
-];
+// The add palette lives in lib/layout/palette.ts (shared with Point and tell); re-exported for the picker.
+export { MOST_USED, CHART_PALETTE, PALETTE } from '../lib/layout/palette';

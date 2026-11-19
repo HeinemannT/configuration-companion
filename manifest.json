@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Configuration Companion",
-  "version": "0.18.2",
+  "version": "0.19.0",
   "minimum_chrome_version": "116",
   "description": "Inspect, compare, and safely edit configuration in user-authorized Corporater BMP workspaces",
   "icons": {
@@ -15,6 +15,7 @@
     "alarms",
     "scripting",
     "tabs",
+    "activeTab",
     "sidePanel",
     "cookies",
     "contextMenus",
@@ -68,6 +69,9 @@
         "mac": "Command+Shift+K"
       },
       "description": "Toggle blueprint layout editor"
+    },
+    "toggle-point-tell": {
+      "description": "Turn Point and tell on or off"
     },
     "open-search": {
       "description": "Search the configuration"

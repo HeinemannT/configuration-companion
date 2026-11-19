@@ -34,7 +34,7 @@ function harness(): Harness {
   const trace: string[] = [];
   const app = document.createElement('main');
   document.body.replaceChildren(app);
-  const ids: PanelTabId[] = ['connect', 'browse', 'ai', 'log'];
+  const ids: PanelTabId[] = ['connect', 'browse', 'utilities', 'ai', 'log'];
   const panels = Object.fromEntries(ids.map(id => {
     const panel = document.createElement('section');
     panel.dataset.tab = id;
@@ -85,6 +85,7 @@ describe('PanelOrchestrator', () => {
   beforeEach(() => {
     S.activeTab = 'connect';
     S.cacheCount = 0;
+    S.pointTellActive = false;
     S.context = null;
     S.page = null;
     S.settings = { ...S.settings, activeProfileId: 'current' };
@@ -102,6 +103,20 @@ describe('PanelOrchestrator', () => {
       'chrome:status',
       'broadcast:7',
     ]);
+  });
+
+  it('shows the page modes as the page and worker report them, Point and tell among them', () => {
+    const h = harness();
+    const panel = createPanelOrchestrator(h.host, h.services);
+
+    panel.accept({ type: 'POINT_TELL_STATE', active: true });
+    expect(S.pointTellActive).toBe(true);
+    expect(h.trace).toContain('chrome:toggle');
+
+    h.trace.length = 0;
+    panel.accept({ type: 'POINT_TELL_STATE', active: false });
+    expect(S.pointTellActive).toBe(false);
+    expect(h.trace).toContain('chrome:toggle');
   });
 
   it('keeps claims terminal and ahead of tab delivery and subscribers', () => {

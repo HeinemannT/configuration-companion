@@ -1,0 +1,26 @@
+/* The mark's eyes (lib/companion-mark.ts). A blink now and then (single,
+ * then a double, in a 13 s loop so it never looks like a clock); reading
+ * left to right while work runs; a glance at the page when its object
+ * changes; a look at a point (`data-look="point"`, Point and tell's dock). Transforms only. */
+.crev-mark .mark-eyes circle {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: crev-mark-blink 13s infinite;
+}
+.crev-mark .mark-look { transition: transform 160ms ease-out; }
+.crev-mark[data-look="page"] .mark-look { transform: translateX(-1.5px); }
+.crev-mark[data-look="point"] .mark-look { transform: translate(var(--look-x, 0px), var(--look-y, 0px)); transition-duration: 70ms; }
+.crev-mark[data-mood="read"] .mark-eyes { animation: crev-mark-read 1.8s ease-in-out infinite; }
+@keyframes crev-mark-blink {
+  0%, 22.2%, 24%, 60.4%, 62.2%, 64%, 65.8%, 100% { transform: scaleY(1); }
+  23.1%, 61.3%, 64.9% { transform: scaleY(0.1); }
+}
+@keyframes crev-mark-read {
+  0%, 100% { transform: translate(-1.5px, 0.8px); }
+  75% { transform: translate(1.5px, 0.8px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .crev-mark .mark-eyes, .crev-mark .mark-eyes circle { animation: none; }
+  .crev-mark .mark-look { transition: none; transform: none; }
+  .crev-mark[data-look="point"] .mark-look { transition: none; transform: none; }
+}

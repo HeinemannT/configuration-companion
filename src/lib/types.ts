@@ -233,7 +233,13 @@ export interface StudioChild {
 export type FrameKind = 'editor' | 'diff' | 'objectview' | 'codesearch' | 'transport' | 'cvo-studio';
 /** Optional in-place intent for an already-open frame. Today the editor uses
  * this to switch code properties without reloading and losing slot drafts. */
-export type FrameActivation = EditorFrameActivation | ObjectWindowFrameActivation | CodeSearchFrameActivation | CompareFrameActivation;
+export type FrameActivation = EditorFrameActivation | ObjectWindowFrameActivation | CodeSearchFrameActivation | CompareFrameActivation | TransportFrameActivation;
+
+/** Transport window: the tab to show when it is opened or brought forward. */
+export interface TransportFrameActivation {
+  type: 'transport';
+  tab: 'find' | 'transport' | 'numeric';
+}
 
 /** Object window: navigate the live frame to another root (in-frame history). */
 export interface ObjectWindowFrameActivation {
@@ -249,7 +255,12 @@ export interface ObjectWindowFrameActivation {
   from?: { rid: string; line?: number };
   focus?: ObjectWindowFocus;
   origin?: ObjectWindowOrigin;
+  /** A change to stage in the window's own draft, for the user to review and save there. */
+  draft?: ObjectWindowDraft;
 }
+
+/** One property change opened in the object window as a draft (Point and tell). */
+export interface ObjectWindowDraft { prop: string; value: string }
 
 /** A property and line to land on in the object window. */
 export interface ObjectWindowFocus { prop: string; line: number }
@@ -268,7 +279,9 @@ export interface ObjectWindowOrigin {
 export interface CodeSearchFrameActivation {
   type: 'codesearch';
   query?: string;
-  mode?: 'text' | 'refs';
+  /** The replace tab: the text to put in place of `query`. */
+  replace?: string;
+  mode?: 'text' | 'refs' | 'replace';
   scope?: { rid: string; name?: string; type?: string; businessId?: string };
   target?: { rid: string; name?: string; type?: string; businessId?: string };
   context?: { rid: string; name?: string; type?: string; businessId?: string };
@@ -288,6 +301,8 @@ export interface EditorFrameActivation {
   property?: string;
   scrollToLine?: number;
   scrollToText?: string;
+  /** The whole new text of `property`, to show as a diff (Point and tell). */
+  proposal?: string;
 }
 
 /** Result of asking the content script to mount a frame. Callers that prepare

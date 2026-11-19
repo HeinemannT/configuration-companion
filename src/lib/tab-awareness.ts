@@ -15,6 +15,7 @@ import { deleteContextRid } from './context-rid';
 import { sendPageInfoToPanel } from './content-script-injection';
 import { sendPanelContextForTab } from './panel-context-sync';
 import { clearEditorContext, editorContextForTab } from './ai/editor-context';
+import { pointTellOnIn } from './point-tell-state';
 
 // Re-export for backward compatibility with existing importers
 export { ensureContentScript, ensureBlueprintScript, sendPageInfoToPanel, handleGetDetection } from './content-script-injection';
@@ -123,6 +124,8 @@ export function registerTabListeners() {
           source: editorContextForTab(activeInfo.tabId),
         } satisfies InspectorMessage);
       } catch (e) { log.swallow('tabs:onActivatedAiContext', e); }
+      // Point and tell is per tab: the button follows the tab that came to the front.
+      void pointTellOnIn(activeInfo.tabId).then(active => { try { panelPort.postMessage({ type: 'POINT_TELL_STATE', active } satisfies InspectorMessage); } catch (e) { log.swallow('tabs:onActivatedPointTell', e); } });
     }
 
     // Re-enrich only if inspect is on for THIS window. Per-window
@@ -162,6 +165,8 @@ export function registerTabListeners() {
         ctx.persistBlueprintState(); // keep the session-persisted copy in step with the ended session
         ctx.sendToPanelByWindow(windowId, { type: 'BLUEPRINT_STATE', active: false });
       }
+      // A real page load ends Point and tell in that tab (the notes stay in the tab's storage).
+      if (changeInfo.status === 'loading' && windowId != null && isActiveTab) ctx.sendToPanelByWindow(windowId, { type: 'POINT_TELL_STATE', active: false });
     }
 
     // Cookie-based fast gate: early BMP detection on page load

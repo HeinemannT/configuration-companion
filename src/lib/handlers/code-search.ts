@@ -40,7 +40,8 @@ register('OPEN_CODE_SEARCH', async (msg, _respond, meta) => {
   const disposition = await openCodeSearchWindow(target, {
     type: 'codesearch',
     ...(query ? { query } : {}),
-    ...(msg.mode === 'refs' || msg.mode === 'text' ? { mode: msg.mode } : {}),
+    ...(typeof msg.replace === 'string' && msg.mode === 'replace' ? { replace: msg.replace.slice(0, 400) } : {}),
+    ...(msg.mode === 'refs' || msg.mode === 'text' || msg.mode === 'replace' ? { mode: msg.mode } : {}),
     ...(object(msg.scope) ? { scope: object(msg.scope) } : {}),
     ...(object(msg.target) ? { target: object(msg.target) } : {}),
     ...(object(msg.context) ? { context: object(msg.context) } : {}),

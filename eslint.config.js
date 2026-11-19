@@ -14,7 +14,7 @@ function layerOf(file) {
   if (rel.startsWith('..')) return null;              // outside src (e.g. /icons)
   const [first, second] = rel.split(path.sep);
   if (second === undefined) return /^(content|interceptor)/.test(first) ? 'content' : first.replace(/.[jt]s$/, '');
-  return first === 'content-blueprint' ? 'content' : first;
+  return first === 'content-blueprint' || first === 'content-pointtell' ? 'content' : first;
 }
 function allowed(from, to) {
   if (to === null || from === to || SHARED.has(to)) return true;

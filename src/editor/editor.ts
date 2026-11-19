@@ -79,6 +79,8 @@ import { jsonShapeStore } from './ec/json-shape-store'
 import { renderJsonVars } from './json-vars'
 import { extendedLinter } from './ec/diagnostics'
 import { wherePropertyLinter } from './ec/propertyLinter'
+import { tableHelp, recordTablePreview, getTableContext } from './ec/table/extension'
+import { renderTablePanel, panelSignature } from './ec/table/panel'
 import { runtimeErrorLinter, setRuntimeError, parseEcErrorLocation, clearRuntimeErrors } from './ec/runtimeErrors'
 import { ecBlockMatching } from '../editor-core/ec/blockMatching'
 import { ecFoldService } from './ec/foldRegions'
@@ -160,7 +162,9 @@ let activeProperty = ''
 let aiAssist: AiAssist | null = null
 let aiConfigured = false
 let bottomPanelOpen = false
-let bottomMode: 'output' | 'history' | 'vars' = 'output'
+let bottomMode: 'output' | 'history' | 'vars' | 'table' = 'output'
+/** What the Table tab last drew (see panelSignature): it re-renders only when this changes. */
+let tablePanelSignature = ''
 let outputHeight = 160 // last manually-dragged px, persisted
 /** How the output panel sizes itself. 'auto' fits the content (capped at a
  *  fraction of the window) so a one-line result is compact and a long log
@@ -405,6 +409,7 @@ function activateFrameIntent(activation: FrameActivation): void {
     scrollToText: activation.scrollToText,
   })
   broadcastEditorContext()
+  if (activation.proposal) void proposeFromOutside(activation.proposal)
 }
 
 window.addEventListener('message', (event: MessageEvent) => {
@@ -664,6 +669,7 @@ function renderShell() {
       // Clicking the active tab collapses the panel (togglePanel).
       h('div', { class: 'editor-panel-tabs', role: 'tablist', 'aria-label': 'Bottom panel' },
         h('button', { class: `editor-panel-tab${bottomPanelOpen && bottomMode === 'output' ? ' active' : ''}`, id: 'btn-output-tab', role: 'tab' }, 'Output'),
+        h('button', { class: `editor-panel-tab${bottomPanelOpen && bottomMode === 'table' ? ' active' : ''}`, id: 'btn-table-tab', role: 'tab' }, 'Table'),
         h('button', { class: `editor-panel-tab${bottomPanelOpen && bottomMode === 'vars' ? ' active' : ''}`, id: 'btn-vars', role: 'tab' }, svg(ICON_VARIABLE), ' Vars'),
         h('button', { class: `editor-panel-tab${bottomPanelOpen && bottomMode === 'history' ? ' active' : ''}`, id: 'btn-history', role: 'tab' }, svg(ICON_CLOCK), ' History'),
       ),
@@ -695,6 +701,7 @@ function renderShell() {
     })
   }
   document.getElementById('btn-output-tab')?.addEventListener('click', () => togglePanel('output'))
+  document.getElementById('btn-table-tab')?.addEventListener('click', () => togglePanel('table'))
   document.getElementById('btn-vars')?.addEventListener('click', () => togglePanel('vars'))
   document.getElementById('btn-history')?.addEventListener('click', () => togglePanel('history'))
   wireDragHandle()
@@ -811,8 +818,10 @@ function buildExtensions(slot: CodeSlot): Extension[] {
     // slot-swap carries CodeSurface's annotation, which we skip).
     EditorView.updateListener.of(update => {
       if (update.selectionSet || update.docChanged) updatePreviewSelDot()
+      if (update.selectionSet && !update.docChanged) refreshTablePanel()
       if (!update.docChanged || isProgrammaticSwap(update)) return
       if (previewDone) { previewDone = false; refreshActions() }
+      refreshTablePanel()
       if (!staleAfterPreview && lastMode === 'preview' && lastOutputOk) {
         staleAfterPreview = true
         if (bottomPanelOpen && bottomMode === 'output') renderBottomContent()
@@ -832,6 +841,9 @@ function buildExtensions(slot: CodeSlot): Extension[] {
       typeInferenceListener,
       extendedLinter,
       wherePropertyLinter,
+      // Table help: lens, inline values, row labels, problems with fixes. This window is the
+      // only full EC editor; a small inline EC editor would pass mode 'problems'.
+      ...tableHelp({ mode: 'full', onPreview: () => { void doPreview() } }),
       runtimeErrorLinter,
       ecBlockMatching,
       ecFoldService,
@@ -885,6 +897,10 @@ function ensureSurface(): void {
   surface.activate(activeKey(), { scrollToLine: ctx.scrollToLine, scrollToText: ctx.scrollToText })
   ctx.scrollToLine = undefined
   ctx.scrollToText = undefined
+  // A change proposed from outside (Point and tell): shown as a diff on the code just mounted, once.
+  const proposal = ctx.proposal
+  ctx.proposal = undefined
+  if (proposal) void proposeFromOutside(proposal)
   refreshActions()
 }
 
@@ -971,24 +987,52 @@ async function setupAiAssist(): Promise<void> {
  *  open when the key is removed. Repaints the toolbar so the sparkle follows. */
 async function applyAiConfig(configured: boolean): Promise<void> {
   if (configured) {
-    if (!aiAssist) {
-      const { createAiAssist } = await import('../editor-core/ai-assist')
-      aiAssist = createAiAssist({
-        surface: () => surface,
-        lang: () => aiLangForActiveSlot(),
-        context: () => aiContext(),
-        anchorEl: () => document.getElementById('btn-ai'),
-        contextSource: () => aiContextSource(),
-      })
-    }
+    await ensureAiAssist()
     aiConfigured = true
   } else {
     aiConfigured = false
-    aiAssist?.close()
-    aiAssist = null
+    // A proposal from outside (Point and tell) is not the assistant's: it stays while the user decides.
+    if (!aiAssist?.hasPendingProposal()) {
+      aiAssist?.close()
+      aiAssist = null
+    }
   }
   broadcastEditorContext()
   refreshActions()
+}
+
+/** Show `code` as a diff against the active slot, for the user to accept or reject and then save the usual way. The proposal bar is the
+ *  one the AI assistant uses, built even where no AI provider is configured (its prompt stays hidden then); an EC script is checked for
+ *  syntax on the server without being run, and a problem is said on the bar. */
+async function proposeFromOutside(code: string): Promise<void> {
+  await ensureAiAssist()
+  if (!aiAssist) return
+  const isEc = aiLangForActiveSlot() === 'extended'
+  const environment = ctx?.environment
+  aiAssist.propose(code, {
+    title: 'Change from your notes',
+    ...(isEc ? { check: async (text: string) => {
+      const { messageReplacePort } = await import('../lib/code-replace-port')
+      const r = await messageReplacePort(environment).check(text)
+      return r.ok || !r.verdict ? null : r.message
+    } } : {}),
+  })
+}
+
+let aiAssistLoading: Promise<void> | null = null
+/** Build the assistant once, however many callers ask while its module loads. */
+function ensureAiAssist(): Promise<void> {
+  if (aiAssist) return Promise.resolve()
+  aiAssistLoading ??= import('../editor-core/ai-assist').then(({ createAiAssist }) => {
+    aiAssist ??= createAiAssist({
+      surface: () => surface,
+      lang: () => aiLangForActiveSlot(),
+      context: () => aiContext(),
+      anchorEl: () => document.getElementById('btn-ai'),
+      contextSource: () => aiContextSource(),
+    })
+  }).finally(() => { aiAssistLoading = null })
+  return aiAssistLoading
 }
 
 /** Open the AI popover (no-op when the feature isn't configured). */
@@ -1101,6 +1145,17 @@ async function executeEc(transactional: boolean) {
   if (response?.type === 'EC_RESULT') {
     ok = outcome.ok
     if (ok) {
+      // Keep the finished run for table help (inline values, Table tab). The editor never
+      // previews by itself; this only stores what the user's own Preview produced.
+      if (surface.view) {
+        recordTablePreview(surface.view, {
+          code,
+          text: outcome.text,
+          at: Date.now(),
+          durationMs: lastDuration,
+          mode: transactional ? 'execute' : 'preview',
+        })
+      }
       showOutput(outcome.text, true, response.outputEntries)
       // Successful run wipes any lingering error marker — the line
       // that previously failed now runs fine.
@@ -1467,7 +1522,8 @@ function showOutput(text: string, ok: boolean, entries: EcOutputEntry[] = []) {
   // Non-preview output (executes, saves) makes the prior "stale" cue
   // meaningless — it referred to a preview that's now superseded.
   if (lastMode !== 'preview') staleAfterPreview = false
-  bottomMode = 'output'
+  // The Table tab stays open across a preview: it is the view of this very result.
+  if (bottomMode !== 'table') bottomMode = 'output'
   bottomPanelOpen = true
   openBottomPanel()
   renderBottomContent()
@@ -1549,6 +1605,7 @@ function updateBottomBar() {
     if (el) el.classList.toggle('active', bottomPanelOpen && bottomMode === mode)
   }
   setActive('btn-output-tab', 'output')
+  setActive('btn-table-tab', 'table')
   setActive('btn-vars', 'vars')
   setActive('btn-history', 'history')
 }
@@ -1663,6 +1720,11 @@ function renderBottomContentInner() {
       ),
       outputContent,
     )
+    return
+  }
+
+  if (bottomMode === 'table') {
+    renderTableTab(container)
     return
   }
 
@@ -2149,6 +2211,41 @@ const KIND_FILTER_PILLS: ReadonlyArray<{ family: PropFamily; label: string; titl
  *  keeps typing without an alt-tab. */
 function insertAtCursor(text: string): void {
   surface?.insertAtCursor(text)
+}
+
+/** Draw the Table tab: the last preview's table for the code as it is now. */
+function renderTableTab(container: HTMLElement): void {
+  const view = surface?.view
+  if (!view) { renderDom(container, h('div', { class: 'editor-history-empty' }, 'No table yet')); return }
+  const tctx = getTableContext(view.state)
+  const input = {
+    preview: tctx.preview,
+    freshness: tctx.freshness,
+    tables: tctx.tables,
+    target: tctx.target,
+    cursor: view.state.selection.main.head,
+    onPreview: () => { void doPreview() },
+    onJump: (offset: number) => {
+      view.dispatch({ selection: { anchor: offset }, effects: EditorView.scrollIntoView(offset, { y: 'center' }) })
+      view.focus()
+    },
+  }
+  tablePanelSignature = panelSignature(input)
+  renderDom(container, renderTablePanel(input))
+}
+
+/** Re-draw the Table tab when the column under the cursor or the preview's freshness changed. */
+function refreshTablePanel(): void {
+  if (!bottomPanelOpen || bottomMode !== 'table') return
+  const view = surface?.view
+  const container = document.getElementById('bottom-panel-content')
+  if (!view || !container) return
+  const tctx = getTableContext(view.state)
+  const sig = panelSignature({
+    preview: tctx.preview, freshness: tctx.freshness, tables: tctx.tables, target: tctx.target,
+    cursor: view.state.selection.main.head,
+  })
+  if (sig !== tablePanelSignature) renderTableTab(container)
 }
 
 /** Open the bottom panel to `mode`, or collapse it if that mode is already

@@ -301,10 +301,16 @@ const HEAD_FIELD = /^(-?\d{1,20}) (\S*) (\S*) (\S+)$/;
  *  dropped on arrival. Throws on a damaged or cut-off answer (kind
  *  `protocol`). */
 function scanRows(log: string): { rows: TransportScanRow[]; missing: boolean; read: number } {
+  return scanRowsOf(protocolRows(log));
+}
+
+/** scanRows over rows already split; the caller handles the rows `skip` names. */
+function scanRowsOf(framed: readonly string[][], skip?: (row: string[]) => boolean): { rows: TransportScanRow[]; missing: boolean; read: number } {
   const rows: TransportScanRow[] = [];
   let missing = false;
   let read = 0;
-  for (const row of protocolRows(log)) {
+  for (const row of framed) {
+    if (skip?.(row)) continue;
     if (row[0] === 'M' && row.length === 1) { missing = true; continue; }
     if (row[0] !== 'O' || row.length !== 8) throw damaged();
     const [, head, id, name, dates, user, parentId, parentName] = row;
@@ -1342,4 +1348,156 @@ export async function readTransportLog(client: Pick<BmpClient, 'executeEc'>, sig
   const r = await client.executeEc(buildTransportLogEc(), undefined, false, signal, TRANSPORT_SCAN_TIMEOUT_MS);
   if (!r.ok) throw ecResultError(r, 'The transport log could not be read');
   return parseTransportLogLog(r.log ?? '');
+}
+
+// ── numeric IDs ─────────────────────────────────────────────────────
+
+/** Rows (candidates and context) one root's numeric-ID scan returns at most;
+ *  one more is read to tell "more than this". */
+export const NUMERIC_SCAN_CAP = 6_000;
+
+/** An object of the numeric-ID scan that is not a candidate: enough to know
+ *  which IDs a parent's children use and which an ID space holds. */
+export interface NumericContextRow {
+  rid: string;
+  parentRid: string;
+  /** The parent's ID (a root's is its upper-case name). */
+  parentId: string;
+  sortIndex: number;
+  id: string;
+  name: string;
+  className: string;
+}
+
+export interface NumericScan {
+  root: TransportRoot;
+  /** The objects whose ID starts with a digit, as scan rows. */
+  rows: TransportScanRow[];
+  /** Every other object. */
+  context: NumericContextRow[];
+  /** The root has more objects than NUMERIC_SCAN_CAP: both lists are cut. */
+  more: boolean;
+  missingRoot: boolean;
+}
+
+const DIGIT_FIRST = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'].map(d => `_d = "${d}"`).join(' OR ');
+
+/**
+ * Everything under `root.<root>`: a full scan row (scanRowEc) for each object
+ * whose ID starts with a digit and a short `I` row (RID, parent RID, sort
+ * index and class; ID, name, parent ID) for the others, at most NUMERIC_SCAN_CAP + 1. A server-side test for an
+ * ID of digits only does not exist (measured: strings are not compared by
+ * order); the first character is tested, and the window keeps the rows whose
+ * ID is digits only. Constant: one text per root.
+ */
+export function buildNumericScanEc(root: string): string {
+  if (!isTransportRoot(root)) throw new Error(`Not a root the numeric ID scan reads: ${root}`);
+  return constantScript('numericIdsScan', flat([
+    '_r := ""',
+    `${EC_CHUNK} := ""`,
+    `_g := root.${root}`,
+    'IF _g = MISSING THEN',
+    `_r := ${MISSING_ROW}`,
+    'ELSE',
+    '_k := 0',
+    `_g.descendants()${rootFilter(root)}.first(${NUMERIC_SCAN_CAP + 1}).forEach(_i:`,
+    '_d := _i.id.whenMissing("x").substring(0,1)',
+    `IF ${DIGIT_FIRST} THEN`,
+    ...scanRowEc('_i'),
+    'ELSE',
+    ...appendRowEc(EC_CHUNK, ['"I"', 'str(_i.rid) + " " + str(_i.parent.rid.whenMissing("")) + " " + str(_i.sortIndex) + " " + str(_i.className)', '_i.id.whenMissing("")', '_i.name.whenMissing("")', '_i.parent.id.whenMissing("")']),
+    'ENDIF',
+    ...countedFlushEc('_k', 20, ''),
+    ')',
+    'ENDIF',
+    ...flushChunkEc(),
+    `_r + ${EC_DONE_LITERAL}`,
+  ]));
+}
+
+/** Parse buildNumericScanEc. Throws on a damaged or cut-off answer (kind `protocol`). */
+export function parseNumericScanLog(log: string, root: TransportRoot): NumericScan {
+  const framed = protocolRows(log);
+  const context: NumericContextRow[] = [];
+  let contextRead = 0;
+  const { rows, missing, read } = scanRowsOf(framed, row => {
+    if (row[0] !== 'I') return false;
+    if (row.length !== 5) throw damaged();
+    const m = HEAD_FIELD.exec(row[1]);
+    if (!m || !RID.test(m[1])) throw damaged();
+    contextRead++;
+    if (!isNeverListed(m[4])) {
+      context.push({
+        rid: m[1], parentRid: /^\d{1,20}$/.test(m[2]) ? m[2] : '', parentId: row[4], sortIndex: /^-?\d{1,10}$/.test(m[3]) ? Number(m[3]) : 0,
+        id: row[2], name: row[3], className: m[4],
+      });
+    }
+    return true;
+  });
+  const more = read + contextRead > NUMERIC_SCAN_CAP;
+  return { root, rows: more ? rows.slice(0, NUMERIC_SCAN_CAP) : rows, context, more, missingRoot: missing };
+}
+
+/** Scan one root for numeric IDs: one preview run. A root the workspace does
+ *  not have is `missingRoot`. Throws when the run fails or the answer is damaged. */
+export async function readNumericScan(client: Pick<BmpClient, 'executeEc'>, root: string, signal?: AbortSignal): Promise<NumericScan> {
+  const code = buildNumericScanEc(root);
+  const r = await client.executeEc(code, undefined, false, signal, TRANSPORT_SCAN_TIMEOUT_MS);
+  const known = root as TransportRoot;
+  if (!r.ok) {
+    if (namesMissingRoot(`${r.error ?? ''}\n${r.log ?? ''}`, root) && !r.log?.includes(EC_FRAME.row)) return { root: known, rows: [], context: [], more: false, missingRoot: true };
+    throw ecResultError(r, `Reading ${root} failed`);
+  }
+  const scan = parseNumericScanLog(r.log ?? '', known);
+  if (!scan.rows.length && !scan.context.length && !scan.missingRoot && namesMissingRoot(r.log, root)) return { ...scan, missingRoot: true };
+  return scan;
+}
+
+/** Where an object comes from, for the numeric-ID list: BMP's own objects
+ *  carry `systemObject` or were created by the user `System` (measured on the
+ *  dev workspace: 130 of 224 short-ID objects under Templates and 320 of 519
+ *  under Shared web, none of them by a person). */
+export interface TransportOrigin {
+  rid: string;
+  systemObject: boolean;
+  /** `createdBy.name` ('' when unknown). */
+  createdBy: string;
+}
+
+/** The context object's `systemObject` flag and creator, one framed row.
+ *  Constant: the object travels as the command's context. */
+export function buildTransportOriginEc(): string {
+  return constantScript('transportOrigin', contextObjectEc('_o', [
+    ...appendRowEc(EC_CHUNK, ['_o.rid', '_o.systemObject.whenMissing(false)', '_o.createdBy.name.whenMissing("")']),
+  ]).join('\n'));
+}
+
+/** Parse buildTransportOriginEc; null when the object was not there. Throws on a damaged answer. */
+export function parseTransportOriginLog(log: string): TransportOrigin | null {
+  const rows = parseFramedLog(log, EC_FRAME, 3);
+  if (rows.length > 1) throw new Error(DAMAGED);
+  const row = rows[0];
+  if (!row) return null;
+  if (!RID.test(row[0].trim())) throw new Error(DAMAGED);
+  return { rid: row[0].trim(), systemObject: row[1].trim().toLowerCase() === 'true', createdBy: row[2] };
+}
+
+export type TransportOriginRead = { rid: string; origin: TransportOrigin } | { rid: string; missing: true } | { rid: string; error: string };
+
+/** The origins of up to TRANSPORT_READ_BATCH objects by RID, in one preview post. */
+export async function readTransportOrigins(client: Pick<BmpClient, 'executeEcPairs'>, rids: readonly string[], signal?: AbortSignal): Promise<TransportOriginRead[]> {
+  const list = batchOf(rids);
+  if (!list.length) return [];
+  const code = buildTransportOriginEc();
+  const answers = await client.executeEcPairs(list.map(objectRid => ({ code, objectRid })), signal, TRANSPORT_SCAN_TIMEOUT_MS);
+  return list.map((rid, i): TransportOriginRead => {
+    const a = answers[i];
+    if (!a?.ok) return { rid, error: a?.error || a?.log || 'The object could not be read.' };
+    try {
+      const origin = parseTransportOriginLog(a.log ?? '');
+      return origin ? (origin.rid === rid ? { rid, origin } : { rid, error: DAMAGED }) : { rid, missing: true };
+    } catch (e) {
+      return { rid, error: errorOf(e) };
+    }
+  });
 }

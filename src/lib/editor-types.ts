@@ -81,6 +81,8 @@ export interface EditorContext {
    *  can miss. When present, the editor locates this text nearest to
    *  `scrollToLine` and lands on the real match instead of silently clamping. */
   scrollToText?: string
+  /** One-shot: the whole new text of the active property, shown as a diff to accept or reject (Point and tell). Cleared after use. */
+  proposal?: string
 }
 
 // ── Label formatting ─────────────────────────────────────────────

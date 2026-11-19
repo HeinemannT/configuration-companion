@@ -74,9 +74,10 @@ import { isScanDay, isTransportRoot, parseScanStart, TRANSPORT_READ_BATCH } from
 import {
   readTransportBelow, readTransportChildren, readTransportSourceListing, buildTransportSourceListingEc, readTransportCreation, readTransportFacts, isFactAddress, TRANSPORT_FACTS_BATCH, readTransportFind, readTransportLog, readTransportObjects,
   readTransportCounts, readTransportRows, readTransportScan, readTransportSearch, readTransportUnder, readTransportUsedBy, searchText, TRANSPORT_SEARCH_MAX,
-  TRANSPORT_SEARCH_MIN,
+  TRANSPORT_SEARCH_MIN, readNumericScan, readTransportOrigins,
 } from '../transport-read';
 import { validateRid } from '../ec-guards';
+import { buildIdChangeEc } from '../numeric-id-write';
 import { SCRIPT_LIMITS, userScript } from '../script-kinds';
 import { computeConnectionState } from '../connection';
 import { scopeFor } from '../profile-scope';
@@ -177,7 +178,7 @@ register('TRANSPORT_SCAN_UNDER', async (msg, respond, meta) => {
  * why), or run in the profile's queue and answered with what `answer` makes
  * of its result. `echo` goes into every answer.
  */
-function registerRead<T>(type: 'TRANSPORT_CHILDREN' | 'TRANSPORT_COUNTS' | 'TRANSPORT_SCAN_BELOW' | 'TRANSPORT_FIND' | 'TRANSPORT_SEARCH' | 'TRANSPORT_USED_BY' | 'TRANSPORT_FACTS' | 'TRANSPORT_SOURCE_LISTING', answer: string, prepare: (msg: Record<string, unknown>) => {
+function registerRead<T>(type: 'NUMERIC_IDS_SCAN' | 'TRANSPORT_CHILDREN' | 'TRANSPORT_COUNTS' | 'TRANSPORT_SCAN_BELOW' | 'TRANSPORT_FIND' | 'TRANSPORT_SEARCH' | 'TRANSPORT_USED_BY' | 'TRANSPORT_FACTS' | 'TRANSPORT_SOURCE_LISTING', answer: string, prepare: (msg: Record<string, unknown>) => {
   echo: Record<string, unknown>;
   error?: string;
   read?: (client: BmpClient, signal: AbortSignal) => Promise<T>;
@@ -322,8 +323,8 @@ function batchRids(value: unknown, cap = TRANSPORT_READ_BATCH): { rids: string[]
 
 /** A batch read: refused before anything is read, or run in the profile's
  *  queue and answered with its result in `field`. */
-function registerBatch(type: 'TRANSPORT_READ_OBJECTS' | 'TRANSPORT_READ_CREATION' | 'TRANSPORT_ROWS',
-  answer: 'TRANSPORT_OBJECTS_RESULT' | 'TRANSPORT_CREATION_RESULT' | 'TRANSPORT_ROWS_RESULT', field: 'objects' | 'texts' | 'rows',
+function registerBatch(type: 'TRANSPORT_READ_OBJECTS' | 'TRANSPORT_READ_CREATION' | 'TRANSPORT_ROWS' | 'NUMERIC_IDS_ORIGINS',
+  answer: 'TRANSPORT_OBJECTS_RESULT' | 'TRANSPORT_CREATION_RESULT' | 'TRANSPORT_ROWS_RESULT' | 'NUMERIC_IDS_ORIGINS_RESULT', field: 'objects' | 'texts' | 'rows' | 'origins',
   read: (client: BmpClient, rids: string[], msg: Record<string, unknown>, signal: AbortSignal) => Promise<unknown>, cap = TRANSPORT_READ_BATCH): void {
   register(type, async (msg, respond, meta) => {
     const ctx = ctxOf(meta);
@@ -361,6 +362,65 @@ registerBatch('TRANSPORT_READ_OBJECTS', 'TRANSPORT_OBJECTS_RESULT', 'objects', (
 registerBatch('TRANSPORT_READ_CREATION', 'TRANSPORT_CREATION_RESULT', 'texts', (client, rids, _msg, signal) => readTransportCreation(client, rids, signal));
 
 registerBatch('TRANSPORT_ROWS', 'TRANSPORT_ROWS_RESULT', 'rows', (client, rids, _msg, signal) => readTransportRows(client, rids, signal));
+
+// Numeric IDs: the scan of one root, who created the objects, and the change itself.
+registerRead('NUMERIC_IDS_SCAN', 'NUMERIC_IDS_SCAN_RESULT', msg => {
+  const root = typeof msg.root === 'string' ? msg.root : '';
+  if (!isTransportRoot(root)) return { echo: {}, error: `Not a root the numeric ID scan reads: ${root}` };
+  return {
+    echo: {},
+    read: (client, signal) => readNumericScan(client, root, signal),
+    answer: s => ({ rows: s.rows, context: s.context, ...(s.more ? { more: true } : {}), ...(s.missingRoot ? { missingRoot: true } : {}) }),
+  };
+});
+
+registerBatch('NUMERIC_IDS_ORIGINS', 'NUMERIC_IDS_ORIGINS_RESULT', 'origins', (client, rids, _msg, signal) => readTransportOrigins(client, rids, signal));
+
+register('NUMERIC_IDS_RUN', async (msg, respond, meta) => {
+  const ctx = ctxOf(meta);
+  const environment = environmentToken(ctx);
+  const requestId = requestIdOf(msg.requestId);
+  const transactional = msg.transactional === true;
+  const reply = (r: Record<string, unknown>) => respond({ type: 'NUMERIC_IDS_RUN_RESULT', requestId, environment, ok: false, ...r } as never);
+  if (meta.senderKind === 'content') { reply({ error: NOT_FROM_PAGE, refused: true }); return; }
+  if (!ctx.client) { reply({ error: 'Not connected to BMP', refused: true }); return; }
+  if (!environmentMatches(ctx, msg.environment)) { reply({ error: environmentMismatchError(ctx, msg.environment), refused: true }); return; }
+  if (typeof msg.transactional !== 'boolean') { reply({ error: 'Say whether the change is committed or a preview.', refused: true }); return; }
+  if (transactional && msg.confirmed !== true) { reply({ error: 'IDs change only after the change was confirmed.', refused: true }); return; }
+  if (transactional && computeConnectionState(ctx).display !== 'connected') { reply({ error: 'The connection to the server is not confirmed now. Nothing was sent.', refused: true }); return; }
+  let code: string;
+  try {
+    const items = Array.isArray(msg.items) ? msg.items : [];
+    code = buildIdChangeEc(items.map(i => ({
+      rid: String(i?.rid), space: String(i?.space), className: String(i?.className ?? ''), name: String(i?.name ?? ''), from: String(i?.from), to: String(i?.to),
+    })));
+  } catch (e) { reply({ error: errorMessage(e), refused: true }); return; }
+  const client = ctx.client;
+  let started = false;
+  const begun = Date.now();
+  const { result, controller } = enqueue(environment, requestId, signal => {
+    started = true;
+    // A committed run is never aborted once it started.
+    return client.executeEc(userScript(code), undefined, transactional, transactional ? undefined : signal, TRANSPORT_PART_TIMEOUT_MS);
+  });
+  try {
+    const r = await result;
+    if (!transactional && controller.signal.aborted) { reply({ cancelled: true }); return; }
+    if (!transactional && !environmentMatches(ctxOf(meta), environment)) { reply({ error: ENVIRONMENT_CHANGED_ERROR }); return; }
+    if (transactional) {
+      ctx.logActivity(r.ok && !r.hasWarning ? 'success' : 'error', `Numeric IDs: ${r.ok ? 'changed' : 'failed to change'} ${msg.items.length} IDs (${Date.now() - begun}ms)`, r.ok ? undefined : r.error, { category: 'change', action: 'save-property', durationMs: Date.now() - begun });
+    }
+    if (r.ok && r.hasWarning) { reply({ error: `BMP reported a warning${r.log ? `: ${r.log.slice(0, 300)}` : '.'}`, log: r.log ?? '', ...(transactional ? { outcomeUnknown: true } : {}) }); return; }
+    reply({
+      ok: r.ok, log: r.log ?? '', ...(r.error ? { error: r.error } : {}), ...(r.errorKind ? { errorKind: r.errorKind } : {}),
+      ...(r.outcomeUnknown ? { outcomeUnknown: true } : {}),
+    });
+  } catch (e) {
+    if (!started && controller.signal.aborted) { reply({ cancelled: true }); return; }
+    const errorKind = errorKindOf(e);
+    reply({ error: errorMessage(e), ...(errorKind ? { errorKind } : {}), ...(transactional && started ? { outcomeUnknown: true } : {}) });
+  }
+});
 
 
 /** RIDs the objects of a page return at most. */

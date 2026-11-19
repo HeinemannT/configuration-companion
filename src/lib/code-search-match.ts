@@ -216,9 +216,9 @@ export function patternProblem(query: string): string | null {
   }
 }
 
-/** Compile a query. Returns `{ error }` for an invalid regular expression or
- *  an empty query. */
-export function compileSearch(o: SearchOptions): CompiledSearch | { error: string } {
+/** The regular expression of a query, global, to be run on one line. Returns
+ *  `{ error }` for an invalid regular expression or an empty query. */
+export function searchRegExp(o: SearchOptions): RegExp | { error: string } {
   const q = o.query;
   if (!q.trim()) return { error: 'Enter something to search for.' };
   let body: string;
@@ -230,7 +230,15 @@ export function compileSearch(o: SearchOptions): CompiledSearch | { error: strin
     body = escapeRegExp(q);
   }
   const source = o.wholeWord ? `(?<!${WORD})${body}(?!${WORD})` : body;
-  const re = new RegExp(source, `gu${o.caseSensitive ? '' : 'i'}`);
+  return new RegExp(source, `gu${o.caseSensitive ? '' : 'i'}`);
+}
+
+/** Compile a query. Returns `{ error }` for an invalid regular expression or
+ *  an empty query. */
+export function compileSearch(o: SearchOptions): CompiledSearch | { error: string } {
+  const q = o.query;
+  const re = searchRegExp(o);
+  if ('error' in re) return re;
   const ranges = (line: string): Array<[number, number]> => {
     const out: Array<[number, number]> = [];
     re.lastIndex = 0;

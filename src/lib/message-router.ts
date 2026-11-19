@@ -42,6 +42,7 @@ export function requestFailed(msg: InspectorMessage, e: unknown): InspectorMessa
 
 // Import handler modules — registration happens at import time
 import './handlers/inspect';
+import './handlers/point-tell';
 import './handlers/profiles';
 import './handlers/objects';
 import './handlers/ec';
@@ -49,6 +50,7 @@ import './handlers/json-shape';
 import './handlers/studio';
 import './handlers/access';
 import './handlers/access-workspace';
+import './handlers/colors-images';
 import './handlers/enrichment';
 import './handlers/detection';
 import './handlers/history';
