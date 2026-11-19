@@ -123,7 +123,7 @@ export function descriptionViewBody(model: LModel, node: LNode, editing: boolean
       add.classList.add('bp-dv-property-add'); stopControls(add); root.appendChild(add);
     } else {
       const status = document.createElement('div'); status.className = 'bp-dv-schema-status';
-      status.textContent = loading ? 'Loading properties…' : error || 'Property schema unavailable';
+      status.textContent = loading ? 'Loading properties…' : error || 'Properties unavailable';
       root.appendChild(status);
     }
   }

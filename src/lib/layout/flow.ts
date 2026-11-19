@@ -126,7 +126,7 @@ function withFlowEdit(m: LModel, key: string, fn: (e: FlowEdit) => void): LModel
   fn(e);
   // Drop an entry that ended up empty (e.g. a flag toggled back to its projection value).
   if (!e.adds?.length && !e.removes?.length && !e.order && e.displayOnActionMenu === undefined && e.displayOnAllTabs === undefined
-    && !e.newContainer && !e.wireRef && !e.objectTypeRef && e.rename === undefined && e.propertyMapping === undefined) delete edits[key];
+    && !e.newContainer && !e.wireRef && !e.objectTypeRef && !e.settings && e.rename === undefined && e.propertyMapping === undefined) delete edits[key];
   return c;
 }
 
@@ -170,6 +170,13 @@ export function reorderFlowChild(m: LModel, key: string, id: string, afterId: st
     if (without.join(' ') === natural.join(' ')) delete e.order;
     else e.order = without;
   });
+}
+
+/** Move a child one place earlier (-1) or later (1); at the end of its container nothing changes. */
+export function shiftFlowChild(m: LModel, key: string, id: string, by: -1 | 1): LModel {
+  const ids = effectiveFlowChildren(m, key).map(n => n.id), from = ids.indexOf(id), to = from + by;
+  if (from < 0 || to < 0 || to >= ids.length) return m;
+  return reorderFlowChild(m, key, id, by < 0 ? (to > 0 ? ids[to - 1] : null) : ids[to]);
 }
 
 /** Cancel a staged add before it has ever reached BMP. */
@@ -240,6 +247,36 @@ export function stageNewFlowContainer(m: LModel, widgetId: string, prop: 'inputS
     e.wireRef = { prop, targetId: id, targetClass: className, targetName: name, ...(needsModeFlip(m, widgetId, prop) ? { setCreateMode: true } : {}) };
   });
   return { model: next, id };
+}
+
+/** The settings staged for a form element: on the node while it is new, in its own edit entry
+ *  once it exists. Empty when nothing is staged. */
+export function stagedSettings(m: LModel, parentKey: string, id: string): Record<string, string | boolean> {
+  const added = m.flowEdits?.[parentKey]?.adds?.find(n => n.id === id);
+  return added ? added.settings ?? {} : m.flowEdits?.[id]?.settings?.values ?? {};
+}
+
+/** Stage one setting of a form element. A new element keeps it on itself (written with its add);
+ *  an existing one gets an edit entry, and a value equal to the stored one (`stored`) leaves it. */
+export function setFlowSetting(m: LModel, parentKey: string, id: string, className: string, prop: string, value: string | boolean, stored?: string | boolean): LModel {
+  const isNew = !!m.flowEdits?.[parentKey]?.adds?.some(n => n.id === id);
+  if (isNew) {
+    return withFlowEdit(m, parentKey, e => {
+      e.adds = e.adds!.map(n => {
+        if (n.id !== id) return n;
+        const settings = { ...(n.settings ?? {}) };
+        // A new element starts empty and off: saying so again is not a change.
+        if (value === '' || value === false) delete settings[prop]; else settings[prop] = value;
+        const { settings: _old, ...rest } = n;
+        return Object.keys(settings).length ? { ...rest, settings } : rest;
+      });
+    });
+  }
+  return withFlowEdit(m, id, e => {
+    const values = { ...(e.settings?.values ?? {}) };
+    if (stored !== undefined && value === stored) delete values[prop]; else values[prop] = value;
+    if (Object.keys(values).length) e.settings = { className, values }; else delete e.settings;
+  });
 }
 
 /** The class a create view creates: its staged object type, else the one it has. */
@@ -416,6 +453,7 @@ export function flowDiff(_baseline: LModel, desired: LModel): PlanStep[] {
   const properties: PlanStep[] = [];
   const flags: PlanStep[] = [];
   const wires: PlanStep[] = [];
+  const sets: PlanStep[] = [];
 
   for (const [key, e] of Object.entries(edits)) {
     // A rename of an EXISTING flow object (child / container / reference) — `<obj>.change(name := …)`,
@@ -425,6 +463,11 @@ export function flowDiff(_baseline: LModel, desired: LModel): PlanStep[] {
       const rid = flowObjectRid(desired, key);
       const className = desired.flows?.[key]?.refClass;
       renames.push({ kind: 'flowRename', id: key, name: e.rename, ...(rid ? { rid } : {}), ...(className ? { className } : {}) });
+    }
+    if (e.settings) {
+      const rid = flowObjectRid(desired, key);
+      const name = flowObjectName(desired, key);
+      sets.push({ kind: 'flowSet', id: key, className: e.settings.className, values: e.settings.values, ...(rid ? { rid } : {}), ...(name ? { name } : {}) });
     }
     if (e.propertyMapping !== undefined) {
       const rid = flowObjectRid(desired, key);
@@ -478,15 +521,19 @@ export function flowDiff(_baseline: LModel, desired: LModel): PlanStep[] {
     }
 
     const container = findFlowContainer(desired, key);
-    // adds
-    for (const add of e.adds ?? []) {
+    // adds, in the order they are to stand in: new elements moved among themselves need no move
+    // step then, and a new container (which has no order yet) is built in the order shown.
+    const shownOrder = e.order ? effectiveFlowChildren(desired, key).map(n => n.id) : [];
+    const place = (id: string): number => { const at = shownOrder.indexOf(id); return at < 0 ? shownOrder.length : at; };
+    const adds = e.order ? [...(e.adds ?? [])].sort((a, b) => place(a.id) - place(b.id)) : e.adds ?? [];
+    for (const add of adds) {
       creates.push({ kind: 'flowCreate', node: add, parentId: key, parentClass: container?.className ?? 'InputSet', ...(container?.rid ? { parentRid: container.rid } : {}) });
     }
     // reorder — MINIMAL moves (one op per displaced item) vs the natural order (original + adds appended,
     // which is what BMP has after the create steps run). Shared with the layout diff (reorder.ts).
     if (e.order && container) {
       const removed = new Set(e.removes ?? []);
-      const natural = [...container.original.map(c => c.id), ...(e.adds ?? []).map(a => a.id)]
+      const natural = [...container.original.map(c => c.id), ...adds.map(a => a.id)]
         .filter(id => !removed.has(id));
       const desiredOrder = effectiveFlowChildren(desired, key).map(n => n.id);
       const ridOf = (id: string): string | undefined =>
@@ -534,11 +581,21 @@ export function flowDiff(_baseline: LModel, desired: LModel): PlanStep[] {
     orderedCreates.push(step);
     emittedIds.add(step.node.id);
   }
-  return [...containerCreates, ...orderedCreates, ...reorders, ...renames, ...properties, ...deletes, ...flags, ...wires];
+  return [...containerCreates, ...orderedCreates, ...reorders, ...renames, ...properties, ...sets, ...deletes, ...flags, ...wires];
 }
 
 /** rid of an EXISTING flow object (reference or one of its children) — threaded on a flowRename so a
  *  businessId-less object (id === rid) can be addressed by `lookup(rid)` in the compiler. */
+function flowObjectName(m: LModel, id: string): string | undefined {
+  for (const p of Object.values(m.flows ?? {})) {
+    const c = findInFlowChildren(p.children, id); if (c) return c.name;
+  }
+  for (const rc of Object.values(m.flowRefChildren ?? {})) {
+    const c = findInFlowChildren(rc.children, id); if (c) return c.name;
+  }
+  return undefined;
+}
+
 function flowObjectRid(m: LModel, id: string): string | undefined {
   for (const p of Object.values(m.flows ?? {})) {
     if (p.refId === id) return p.refRid;

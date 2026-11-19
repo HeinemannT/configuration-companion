@@ -12,7 +12,7 @@ import { createTabset } from '../edit';
 import { parseFlows, parseFlowRefList, buildFlowRefListEc } from '../sync';
 import { cloneModel } from '../model';
 import {
-  addFlowChild, reorderFlowChild, removeFlowAdd, setActionFlag, addActionButton,
+  addFlowChild, reorderFlowChild, shiftFlowChild, removeFlowAdd, setActionFlag, addActionButton,
   effectiveFlowChildren, findFlowContainer, flowDiff, flowSignature, trayButtons,
   stageNewFlowContainer, wireFlowRef, unwireFlowRef, effectiveRef, flowChangeCount, renameFlowObject,
   deleteFlowChild, setEditFieldProperty,
@@ -274,6 +274,27 @@ describe('flow edit ops', () => {
     expect(flowDiff(base, m3)).toEqual([]);
     expect(m3.flowEdits?.['50850']).toBeUndefined();
     expect(flowChangeCount(m3)).toBe(0);
+  });
+
+  it('new elements moved among themselves are added in the order shown, without move steps', () => {
+    const base = flowModel();
+    const a = addFlowChild(base, '50850', 'TextInput', 'A');
+    const b = addFlowChild(a.model, '50850', 'TextInput', 'B');
+    const moved = shiftFlowChild(b.model, '50850', b.id, -1);
+    const steps = flowDiff(base, moved);
+    expect(steps.filter(s => s.kind === 'flowCreate').map(s => s.kind === 'flowCreate' ? s.node.name : '')).toEqual(['B', 'A']);
+    expect(steps.some(s => s.kind === 'flowReorder')).toBe(false);
+  });
+
+  it('shiftFlowChild moves one place and stops at either end', () => {
+    const base = flowModel();
+    const ids = (m: typeof base) => effectiveFlowChildren(m, '50850').map(c => c.id);
+    const later = shiftFlowChild(base, '50850', '50852', 1);
+    expect(ids(later)).toEqual(['50851', '50858', '50852', '50862']);
+    expect(ids(shiftFlowChild(later, '50850', '50852', -1))).toEqual(ids(base));
+    expect(ids(shiftFlowChild(base, '50850', '50852', -1))).toEqual(['50852', '50851', '50858', '50862']);
+    expect(shiftFlowChild(base, '50850', '50851', -1)).toBe(base);
+    expect(shiftFlowChild(base, '50850', '50862', 1)).toBe(base);
   });
 
   it('setActionFlag stages a flip and clears when toggled back to the projection value', () => {
@@ -708,13 +729,13 @@ describe('staged-new InputSet / EditPage + reference wiring', () => {
 
   it('parseFlowRefList reads the wire-to-existing rows (name last, pipes survive)', () => {
     const log = [
-      '<<<CREV_FLST>>>is1|111|InputSet|Cat A|Owner set',
-      '<<<CREV_FLST>>>ep1|222|EditPage|Cat B|Create X | pipe',
-      '<<<CREV_FLST>>>|333|InputSet||dropped (no bid)',
+      '<<<CREV_FLST>>>is1|111|InputSet|Cat A|3|Owner set',
+      '<<<CREV_FLST>>>ep1|222|EditPage|Cat B||Create X | pipe',
+      '<<<CREV_FLST>>>|333|InputSet|||dropped (no bid)',
     ].join('\n');
     const rows = parseFlowRefList(log);
     expect(rows).toEqual([
-      { id: 'is1', rid: '111', className: 'InputSet', category: 'Cat A', name: 'Owner set' },
+      { id: 'is1', rid: '111', className: 'InputSet', category: 'Cat A', uses: 3, name: 'Owner set' },
       { id: 'ep1', rid: '222', className: 'EditPage', category: 'Cat B', name: 'Create X | pipe' },
     ]);
     expect(buildFlowRefListEc('EditPage')).toContain('SELECT EditPage FROM root.portal');

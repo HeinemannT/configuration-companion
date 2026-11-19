@@ -1384,3 +1384,8 @@ button.ow-ac-tg:hover .chev:not(:empty) { color: var(--text-primary); background
   .ow-pr-v { grid-column: 1; }
   .ow-pbox { min-width: 0; }
 }
+
+.crev-property-picker__count { padding: 5px 8px; color: var(--text-3, #6b7280); font-size: 10px; }
+.crev-property-picker__group { display: flex; justify-content: space-between; width: 100%; padding: 5px 8px; border: 0; border-top: 1px solid var(--border, #e5e7eb); background: transparent; color: var(--text-3, #6b7280); font: inherit; font-size: 11px; text-align: left; cursor: pointer; }
+.crev-property-picker__mapped { flex: none; font-size: 10px; color: var(--text-3, #6b7280); }
+.crev-property-picker__option:hover { background: var(--surface-3); }

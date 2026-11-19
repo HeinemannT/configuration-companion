@@ -89,7 +89,7 @@ describe('what a button says', () => {
     expect(subLabel({ mode: 'hits', count: 1, done: false })).toBe('+ 1 match');
     expect(subLabel({ mode: 'hits', count: 8, done: true })).toBe('All 8 matches');
     expect(subLabel({ mode: 'whole', total: 7, taken: 7 })).toBe('All 7 under it');
-    expect(subLabel({ mode: 'whole', total: 7, taken: 6 })).toBe('All 6 of 7 under it');
+    expect(subLabel({ mode: 'whole', total: 7, taken: 6 })).toBe('6 of 7 under it');
   });
 });
 

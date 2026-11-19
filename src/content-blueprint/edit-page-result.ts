@@ -1,10 +1,11 @@
 import type { TypeSchemaProp } from '../lib/types';
 import type { FlowNode, LModel } from '../lib/layout/types';
-import { effectiveFlowChildren } from '../lib/layout/flow';
+import { effectiveFlowChildren, stagedSettings } from '../lib/layout/flow';
 import { intersectTypeSchemas } from '../lib/type-schema-utils';
 import { propertyPicker } from '../lib/property-picker';
 import {
   ICON_ARROW_OUT,
+  ICON_CARET_DOWN,
   ICON_COLUMNS,
   ICON_INFO,
   ICON_PENCIL,
@@ -14,12 +15,17 @@ import {
   ICON_WARNING,
 } from '../lib/icons';
 import { isTempId } from '../lib/layout/model';
-import { bp } from './state';
+import { emptySetting, flowSettingsFor } from '../lib/layout/flow-settings';
+import { settingControl } from './flow-settings-panel';
+import { bp, model } from './state';
 import {
   beginRename,
   changeEditFieldProperty,
   doDeleteFlowChild,
   inspectMappedProperty,
+  addEditPageStep,
+  moveFlowChild,
+  inlineFlowSettings,
   openFlowPicker,
   selectEditPageField,
   viewEditPage,
@@ -125,6 +131,12 @@ function propertySelector(
   const wrap = document.createElement('span');
   wrap.className = 'bp-ep-property-control';
 
+  // Properties another Edit Field of this page already maps.
+  const present = model();
+  const mappedBy = new Map<string, string>();
+  for (const other of present ? effectiveFlowChildren(present, pageId) : []) {
+    if (other.className === 'EditField' && other.prop && other.id !== node.id) mappedBy.set(other.prop, shownId(other));
+  }
   const picker = propertyPicker({
     value: node.prop ?? '',
     options: schema.properties.map(property => ({
@@ -132,10 +144,12 @@ function propertySelector(
       label: property.label || property.accessor,
       propertyId: property.propertyId || property.accessor,
       configClass: property.propertyConfigClass || property.configClass,
+      ...(property.systemobject ? { system: true } : {}),
+      ...(mappedBy.has(property.accessor) ? { mappedBy: mappedBy.get(property.accessor) } : {}),
     })),
     density: 'compact',
     disabled: schema.state !== 'ready',
-    ariaLabel: `Property for ${node.id}`,
+    ariaLabel: `Property mapping of ${shownId(node)}`,
     title: schema.state === 'ready'
     ? `Properties shared by ${schema.typeLabel}`
     : schema.state === 'loading'
@@ -173,29 +187,49 @@ function propertySelector(
   return wrap;
 }
 
-function selectionToolbar(
+/** Unsaved-change numbers by element, as the canvas and the list of unsaved changes use them. */
+let unsavedMarks: ReadonlyMap<string, { n: number; verb: string }> = new Map();
+export function setEditPageMarks(marks: ReadonlyMap<string, { n: number; verb: string }>): void { unsavedMarks = marks; }
+
+/** The one editor of the selected element: its name and actions, and below them what can be set
+ *  here (property mapping, the settings of flow-settings.ts). It lies over the elements after it and
+ *  goes when the selection goes; nothing in the form moves. */
+export function selectionToolbar(
   node: FlowNode,
   pageId: string,
-  schema: EditPageSchemaView,
+  schema: EditPageSchemaView | null,
   protectedNode = false,
 ): HTMLElement {
   const toolbar = document.createElement('div');
   toolbar.className = 'bp-ep-toolbar';
   toolbar.setAttribute('role', 'toolbar');
-  toolbar.setAttribute('aria-label', `${node.id} actions`);
-  toolbar.appendChild(flowBadge(node.className, isTempId(node.id), true));
+  toolbar.setAttribute('aria-label', `${shownId(node)} actions`);
+  // A click in the editor is not a click on the element under it.
+  toolbar.addEventListener('click', event => event.stopPropagation());
 
+  const top = document.createElement('div');
+  top.className = 'bp-ep-ed-top';
   const id = document.createElement('code');
   id.className = 'bp-ep-object-id';
   id.textContent = shownId(node);
   id.dataset.bprename = node.id;
-  toolbar.appendChild(id);
-
-  if (node.className === 'EditField') toolbar.appendChild(propertySelector(node, pageId, schema));
-  toolbar.appendChild(iconButton(ICON_PENCIL, `Rename ${shownId(node)}`, () => beginRename(node.id)));
-  // What Blueprint does not set here (label, required, read-only, code) is one click away.
+  top.appendChild(id);
+  top.appendChild(iconButton(ICON_PENCIL, `Rename ${shownId(node)}`, () => beginRename(node.id)));
+  const actions = document.createElement('span');
+  actions.className = 'bp-ep-ed-actions';
+  if (!protectedNode) {
+    const present = model();
+    const order = present ? effectiveFlowChildren(present, pageId).map(child => child.id) : [];
+    const at = order.indexOf(node.id);
+    const earlier = iconButton(ICON_CARET_DOWN, 'Move up', () => moveFlowChild(pageId, node.id, -1));
+    earlier.classList.add('is-up');
+    earlier.disabled = at <= 0;
+    const later = iconButton(ICON_CARET_DOWN, 'Move down', () => moveFlowChild(pageId, node.id, 1));
+    later.disabled = at < 0 || at >= order.length - 1;
+    actions.append(earlier, later);
+  }
   if (node.rid && !isTempId(node.id)) {
-    toolbar.appendChild(iconButton(ICON_ARROW_OUT, 'Open in the object window for its other settings', () => inspectMappedProperty(node.rid!)));
+    actions.appendChild(iconButton(ICON_ARROW_OUT, 'All properties in the object window', () => inspectMappedProperty(node.rid!)));
   }
   if (!protectedNode) {
     const remove = iconButton(
@@ -204,7 +238,43 @@ function selectionToolbar(
       () => doDeleteFlowChild(pageId, node.id),
     );
     remove.classList.add('is-delete');
-    toolbar.appendChild(remove);
+    actions.appendChild(remove);
+  }
+  top.appendChild(actions);
+  toolbar.appendChild(top);
+
+  const rows: HTMLElement[] = [];
+  if (node.className === 'EditField' && schema) {
+    const row = document.createElement('div');
+    row.className = 'bp-set-row';
+    const name = document.createElement('span'); name.className = 'bp-set-l'; name.textContent = 'Property mapping';
+    row.title = 'propertyMapping';
+    row.append(name, propertySelector(node, pageId, schema));
+    rows.push(row);
+  }
+  const open = inlineFlowSettings(pageId, node);
+  const present = model();
+  if (open && present) {
+    if (open.error) {
+      const failed = document.createElement('span');
+      failed.className = 'bp-ep-warn';
+      failed.title = `The properties of this element could not be read: ${open.error}`;
+      failed.setAttribute('role', 'alert');
+      setIcon(failed, ICON_WARNING);
+      rows.push(failed);
+    } else if (open.stored) {
+      const staged = stagedSettings(present, pageId, node.id);
+      for (const setting of flowSettingsFor(node.className)) {
+        rows.push(settingControl(setting, Object.hasOwn(staged, setting.prop) ? staged[setting.prop] : open.stored[setting.prop] ?? emptySetting(setting)));
+      }
+    }
+  }
+  if (rows.length) {
+    const body = document.createElement('div');
+    body.className = 'bp-ep-ed-body';
+    body.append(...rows);
+    toolbar.appendChild(body);
+    toolbar.classList.add('has-body');
   }
   return toolbar;
 }
@@ -225,7 +295,7 @@ function selectable(
   element.dataset.bpflip = `flow:${pageId}:${node.id}`;
   element.tabIndex = 0;
   element.setAttribute('role', 'button');
-  element.setAttribute('aria-label', `${node.className} ${node.id}${selected ? ', selected' : ''}`);
+  element.setAttribute('aria-label', `${node.className} ${shownId(node)}${selected ? ', selected' : ''}`);
   element.addEventListener('click', event => {
     if ((event.target as HTMLElement).closest?.('button,select,.bp-ep-drag')) return;
     event.preventDefault();
@@ -263,6 +333,7 @@ function fieldCard(
   columnStartId: string | undefined,
   firstInColumn: boolean,
   duplicateIds: readonly string[] | undefined,
+  shown: Record<string, string | boolean> = {},
 ): HTMLElement {
   const card = selectable(node, pageId, types, schema, `bp-ep-field kind-${node.className}`);
   if (columnStartId) card.dataset.flowstart = columnStartId;
@@ -271,30 +342,70 @@ function fieldCard(
   card.appendChild(flowBadge(node.className, isTempId(node.id), true));
   const identity = document.createElement('code');
   identity.className = 'bp-ep-field-id';
-  identity.textContent = shownId(node);
+  const mapped = node.className === 'EditField' && node.prop ? schema.byAccessor.get(node.prop)?.label : undefined;
+  identity.textContent = mapped || shownId(node);
   identity.title = isTempId(node.id) ? 'New: it gets its ID when the changes are applied' : node.name || node.className;
   card.appendChild(identity);
 
+  // The closed card shows the element as the form will: required, placeholder, button text, label.
+  const text = (prop: string): string => { const value = shown[prop]; return typeof value === 'string' ? value : ''; };
   if (node.className === 'EditField') {
+    const required = Object.hasOwn(shown, 'required') ? shown.required === true : node.required === true;
+    if (required) {
+      const star = document.createElement('span');
+      star.className = 'bp-ep-required';
+      star.textContent = '*';
+      star.title = 'Required';
+      card.appendChild(star);
+    }
+    const input = document.createElement('span');
+    input.className = 'bp-ep-field-input';
+    input.textContent = text('placeholder');
+    if (input.textContent) input.title = `Placeholder: ${input.textContent}`;
+    card.appendChild(input);
     const property = schema.byAccessor.get(node.prop ?? '');
-    const mapping = document.createElement('span');
-    mapping.className = 'bp-ep-field-property';
-    mapping.textContent = node.prop
-      ? (property?.propertyId || node.prop)
-      : 'No property';
-    mapping.title = node.prop
-      ? `${property?.label || node.prop} · propertyMapping`
-      : schema.state === 'unavailable'
-        ? 'No property yet. The create view has no object type, so there are no properties to choose from.'
-        : 'No property yet. Select the field to choose one.';
-    card.appendChild(mapping);
-  } else if (node.className === 'EditPageInfo') {
-    const icon = document.createElement('span');
-    icon.className = 'bp-ep-structural-icon bp-ep-info-icon';
-    icon.title = 'Information (read-only content)';
-    icon.setAttribute('aria-label', 'Information (read-only content)');
-    setIcon(icon, ICON_INFO);
-    card.appendChild(icon);
+    if (node.prop) {
+      const mapping = document.createElement('span');
+      mapping.className = 'bp-ep-field-property';
+      mapping.textContent = property?.propertyId || node.prop;
+      mapping.title = `${property?.label || node.prop} · propertyMapping`;
+      card.appendChild(mapping);
+    } else {
+      const missing = document.createElement('span');
+      missing.className = 'bp-ep-warn';
+      missing.title = schema.state === 'unavailable'
+        ? 'No property mapping. Choose the object type of the Create Object View first; it gives the properties.'
+        : 'No property mapping. Select the field to choose a property.';
+      missing.setAttribute('aria-label', missing.title);
+      setIcon(missing, ICON_WARNING);
+      card.appendChild(missing);
+    }
+  } else {
+    const said = node.className === 'EditPageButton' ? text('buttonText') : node.className === 'EditPageInfo' ? text('label') : '';
+    if (said) {
+      const sample = document.createElement('span');
+      sample.className = `bp-ep-field-said${node.className === 'EditPageButton' ? ' is-button' : ''}`;
+      sample.textContent = said;
+      card.appendChild(sample);
+    }
+    if (node.className === 'EditPageInfo') {
+      const icon = document.createElement('span');
+      icon.className = 'bp-ep-structural-icon bp-ep-info-icon';
+      icon.title = 'Information (read-only content)';
+      icon.setAttribute('aria-label', 'Information (read-only content)');
+      setIcon(icon, ICON_INFO);
+      card.appendChild(icon);
+    }
+  }
+
+  // New or changed and not applied yet: the same numbered marker as on the canvas.
+  const mark = unsavedMarks.get(node.id);
+  if (mark) {
+    const marker = document.createElement('span');
+    marker.className = `bp-mark v-${mark.verb}`;
+    marker.textContent = String(mark.n);
+    marker.title = `Change ${mark.n} in the list of unsaved changes`;
+    card.appendChild(marker);
   }
 
   if (duplicateIds) {
@@ -362,12 +473,6 @@ function editPageSurface(m: LModel, options: EditPageSurfaceOptions): HTMLElemen
   // Inside a create view's box: a press here belongs to the edit page. Left to bubble, the box would
   // select itself on release and redraw, and the click on a field or a page would never arrive.
   if (embedded) frame.addEventListener('mousedown', event => event.stopPropagation());
-  if (embedded && !types.length) {
-    const note = document.createElement('p');
-    note.className = 'bp-ep-note';
-    note.textContent = 'This create view has no object type yet, so its fields cannot be linked to properties. Choose the object type above first.';
-    frame.appendChild(note);
-  }
 
   if (!embedded) {
     const context = document.createElement('div');
@@ -419,6 +524,12 @@ function editPageSurface(m: LModel, options: EditPageSurfaceOptions): HTMLElemen
     });
     pages.appendChild(page);
   });
+  const addPage = document.createElement('button');
+  addPage.className = 'bp-ep-page-add';
+  addPage.textContent = '+ Page';
+  addPage.title = 'Add a page (an EditPageBreak at the end)';
+  activate(addPage, () => addEditPageStep(pageId));
+  pages.appendChild(addPage);
   frame.appendChild(pages);
 
   const surface = document.createElement('div');
@@ -439,7 +550,7 @@ function editPageSurface(m: LModel, options: EditPageSurfaceOptions): HTMLElemen
       column.appendChild(insertionPoint(
         pageId,
         afterId,
-        index === 0 ? 'Add at the start of this column' : `Add before ${node.id}`,
+        index === 0 ? 'Add at the start of this column' : `Add before ${shownId(node)}`,
       ));
       column.appendChild(fieldCard(
         node,
@@ -449,6 +560,7 @@ function editPageSurface(m: LModel, options: EditPageSurfaceOptions): HTMLElemen
         columnStart,
         index === 0,
         duplicateById.get(node.id),
+        { ...(bp.flowSettings?.id === node.id ? bp.flowSettings.stored ?? {} : {}), ...stagedSettings(m, pageId, node.id) },
       ));
     });
     const afterId = columnModel.nodes.at(-1)?.id ?? columnStart ?? null;

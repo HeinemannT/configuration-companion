@@ -15,6 +15,7 @@
 import type { BmpClient } from './bmp-client';
 import { AI_LAYOUT_EC_TIMEOUT, LAYOUT_EC_TIMEOUT } from './constants';
 import type { LayoutIO, BlueprintCtx, LoadResult, StructureLoadResult, ApplyResult, FlowRefListItem } from './layout/sync';
+import { buildFlowSettingsEc, parseFlowSettings, type FlowSettingValues } from './layout/flow-settings';
 import { loadModel, loadEditPageModel, loadStructureModel, applyModel, resolvePageContext, loadFlowRefList, loadObjectTypeList, loadFlowRefChildren as loadFlowRefChildrenCore } from './layout/sync';
 import type { LModel, FlowNode } from './layout/types';
 import { preflightPortableIdRequests, type PortableIdPlan, type PortableIdRequest } from './layout/portable-ids';
@@ -158,6 +159,13 @@ export async function preflightPortableIds(
 export async function loadFlowRefs(client: BmpClient, refClass: 'InputSet' | 'EditPage' | 'ObjectType'): Promise<FlowRefListItem[]> {
   if (refClass === 'ObjectType') return loadObjectTypeList(makeLayoutIO(client));
   return loadFlowRefList(makeLayoutIO(client), refClass);
+}
+
+/** The settings of one existing form element (flow-settings.ts): read when its settings open. */
+export async function loadFlowSettings(client: BmpClient, rid: string, className: string): Promise<FlowSettingValues> {
+  const res = await makeLayoutIO(client).exec(buildFlowSettingsEc(rid, className));
+  if (!res.ok) throw new Error(res.error || 'settings fetch failed');
+  return parseFlowSettings(res.log ?? '', className);
 }
 
 /** On-demand children of ONE existing InputSet/EditPage — fetched when the user wires a widget to an

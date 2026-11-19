@@ -494,6 +494,7 @@
 #crev-blueprint-layer .bp-ep-property-open{border-left:var(--bp-hair) solid var(--bp-line-2)}
 #crev-blueprint-layer .bp-ep-property-open:disabled{opacity:.35;cursor:default}
 #crev-blueprint-layer .bp-ep-tool-action{display:grid;place-items:center;width:20px;height:20px;padding:0;border:0;background:transparent;color:var(--bp-muted);cursor:pointer}
+#crev-blueprint-layer .bp-ep-tool-action:disabled{opacity:.3;cursor:default;pointer-events:none}
 #crev-blueprint-layer .bp-ep-tool-action:hover{background:#eef4fb;color:var(--bp-cyan-hi)}
 #crev-blueprint-layer .bp-ep-tool-action.is-delete:hover{color:var(--bp-red)}
 #crev-blueprint-layer .bp-ep-tool-action svg{width:11px;height:11px}
@@ -1332,3 +1333,57 @@
 #crev-blueprint-layer .bp-editpage.is-embedded .bp-ep-pages{overflow:visible;flex-wrap:wrap;row-gap:2px}
 /* scrolled to on a tab switch: stop below the bar at the top of the window */
 #crev-blueprint-layer .bp-result{scroll-margin-top:140px}
+/* settings of one form element: a short list of controls in the add list's panel style */
+#crev-blueprint-layer .bp-set-row{display:grid;grid-template-columns:1fr;gap:4px;font:500 12px 'BPInter',system-ui,sans-serif;color:var(--bp-text);cursor:default}
+#crev-blueprint-layer .bp-set-row.kind-toggle{grid-template-columns:auto 1fr;align-items:center;column-gap:8px;cursor:pointer}
+#crev-blueprint-layer .bp-set-row input[type=checkbox]{width:14px;height:14px;margin:0;accent-color:var(--bp-violet)}
+#crev-blueprint-layer .bp-set-l{font-weight:600}
+#crev-blueprint-layer .bp-set-t{width:100%;height:26px;padding:0 7px;border:1px solid #c6cbd4;border-radius:var(--bp-r);background:#fff;font:400 12px 'BPInter',system-ui,sans-serif;color:var(--bp-text)}
+#crev-blueprint-layer .bp-set-t:focus{outline:2px solid var(--bp-violet);outline-offset:-1px;border-color:var(--bp-violet)}
+#crev-blueprint-layer .bp-set-note.err{color:var(--bp-red,#c62828)}
+#crev-blueprint-layer .bp-ep-tool-action.is-up svg{transform:rotate(180deg)}
+#crev-blueprint-layer .bp-ep-page-add{align-self:center;height:22px;margin-left:4px;padding:0 8px;border:var(--bp-hair) dashed var(--bp-line-2);border-radius:var(--bp-r-ui);background:transparent;color:var(--bp-muted);font:500 11px 'BPInter',system-ui,sans-serif;cursor:pointer;pointer-events:auto;white-space:nowrap}
+#crev-blueprint-layer .bp-ep-page-add:hover{border-color:var(--bp-violet);color:var(--bp-violet)}
+/* the editor of the selected form element: one popup under it, over what follows */
+#crev-blueprint-layer .bp-ep-field > .bp-ep-toolbar,#crev-blueprint-layer .bp-frow > .bp-ep-toolbar{top:calc(100% + 4px);left:-2px;display:block;width:max(100% + 4px,264px);max-width:none;height:auto;padding:0;white-space:normal;cursor:default;border-radius:var(--bp-r-ui)}
+#crev-blueprint-layer .bp-ep-ed-top{display:flex;align-items:center;gap:4px;height:30px;padding:0 6px 0 9px}
+#crev-blueprint-layer .bp-ep-ed-actions{display:flex;align-items:center;gap:2px;margin-left:auto}
+#crev-blueprint-layer .bp-ep-toolbar:not(.has-body){display:flex}
+#crev-blueprint-layer .bp-ep-toolbar:not(.has-body) .bp-ep-ed-top{padding:0 2px 0 5px;height:auto;flex:1 1 auto}
+#crev-blueprint-layer .bp-ep-ed-body{display:flex;flex-direction:column;gap:9px;padding:9px 9px 10px;border-top:1px solid var(--bp-line-2)}
+#crev-blueprint-layer .bp-ep-ed-body .bp-ep-property-control{height:26px;background:none}
+#crev-blueprint-layer .bp-ep-ed-body .bp-ep-property-picker{width:100%;min-width:0}
+#crev-blueprint-layer .bp-ep-warn{display:inline-flex;flex:none;width:14px;height:14px;color:var(--bp-amber);cursor:help}
+#crev-blueprint-layer .bp-ep-warn svg{width:14px;height:14px}
+#crev-blueprint-layer .bp-ep-field .bp-ep-warn{margin-left:auto}
+#crev-blueprint-layer .bp-ep-required{flex:none;margin-left:-5px;color:var(--bp-red);font:700 13px/1 'BPInter',system-ui,sans-serif}
+#crev-blueprint-layer .bp-ep-field-input{flex:1 1 40px;min-width:0;height:22px;padding:0 7px;overflow:hidden;border:1px solid var(--bp-line-2);border-radius:3px;background:#fff;color:var(--bp-muted);font:400 11px/20px 'BPInter',system-ui,sans-serif;text-overflow:ellipsis;white-space:nowrap}
+#crev-blueprint-layer .bp-ep-field-said{flex:0 1 auto;min-width:0;overflow:hidden;color:var(--bp-text);font:400 11.5px 'BPInter',system-ui,sans-serif;text-overflow:ellipsis;white-space:nowrap}
+#crev-blueprint-layer .bp-ep-field-said.is-button{padding:2px 9px;border:1px solid var(--bp-line-1);border-radius:3px;background:#f5f7fa;font-weight:600}
+#crev-blueprint-layer .bp-ep-field .bp-mark{flex:none}
+#crev-blueprint-layer .bp-ep-field-property{margin-left:0}
+#crev-blueprint-layer .bp-frow.editing{position:relative}
+#crev-blueprint-layer .bp-frow > .bp-ep-toolbar{left:auto;right:8px;top:calc(100% - 2px);width:264px;text-align:left}
+#crev-blueprint-layer .bp-ftag.new{color:#fff}
+#crev-blueprint-layer .bp-set-note.err{color:var(--bp-red)}
+#crev-blueprint-layer .bp-pick-refmeta .uses{color:var(--bp-muted)}
+/* a box whose element editor is open lets it reach past the box, over what follows */
+#crev-blueprint-layer .bp-rcell:has(.bp-ep-toolbar.has-body){overflow:visible;z-index:20}
+#crev-blueprint-layer .bp-pick-refmeta .uses{flex:none;white-space:nowrap}
+#crev-blueprint-layer .bp-pick-ref{min-width:0;max-width:100%;overflow:hidden}
+/* property list: one line per property (kind, name, ID), a count, system properties folded */
+#crev-blueprint-layer .crev-property-picker__list{left:0;right:auto;width:min(400px,calc(100vw - 40px));max-height:292px;padding-bottom:4px}
+#crev-blueprint-layer .crev-property-picker__count{position:sticky;top:0;z-index:1;padding:6px 10px 5px;border-bottom:var(--bp-div) solid var(--bp-line-2);background:#fff;color:var(--bp-muted);font:500 10px/1 var(--bp-mono)}
+#crev-blueprint-layer .crev-property-picker__option{grid-template-columns:53px minmax(0,1fr);gap:8px;min-height:28px;padding:0 10px 0 8px;border-bottom:0}
+#crev-blueprint-layer .crev-property-picker__option:hover{background:#eef4fb}
+#crev-blueprint-layer .crev-property-picker__option.is-clear{padding-left:10px}
+#crev-blueprint-layer .crev-property-picker__copy{align-items:center;gap:8px}
+#crev-blueprint-layer .crev-property-picker__name{flex:0 1 auto;color:var(--bp-text);font:500 12px/1.2 'BPInter',system-ui,sans-serif}
+#crev-blueprint-layer .crev-property-picker__id{flex:0 1 auto;max-width:55%;margin-left:auto;color:var(--bp-muted);font:400 10.5px/1.2 var(--bp-mono)}
+#crev-blueprint-layer .crev-property-picker__mapped{flex:none;padding:1px 5px;border-radius:3px;background:#fdf1dc;color:#8a5a00;font:600 9.5px/1.3 'BPInter',system-ui,sans-serif}
+#crev-blueprint-layer .crev-property-picker__group{display:flex;align-items:center;justify-content:space-between;width:100%;height:26px;margin-top:4px;padding:0 10px;border:0;border-top:var(--bp-div) solid var(--bp-line-2);background:#f6f8fa;color:var(--bp-muted);font:600 10.5px/1 'BPInter',system-ui,sans-serif;text-align:left;cursor:pointer}
+#crev-blueprint-layer .crev-property-picker__group:hover{color:var(--bp-text)}
+#crev-blueprint-layer .crev-property-picker__group-count{font:500 10px/1 var(--bp-mono)}
+#crev-blueprint-layer .crev-property-picker__empty{padding:8px 10px;font:400 11px 'BPInter',system-ui,sans-serif}
+#crev-blueprint-layer .bp-ep-ed-body .crev-property-picker__field{height:26px}
+#crev-blueprint-layer .bp-ep-ed-body .crev-property-picker__input{font-size:10.5px}

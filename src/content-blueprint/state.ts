@@ -64,6 +64,11 @@ export interface BpState {
   // isAction = the tray's "Add action" (creates a page-level menu ActionButton instead);
   // wireExisting = the "wire to existing" variant: key = the WIDGET id, className names the ref class
   // (InputSet/EditPage), rows come from bp.flowRefList (fetched at open; null = loading).
+  /** The open settings of one form element (flow-settings.ts). `stored`: what the server holds
+   *  (null while it is read; all empty for a new element). */
+  flowSettings: { key: string; id: string; className: string; name: string; rid?: string; inline?: boolean; stored: Record<string, string | boolean> | null; error?: string } | null;
+  /** The Input Set row whose editor is open (the same editor an edit page element has). */
+  rowEditor: { key: string; id: string } | null;
   flowPicker: { key: string; className: string; afterId?: string | null; at?: { x: number; y: number }; isAction?: boolean; wireExisting?: boolean } | null;
   flowRefList: import('../lib/layout/sync').FlowRefListItem[] | null; // wire-to-existing rows (null = loading)
   // Wire-to-existing children cache (FIX 2): the real current children of an EXISTING off-page
@@ -131,7 +136,7 @@ function freshState(): Omit<BpState, 'gen'> {
   return {
     active: false, baseline: null, ctx: null, env: null, history: null,
     layer: null, selectedId: null, pendingSelectRid: null, editPageNativeTabId: null, editPageViewKeys: new Map(), propertySchemas: new Map(), propertySchemaPending: new Set(), propertySchemaErrors: new Map(), applySession: null, applyOutcome: null, discardArm: false, discardTimer: 0, actionMenuOpen: false, settingsOpen: false, idConfig: { ...DEFAULT_PORTABLE_ID_CONFIG }, idConfigStatus: 'idle', picker: null, pickerOpts: null,
-    flowPicker: null, flowRefList: null, flowRefChildren: new Map(), flowRefChildrenPending: new Set(), flowFolds: new Set(), trayCardsOpen: new Set(),
+    flowSettings: null, rowEditor: null, flowPicker: null, flowRefList: null, flowRefChildren: new Map(), flowRefChildrenPending: new Set(), flowFolds: new Set(), trayCardsOpen: new Set(),
     movePicker: null, tabMenu: null, tabsetPickerOpen: false, swatch: null, swatchExpanded: new Set(['Basics']),
     brush: { mode: 'off', held: null }, brushMask: new Set(PAINT_STYLE_PROPS), paintPanel: null, presets: [], presetStatus: 'idle', renameId: null,
     onResize: null, onKey: null, onPop: null, onBeforeUnload: null, reloading: false, loadedRid: '', editingTemplate: false, mode: 'layout', raf: 0, resultMode: false, hint: null, trayOpen: false, dragging: false, renaming: false,
@@ -174,7 +179,7 @@ export function resetModel(): boolean {
   bp.discardArm = false;
   // flow view state is page-scoped: fold state / open cards / picker all refer to the old page's ids
   // (pitfall 10 — temp `new:` ids must not survive a reload; staged edits live in the model itself)
-  bp.flowPicker = null; bp.flowRefList = null; bp.flowFolds = new Set(); bp.trayCardsOpen = new Set();
+  bp.flowSettings = null; bp.rowEditor = null; bp.flowPicker = null; bp.flowRefList = null; bp.flowFolds = new Set(); bp.trayCardsOpen = new Set();
   // the ref-children cache is keyed by page-unique businessIds — stale on a page change / target toggle
   bp.flowRefChildren = new Map(); bp.flowRefChildrenPending = new Set();
   return true;
@@ -240,9 +245,9 @@ export const PALETTE: { group: string; items: { key: string; name: string }[] }[
     { key: 'ExtendedTable', name: 'Extended Table' }, { key: 'RiskList', name: 'Risk List' },
     { key: 'CheckList', name: 'Check List' }, { key: 'IssueList', name: 'Issue List' } ] },
   { group: 'Text & Media', items: [
-    { key: 'TextElement', name: 'Text' }, { key: 'DescriptionView', name: 'Description' },
-    { key: 'ImageView', name: 'Image' }, { key: 'Spacer', name: 'Spacer' } ] },
+    { key: 'TextElement', name: 'Text Element' }, { key: 'DescriptionView', name: 'Description View' },
+    { key: 'ImageView', name: 'Image View' }, { key: 'Spacer', name: 'Spacer' } ] },
   { group: 'Input & Action', items: [
     { key: 'InputView', name: 'Input View' }, { key: 'ActionButton', name: 'Action Button' },
-    { key: 'CustomVisualization', name: 'Custom (CVO)' }, { key: 'URLView', name: 'URL / Embed' } ] },
+    { key: 'CustomVisualization', name: 'Custom Visualization' }, { key: 'URLView', name: 'URL View' } ] },
 ];

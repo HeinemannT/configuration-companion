@@ -45,6 +45,7 @@ import { buildSuggestEc, buildSuggestPartEc } from '../compare-read';
 import { buildRefRidsEc, groupRefExprs } from '../ref-rid';
 import { buildFetchEc, buildContextEc, buildFlowRefChildrenEc, buildEditPageFetchEc, buildFlowRefListEc, buildObjectTypeListEc, buildObjectTypeSiblingsEc, type BlueprintCtx } from '../layout/sync';
 import { buildInstanceFanoutEc, buildContainerBlastEc, buildFlowContainerBlastEc } from '../layout/blast-radius';
+import { buildFlowSettingsEc } from '../layout/flow-settings';
 import { buildPortableIdOccupancyEc } from '../layout/portable-ids';
 import { buildAllowedByTypeEc, buildAllowedObjectsEc, PANE_PROPS } from '../bmp-client';
 import {
@@ -143,6 +144,7 @@ const ENTRIES: Entry[] = [
   { fn: 'buildEditPageFetchEc', kind: 'constant', a: () => buildEditPageFetchEc(CONTEXT_OBJECT) },
   { fn: 'buildFlowRefListEc', kind: 'constant', a: () => [buildFlowRefListEc('InputSet'), buildFlowRefListEc('EditPage')] },
   { fn: 'buildObjectTypeListEc', kind: 'constant', a: () => buildObjectTypeListEc() },
+  { fn: 'buildFlowSettingsEc', kind: 'varying', a: () => buildFlowSettingsEc('9007837798074769804', 'ReferenceInput') },
   { fn: 'buildObjectTypeSiblingsEc', kind: 'varying', a: () => buildObjectTypeSiblingsEc(['1463796860208468677', '6935556136354115450']) },
   // The object is the context; the text varies only with the reference
   // definition (a small fixed set per server).

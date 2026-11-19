@@ -69,9 +69,9 @@ export const COMPOSITE_CHILDREN: Record<string, { key: string; name: string }[]>
   // The old page-hosting.md-sourced entries were wrong for this composite.
   ButtonGroup: [{ key: 'ButtonInput', name: 'Button Input' }],
   InputSet: [
-    { key: 'TextInput', name: 'Text' }, { key: 'NumberInput', name: 'Number' }, { key: 'DateInput', name: 'Date' },
-    { key: 'BooleanInput', name: 'Boolean' }, { key: 'ReferenceInput', name: 'Reference' }, { key: 'ListInput', name: 'List' },
-    { key: 'Label', name: 'Label' }, { key: 'ButtonInput', name: 'Button' }, { key: 'ButtonGroup', name: 'Button Group' },
+    { key: 'TextInput', name: 'Text Input' }, { key: 'NumberInput', name: 'Number Input' }, { key: 'DateInput', name: 'Date Input' },
+    { key: 'BooleanInput', name: 'Boolean Input' }, { key: 'ReferenceInput', name: 'Reference Input' }, { key: 'ListInput', name: 'List Input' },
+    { key: 'Label', name: 'Label' }, { key: 'ButtonInput', name: 'Button Input' }, { key: 'ButtonGroup', name: 'Button Group' },
     { key: 'Action', name: 'Action' }, { key: 'Validation', name: 'Validation' },
   ],
   TagList: [{ key: 'Tag', name: 'Tag' }],
@@ -83,9 +83,9 @@ export const COMPOSITE_CHILDREN: Record<string, { key: string; name: string }[]>
  *  through Inspect's live object-schema picker; a new EditField gets name only;
  *  mapping is configured in Inspect (locked decision). */
 export const EDITPAGE_CHILDREN: { key: string; name: string }[] = [
-  { key: 'EditField', name: 'Edit Field' }, { key: 'EditPageInfo', name: 'Information' },
-  { key: 'EditPageButton', name: 'Button' }, { key: 'EditPageValidation', name: 'Validation' },
-  { key: 'EditPageBreak', name: 'Page Break' }, { key: 'EditPageColumnBreak', name: 'Column Break' },
+  { key: 'EditField', name: 'Edit Field' }, { key: 'EditPageInfo', name: 'Edit Page Info' },
+  { key: 'EditPageButton', name: 'Edit Page Button' }, { key: 'EditPageValidation', name: 'Edit Page Validation' },
+  { key: 'EditPageBreak', name: 'Edit Page Break' }, { key: 'EditPageColumnBreak', name: 'Edit Page Column Break' },
 ];
 
 /** The add palette for a flow container by className — EditPage → EDITPAGE_CHILDREN, composites →

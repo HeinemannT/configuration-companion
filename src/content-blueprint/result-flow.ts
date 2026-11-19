@@ -20,10 +20,12 @@ import type { LModel, LNode, FlowNode, FlowProjection } from '../lib/layout/type
 import { isTempId } from '../lib/layout/model';
 import { effectiveFlowChildren, effectiveRef, findFlowContainer, objectTypeClassOf, trayButtons, isStagedActionButtonAdd } from '../lib/layout/flow';
 import { flowDotTitle } from '../lib/widget-metadata';
-import { ICON_PLUS, ICON_LIGHTNING, ICON_ARROW_RIGHT, ICON_PENCIL, ICON_TABS, ICON_LAYOUT, ICON_TRAY, ICON_ARROW_UNDO, ICON_X } from '../lib/icons';
+import { ICON_SLIDERS_HORIZONTAL, ICON_WARNING, ICON_PLUS, ICON_LIGHTNING, ICON_ARROW_RIGHT, ICON_PENCIL, ICON_TABS, ICON_LAYOUT, ICON_TRAY, ICON_ARROW_UNDO, ICON_X } from '../lib/icons';
 import { setIcon } from './geometry';
 import { bp } from './state';
-import { openFlowPicker, toggleFlowFold, toggleTrayCard, toggleActionMenu, setActionButtonFlag, openPicker, cancelFlowAdd, stageNewRef, openWireExisting, openObjectTypePicker, doUnwire, beginRename } from './actions';
+import { openFlowPicker, toggleFlowFold, toggleTrayCard, toggleActionMenu, setActionButtonFlag, openPicker, cancelFlowAdd, stageNewRef, openWireExisting, openObjectTypePicker, toggleRowEditor, closeRowEditor, doUnwire, beginRename } from './actions';
+import { flowSettingsFor } from '../lib/layout/flow-settings';
+import { selectionToolbar } from './edit-page-result';
 import { armFlowRow } from './gestures';
 import { flowBadge } from './flow-badge';
 import { embeddedEditPage } from './edit-page-result';
@@ -49,8 +51,8 @@ function iconCtl(icon: string, title: string, active: boolean, fn: (e: MouseEven
  *  and what clicking will do, so it never reads like a one-way command. */
 function tabScopeControl(buttonId: string, allTabs: boolean): HTMLButtonElement {
   const title = allTabs
-    ? 'All tabs — this action is shown on every tab. Click for this tab only.'
-    : 'This tab only — the slash means this action is limited to its assigned tab. Click to show on all tabs.';
+    ? 'All tabs: this action is shown on every tab. Click for this tab only.'
+    : 'This tab only: the slash means this action is limited to its assigned tab. Click to show on all tabs.';
   const b = iconCtl(ICON_TABS, title, allTabs,
     () => setActionButtonFlag(buttonId, 'displayOnAllTabs', !allTabs));
   b.classList.add('bp-fic-scope', allTabs ? 'all-tabs' : 'single-tab');
@@ -93,11 +95,18 @@ function flowRow(node: FlowNode, key: string, opts: { grid?: boolean; nested?: b
   const prop = document.createElement('span'); prop.className = 'bp-fprop';
   if (node.prop) { const t = document.createElement('span'); t.textContent = node.prop; prop.appendChild(t); }
   if (node.required) { const r = document.createElement('i'); r.className = 'bp-freq'; r.title = 'required'; prop.appendChild(r); }
+  // Its settings, where Blueprint has some for the class (flow-settings.ts).
+  if (flowSettingsFor(node.className).length) {
+    const set = document.createElement('button'); set.className = 'bp-fedit bp-fset'; setIcon(set, ICON_SLIDERS_HORIZONTAL);
+    set.title = `Settings of "${node.name}"`;
+    onTap(set, () => toggleRowEditor(key, node.id));
+    prop.appendChild(set);
+  }
   // Rename affordance (not on structural breaks — they carry no meaningful name).
   if (!node.isBreak) prop.appendChild(renamePencil(node.id, `Rename "${node.name}"`));
   if (staged) {
     const tag = document.createElement('button'); tag.className = 'bp-ftag new'; tag.textContent = 'NEW';
-    tag.title = 'Created on Apply. Click to cancel this unsaved addition.';
+    tag.title = 'Added on Apply. Click to take it out again.';
     onTap(tag, () => cancelFlowAdd(key, node.id));
     prop.appendChild(tag);
   }
@@ -107,7 +116,28 @@ function flowRow(node: FlowNode, key: string, opts: { grid?: boolean; nested?: b
     dots.appendChild(i);
   }
   row.append(drag, lead, nm, prop, dots);
+  if (bp.rowEditor?.id === node.id) {
+    const editor = selectionToolbar(node, key, null);
+    editor.addEventListener('mousedown', event => event.stopPropagation());
+    row.appendChild(editor);
+    row.classList.add('editing');
+    closeOnOutsidePress();
+  }
   return row;
+}
+
+/** One press outside the open row editor closes it. */
+let outsidePress: ((event: MouseEvent) => void) | null = null;
+function closeOnOutsidePress(): void {
+  if (outsidePress) document.removeEventListener('mousedown', outsidePress, true);
+  outsidePress = event => {
+    const target = event.target as HTMLElement | null;
+    if (target?.closest?.('.bp-ep-toolbar, .bp-fset')) return;
+    if (outsidePress) document.removeEventListener('mousedown', outsidePress, true);
+    outsidePress = null;
+    closeRowEditor();
+  };
+  document.addEventListener('mousedown', outsidePress, true);
 }
 
 /** The quiet "+ Add …" row at the end of a flow list. */
@@ -148,13 +178,20 @@ function objectTypeBand(m: LModel, widgetId: string): HTMLElement {
   band.appendChild(lbl);
   const name = staged?.targetName ?? live?.objectType, cls = staged?.className ?? live?.objectTypeClass;
   const value = document.createElement('span'); value.className = name ? 'mono' : 'none';
-  value.textContent = name ? `${name}${cls ? ` · ${cls}` : ''}` : 'none yet';
+  value.textContent = name ? `${name}${cls ? ` · ${cls}` : ''}` : 'none';
+  if (!name) {
+    const warn = document.createElement('span'); warn.className = 'bp-ep-warn';
+    warn.title = 'No object type. Without one the Edit Fields have no properties to map.';
+    warn.setAttribute('aria-label', warn.title);
+    setIcon(warn, ICON_WARNING);
+    band.appendChild(warn);
+  }
   band.appendChild(value);
   if (staged) { const tag = document.createElement('span'); tag.className = 'bp-fnewtag'; tag.textContent = 'NEW'; tag.title = 'Set on Apply'; band.appendChild(tag); }
   const end = document.createElement('span'); end.className = 'end';
   const pick = document.createElement('button'); pick.className = 'bp-fwire';
   pick.textContent = name ? 'Change' : 'Choose';
-  pick.title = 'Choose the object this view creates. Its type gives the edit fields their properties.';
+  pick.title = 'Choose the object type this Create Object View adds. It gives the Edit Fields their properties.';
   onTap(pick, (e) => openObjectTypePicker(widgetId, { x: e.clientX, y: e.clientY }));
   end.appendChild(pick);
   band.appendChild(end);
@@ -214,7 +251,7 @@ function actionBand(p: FlowProjection, staged: boolean | undefined): HTMLElement
 function placementControl(buttonId: string, onMenu: boolean): HTMLElement {
   const seg = document.createElement('span'); seg.className = 'bp-ficseg';
   seg.append(
-    iconCtl(ICON_LAYOUT, 'Render as a widget in the canvas grid', !onMenu, () => { if (onMenu) setActionButtonFlag(buttonId, 'displayOnActionMenu', false); }),
+    iconCtl(ICON_LAYOUT, 'Show as a widget on the page', !onMenu, () => { if (onMenu) setActionButtonFlag(buttonId, 'displayOnActionMenu', false); }),
     iconCtl(ICON_TRAY, 'Move to the page action menu (top-right)', onMenu, () => { if (!onMenu) setActionButtonFlag(buttonId, 'displayOnActionMenu', true); }),
   );
   return seg;
@@ -229,9 +266,9 @@ function refBand(m: LModel, p: FlowProjection, folded: boolean): HTMLElement {
   if (p.refId) nm.dataset.bprename = p.refId;
   band.appendChild(nm);
   const end = document.createElement('span'); end.className = 'end';
-  if (p.refId) end.appendChild(renamePencil(p.refId, `Rename ${p.refClass ?? 'reference'} "${staged ?? p.refName ?? p.refId}"`));
+  if (p.refId) end.appendChild(renamePencil(p.refId, `Rename ${p.refClass ?? 'linked object'} "${staged ?? p.refName ?? p.refId}"`));
   const fold = document.createElement('button'); fold.className = 'bp-ffold'; fold.textContent = folded ? '▸' : '▾';
-  fold.title = folded ? 'Expand the flow chain' : 'Fold the flow chain';
+  fold.title = folded ? 'Expand' : 'Collapse';
   onTap(fold, () => toggleFlowFold(p.ownerId));
   end.appendChild(fold);
   band.appendChild(end);
@@ -268,7 +305,7 @@ function noRefBand(widgetId: string, prop: 'inputSet' | 'editPage', editingTempl
   onTap(wire, (e) => openWireExisting(widgetId, prop, { x: e.clientX, y: e.clientY }));
   const mk = document.createElement('button'); mk.className = 'bp-fwire new';
   mk.textContent = '+ New';
-  mk.title = `Add a new ${what} (created on Apply in the page's support Category, without loading the existing list); add its elements right away`;
+  mk.title = `Add a new ${what} (added on Apply in this page's folder); add its elements right away`;
   onTap(mk, () => stageNewRef(widgetId, prop));
   end.append(wire, mk);
   band.appendChild(end);
@@ -284,16 +321,16 @@ function stagedRefBand(m: LModel, widgetId: string, ref: { id: string; className
   const nm = document.createElement('span'); nm.className = 'bp-fname'; nm.textContent = staged ?? ref.name ?? ref.id;
   nm.dataset.bprename = ref.id; band.appendChild(nm);
   const end = document.createElement('span'); end.className = 'end';
-  end.appendChild(renamePencil(ref.id, ref.isNew ? 'Rename the new reference' : `Rename ${ref.className} "${staged ?? ref.name ?? ref.id}"`));
+  end.appendChild(renamePencil(ref.id, ref.isNew ? `Rename the new ${ref.className}` : `Rename ${ref.className} "${staged ?? ref.name ?? ref.id}"`));
   const tag = document.createElement('span'); tag.className = 'bp-ftag ' + (ref.isNew ? 'new' : 'mv');
   tag.textContent = ref.isNew ? 'NEW' : 'WIRED';
   tag.title = ref.isNew
-    ? 'Staged: created on Apply in the page\'s support Category, then linked to this widget.'
-    : 'Staged: linked to this widget on Apply.';
+    ? 'Not applied yet: added on Apply in this page\'s folder, then linked to this widget.'
+    : 'Not applied yet: linked to this widget on Apply.';
   end.appendChild(tag);
   const x = document.createElement('button'); x.className = 'bp-fwire x';
   setIcon(x, ICON_X);
-  x.title = ref.isNew ? 'Cancel the new reference (and its unsaved elements)' : 'Cancel the unsaved link';
+  x.title = ref.isNew ? `Take out the new ${ref.className} (and its unsaved elements)` : 'Cancel the unsaved link';
   onTap(x, () => doUnwire(widgetId));
   end.appendChild(x);
   band.appendChild(end);
@@ -382,15 +419,15 @@ function trayCard(m: LModel, p: FlowProjection, leaving = false): HTMLElement {
   if (staged) {
     const tag = document.createElement('span'); tag.className = 'bp-ftag new'; tag.textContent = 'NEW'; ctl.appendChild(tag);
   } else if (leaving) {
-    const tag = document.createElement('span'); tag.className = 'bp-ftag mv'; tag.textContent = 'TO GRID';
-    tag.title = 'Unsaved: on Apply this button renders in the grid instead of the action menu.';
-    ctl.append(tag, iconCtl(ICON_ARROW_UNDO, 'Keep in the action menu (cancel the move to grid)', false,
+    const tag = document.createElement('span'); tag.className = 'bp-ftag mv'; tag.textContent = 'TO PAGE';
+    tag.title = 'Unsaved: on Apply this button shows on the page instead of the action menu.';
+    ctl.append(tag, iconCtl(ICON_ARROW_UNDO, 'Keep in the action menu', false,
       () => setActionButtonFlag(p.ownerId, 'displayOnActionMenu', true)));
   } else {
     const allTabs = m.flowEdits?.[p.ownerId]?.displayOnAllTabs ?? p.displayOnAllTabs ?? false;
     ctl.append(
       tabScopeControl(p.ownerId, allTabs),
-      iconCtl(ICON_LAYOUT, 'Move to the canvas grid instead of the action menu', false,
+      iconCtl(ICON_LAYOUT, 'Show on the page instead of the action menu', false,
         () => setActionButtonFlag(p.ownerId, 'displayOnActionMenu', false)),
     );
   }
@@ -485,7 +522,7 @@ export function actionMenuPanel(m: LModel, viewedTabId: string | null): HTMLElem
   const add = document.createElement('button'); add.className = 'bp-aadd';
   const ic = document.createElement('span'); setIcon(ic, ICON_PLUS);
   add.append(ic, document.createTextNode('Add action'));
-  add.title = 'Add a new action-menu button (created with displayOnActionMenu on Apply)';
+  add.title = 'Add a new action-menu button (added with displayOnActionMenu on Apply)';
   // Born bound to the viewed tab — RESULT when the page routes its buttons through the shared Result tab
   // (the fixture convention), else the viewed tab itself.
   onTap(add, (e) => openFlowPicker(viewedTabId ?? 'RESULT', 'ActionButton', { at: { x: e.clientX, y: e.clientY }, isAction: true }));

@@ -2041,6 +2041,12 @@ export class TransportController {
     return !!o && o.rid !== rid && !o.whole.leftOut?.includes(rid);
   }
 
+  /** Was the object taken out of a folder taken whole that still holds its place? */
+  leftOutOfFolder(rid: string): boolean {
+    const o = this.owningFolder(rid);
+    return !!o && o.rid !== rid && !!o.whole.leftOut?.includes(rid);
+  }
+
   /** The lines of the transport: objects alone, and folders taken whole. */
   lines(): { objects: number; folders: number } {
     const l = transportLines(this.collection.list());

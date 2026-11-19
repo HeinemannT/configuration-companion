@@ -118,7 +118,7 @@ import {
 import { renderChip, modeSwitch, scopeClass, previewModal, outcomePanel, trayPanel, hintBar, settingsPanel, changeMarks } from './view-panels';
 import { paintStation, paintPopup } from './view-paint';
 import { renderResult } from './result';
-import { renderEditPage } from './edit-page-result';
+import { renderEditPage, setEditPageMarks } from './edit-page-result';
 import { actionMenuTrigger, actionMenuPanel } from './result-flow';
 import { flowBadge } from './flow-badge';
 import { flowChildPalette } from '../lib/layout/constraints';
@@ -237,6 +237,7 @@ export function render(): void {
     placeBar(header, band?.getBoundingClientRect().bottom ?? 0);
     layer.appendChild(header);
     if (dockBar(header, band)) bp.resultAnchor = null; // the page moved: anchor the canvas again
+    setEditPageMarks(canvasMarks(base, m, pending));
     bp.resultMode = renderEditPage(m, layer);
     renderFloatingChrome(byRid, m);
     if (oldRects) flipFrom(layer, oldRects);
@@ -283,6 +284,7 @@ export function render(): void {
   // paper. As soon as the draft diverges (or another tab is viewed) the page underneath no longer
   // matches the drawing, so the paper turns opaque instead of showing a double image. Peek works in both.
   layer.classList.toggle('bp-clean', pending === 0 && viewedId === liveId && bp.mode === 'layout');
+  setEditPageMarks(canvasMarks(base, m, pending));
   if (renderResult(base, m, byRid, layer, viewedId, canvasMarks(base, m, pending))) {
     bp.resultMode = true;
     renderFloatingChrome(byRid, m);
@@ -825,7 +827,7 @@ function flowPickerPanel(): HTMLElement {
   if (p.wireExisting) {
     // "Wire to existing": the workspace's InputSets/EditPages, fetched lean at picker-open
     // (bp.flowRefList; null while the SW round-trip is in flight). Picking stages the reference wire.
-    head.textContent = p.className === 'ObjectType' ? 'Object type of this create view' : `Wire to an existing ${p.className}`;
+    head.textContent = p.className === 'ObjectType' ? 'Object type of this Create Object View' : `Link to an existing ${p.className}`;
     const search = document.createElement('input'); search.className = 'bp-pick-s'; search.placeholder = 'Search…';
     const list = document.createElement('div'); list.className = 'bp-pick-list';
     const fill = (q: string): void => {
@@ -844,6 +846,12 @@ function flowPickerPanel(): HTMLElement {
         if (it.category) {
           const par = document.createElement('span'); par.className = 'par'; par.textContent = it.category; par.title = `in ${it.category}`;
           meta.append(document.createTextNode(' · '), par);
+        }
+        if (it.uses != null) {
+          const used = document.createElement('span'); used.className = 'uses';
+          used.textContent = it.uses === 0 ? 'not linked' : `linked from ${it.uses}`;
+          used.title = it.uses === 0 ? 'No widget links to it' : `${it.uses} widget${it.uses === 1 ? '' : 's'} link to it. A change to it shows in all of them.`;
+          meta.append(document.createTextNode(' · '), used);
         }
         row.append(nm, meta);
         row.addEventListener('mousedown', (e) => { e.stopPropagation(); wireExistingFromPicker(it.id, it.className, it.name, it.rid); });
@@ -874,7 +882,7 @@ function flowPickerPanel(): HTMLElement {
       const left = document.createElement('span'); left.className = 'bp-pick-l';
       const nm = document.createElement('span'); nm.textContent = it.name;
       left.append(flowBadge(it.key), nm);
-      const k = document.createElement('span'); k.className = 'k'; k.textContent = it.key;
+      const k = document.createElement('span'); k.className = 'k'; k.textContent = sameWords(it.name, it.key) ? '' : it.key;
       row.append(left, k);
       row.addEventListener('mousedown', (e) => { e.stopPropagation(); addFlowFromPicker(it.key); });
       list.appendChild(row);
@@ -931,6 +939,9 @@ function addDest(list: HTMLElement, dest: LNode, label: string, widgetId: string
   list.appendChild(row);
 }
 
+/** "Edit Page Info" and "EditPageInfo" say the same: the class is then not repeated. */
+const sameWords = (name: string, className: string): boolean => name.replace(/\s+/g, '').toLowerCase() === className.toLowerCase();
+
 /** A picker/move row: name + a muted kind tag. textContent only — names come from BMP (a container
  *  could be named with HTML), so never innerHTML them. */
 function pickRow(label: string, tag: string, on: () => void, icon?: string | null, realType?: string): HTMLButtonElement {
@@ -940,7 +951,7 @@ function pickRow(label: string, tag: string, on: () => void, icon?: string | nul
   if (realType) { const ty = typeBadge(realType, { size: 'xs' }); ty.classList.add('bp-pick-type'); left.appendChild(ty); }
   else if (icon) { const ic = document.createElement('span'); ic.className = 'bp-pick-ic'; setIcon(ic, icon); left.appendChild(ic); }
   const nm = document.createElement('span'); nm.textContent = label; left.appendChild(nm);
-  const k = document.createElement('span'); k.className = 'k'; k.textContent = tag;
+  const k = document.createElement('span'); k.className = 'k'; k.textContent = sameWords(label, tag) ? '' : tag;
   b.append(left, k);
   b.addEventListener('mousedown', (e) => { e.stopPropagation(); on(); });
   return b;
@@ -1163,8 +1174,8 @@ function tabBar(base: LModel, m: LModel, liveId: string | null, viewedId: string
   if (m.resultOnly) {
     // No dedicated tabset: adding a plain tab would hit the shared default_tabset. Offer to create a
     // tabset of the page's own instead (one click — names it after the page; the Tab can be renamed).
-    const b = mkBtn('+ Create tabset', () => doCreateTabset());
-    b.title = 'This page has no tabset of its own. Create one to organise its widgets into tabs. It is created together with your other changes when you Apply.';
+    const b = mkBtn('+ Add TabSet', () => doCreateTabset());
+    b.title = 'This page has no TabSet of its own. Add one to organise its widgets into tabs. It is added together with your other changes when you Apply.';
     bar.appendChild(b);
   } else {
     const add = mkBtn('+ Tab', addTabAction);
@@ -1195,7 +1206,7 @@ function tabPill(m: LModel, node: LNode, state: 'same' | 'renamed' | 'gone' | 'n
   pill.dataset.bpid = id; pill.dataset.bpkind = 'tab'; // drop target for cross-tab moves
   pill.title = gone ? 'Deleted. Use Undo to restore it.'
     : shared ? 'The shared Result tab. Its widgets are editable, but the tab itself is shared across scorecards, so rename and delete are disabled.'
-    : `Show this tab in the canvas · TabSet: ${owner.name}`;
+    : `Show this tab · TabSet: ${owner.name}`;
   if (shared) pill.classList.add('shared');
   const color = colors.get(owner.id);
   if (!shared && color !== undefined) pill.classList.add(`tsc-${color}`);

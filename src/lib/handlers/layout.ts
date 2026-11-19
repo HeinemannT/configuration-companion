@@ -6,7 +6,7 @@
 import { register } from '../handler-registry';
 import { boundCtxForTab, ctxOf, getCtx } from '../sw-context';
 import type { SwContext } from '../sw-context';
-import { loadPage, applyPage, loadBlastRadius, loadFlowRefs, loadFlowRefChildren, preflightPortableIds } from '../layout-service';
+import { loadPage, applyPage, loadBlastRadius, loadFlowRefs, loadFlowSettings, loadFlowRefChildren, preflightPortableIds } from '../layout-service';
 import { ensureContentScript, ensureBlueprintScript } from '../tab-awareness';
 import { toggleInspect } from './inspect';
 import { reportFrameOpenFailure } from '../frame-open-failure';
@@ -365,6 +365,17 @@ register('LAYOUT_FLOW_REFS', async (msg, respond, meta) => {
     respond({ type: 'LAYOUT_FLOW_REFS_RESULT', ok: true, refs });
   } catch (e) {
     respond({ type: 'LAYOUT_FLOW_REFS_RESULT', ok: false, error: errorMessage(e) });
+  }
+});
+
+// The settings of one existing form element, read when its settings open in Blueprint.
+register('LAYOUT_FLOW_SETTINGS', async (msg, respond, meta) => {
+  const ctx = ctxOf(meta);
+  if (!ctx.client) { respond({ type: 'LAYOUT_FLOW_SETTINGS_RESULT', ok: false, error: 'Not connected' }); return; }
+  try {
+    respond({ type: 'LAYOUT_FLOW_SETTINGS_RESULT', ok: true, values: await loadFlowSettings(ctx.client, msg.rid, msg.className) });
+  } catch (e) {
+    respond({ type: 'LAYOUT_FLOW_SETTINGS_RESULT', ok: false, error: errorMessage(e) });
   }
 });
 

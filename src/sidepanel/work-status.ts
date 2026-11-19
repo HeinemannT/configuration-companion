@@ -94,9 +94,11 @@ export function workStatusForMessage(msg: InspectorMessage): WorkStatus | null {
     case 'LAYOUT_BLAST_RESULT': return settled('Impact check ready');
     case 'LAYOUT_FLOW_REFS':
     case 'LAYOUT_FLOW_REF_CHILDREN':
+    case 'LAYOUT_FLOW_SETTINGS':
       return working('Loading flow options…');
     case 'LAYOUT_FLOW_REFS_RESULT':
     case 'LAYOUT_FLOW_REF_CHILDREN_RESULT':
+    case 'LAYOUT_FLOW_SETTINGS_RESULT':
       return settled(msg.ok ? 'Flow options ready' : 'Flow options failed');
 
     case 'AI_TEST': return working('Testing AI…');

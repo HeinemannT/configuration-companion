@@ -591,7 +591,7 @@ function ghostTray(tab: LNode): HTMLElement | null {
       if (strip) foot.appendChild(strip);
       const pos = document.createElement('span'); pos.className = 'bp-ghost-pos';
       pos.textContent = g.prevName ? `returns after \u201C${g.prevName}\u201D` : `returns first in \u201C${g.parentName}\u201D`;
-      pos.title = 'Un-hiding re-packs the widget at its saved position in the grid above.';
+      pos.title = 'When shown again, the widget returns to its saved position in the grid above.';
       foot.appendChild(pos);
       foot.addEventListener('mousedown', (e) => e.stopPropagation());
       c.appendChild(foot);

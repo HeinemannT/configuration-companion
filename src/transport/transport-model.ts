@@ -248,7 +248,7 @@ export type SubSpec =
 
 export function subLabel(s: SubSpec): string {
   switch (s.mode) {
-    case 'whole': return s.taken < s.total ? `All ${s.taken.toLocaleString('en-US')} of ${s.total.toLocaleString('en-US')} under it` : `All ${s.total.toLocaleString('en-US')} under it`;
+    case 'whole': return s.taken < s.total ? `${s.taken.toLocaleString('en-US')} of ${s.total.toLocaleString('en-US')} under it` : `All ${s.total.toLocaleString('en-US')} under it`;
     case 'all': return s.count == null ? '+ under it' : `+ ${s.count.toLocaleString('en-US')} under it`;
     case 'area': return s.count == null ? 'All' : `All ${s.count.toLocaleString('en-US')}`;
     case 'hits': return `${s.done ? 'All' : '+'} ${plural(s.count, 'match', 'matches')}`;

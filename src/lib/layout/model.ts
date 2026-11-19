@@ -284,6 +284,7 @@ export function cloneModel(m: LModel): LModel {
 export function cloneFlowEdits(fe: Record<string, FlowEdit>): Record<string, FlowEdit> {
   const cloneFlowNode = (n: import('./types').FlowNode): import('./types').FlowNode => ({
     ...n,
+    ...(n.settings ? { settings: { ...n.settings } } : {}),
     ...(n.dots ? { dots: n.dots.map(d => ({ ...d })) } : {}),
     ...(n.children ? { children: n.children.map(cloneFlowNode) } : {}),
   });
@@ -305,6 +306,7 @@ export function cloneFlowEdits(fe: Record<string, FlowEdit>): Record<string, Flo
       // entry inflating the pending count). Every FlowEdit field must be carried, no exceptions.
       ...(e.rename !== undefined ? { rename: e.rename } : {}),
       ...(e.propertyMapping !== undefined ? { propertyMapping: e.propertyMapping } : {}),
+      ...(e.settings ? { settings: { className: e.settings.className, values: { ...e.settings.values } } } : {}),
     };
   }
   return out;

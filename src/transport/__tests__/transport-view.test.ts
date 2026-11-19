@@ -232,19 +232,20 @@ describe('the tree', () => {
     expect(w.sent[0].roots).toHaveLength(10);
   });
 
-  it('opening an area reads its children once, with a Reading line; a count follows the rows; the row button says + n under it', async () => {
+  it('opening an area reads its children once, with a Reading line; a count follows the rows; the row says n under it', async () => {
     const { $, $$, w, ctl } = await opened();
     w.answer = m => (m.type === 'TRANSPORT_COUNTS' ? HOLD : answer(m));
     $<HTMLButtonElement>('.tr-grp.browse .tr-gt')!.click();
     expect($('.tr-grp.browse .tr-note')!.textContent).toBe('Reading');
     await flush(40);
     expect($$('.tr-row').map(r => r.querySelector('.tr-id')!.textContent)).toEqual(['swi_home']);
-    // The count is a second request: until it arrives the button has no number.
-    expect($('.tr-row .tr-sub')!.textContent).toBe('+ under it');
+    // The count is a second request: until it arrives the row has no number.
+    expect($('.tr-row .tr-under')!.textContent).toBe('');
     const p = w.pending.shift()!;
     p.resolve(counts(p.msg as Sent));
     await flush();
-    expect($('.tr-row .tr-sub')!.textContent).toBe('+ 3 under it');
+    expect($('.tr-row .tr-under')!.textContent).toBe('3 under it');
+    expect($('.tr-row .tr-sub')!.textContent).toBe('Only this');
     // Closing and opening again reads nothing more.
     const reads = () => w.sent.filter(m => m.type === 'TRANSPORT_CHILDREN').length;
     $<HTMLButtonElement>('.tr-grp.browse .tr-gt')!.click();
@@ -253,7 +254,49 @@ describe('the tree', () => {
     expect(ctl.browseOpen.has('a:portal')).toBe(true);
   });
 
-  it('a tick is the object alone; + n under it takes the folder whole: one line, a pressed button, a bar on its rows', async () => {
+  it('a tick on a folder takes it with everything under it; Only this takes the folder alone, + n under it then adds the rest', async () => {
+    const { $, ctl, tick } = await opened();
+    $<HTMLButtonElement>('.tr-grp.browse .tr-gt')!.click();
+    await flush(40);
+    const sub = () => $<HTMLButtonElement>(`.tr-row[data-rid="${folder.rid}"] .tr-sub`)!;
+    const box = () => $<HTMLInputElement>(`.tr-ck[data-rid="${folder.rid}"]`)!;
+    // One tick: the folder whole. The ID BMP assigned is left out.
+    tick(folder.rid);
+    await flush(40);
+    expect($('.tr-selcount')!.textContent).toBe('1 folder in the transport');
+    expect([box().checked, sub().textContent, sub().classList.contains('on')]).toEqual([true, '2 of 3 under it', true]);
+    // Unticking the folder takes all of it out again.
+    tick(folder.rid, false);
+    expect(ctl.collection.size).toBe(0);
+    // The folder alone, then the rest.
+    expect(sub().textContent).toBe('Only this');
+    sub().click();
+    expect(ctl.collection.rids()).toEqual([folder.rid]);
+    expect($('.tr-selcount')!.textContent).toBe('1 object in the transport');
+    expect(sub().textContent).toBe('+ 3 under it');
+    sub().click();
+    await flush(40);
+    expect($('.tr-selcount')!.textContent).toBe('1 folder in the transport');
+  });
+
+  it('a folder above 500 objects is taken on the second tick only', async () => {
+    const { $, w, ctl, tick } = await opened();
+    w.answer = m => (m.type === 'TRANSPORT_COUNTS' ? countsResult(m as Sent, Object.fromEntries((((m as Sent).rids ?? (m as Sent).roots) as string[]).map(r => [r, 900]))) : answer(m as Sent));
+    $<HTMLButtonElement>('.tr-grp.browse .tr-gt')!.click();
+    await flush(40);
+    const under = () => $(`.tr-row[data-rid="${folder.rid}"] .tr-under`)!.textContent;
+    expect(under()).toBe('900 under it');
+    tick(folder.rid);
+    await flush(40);
+    expect(ctl.collection.size).toBe(0);
+    expect(under()).toBe('Tick again to add 901');
+    expect($<HTMLInputElement>(`.tr-ck[data-rid="${folder.rid}"]`)!.checked).toBe(false);
+    tick(folder.rid);
+    await flush(40);
+    expect($('.tr-selcount')!.textContent).toBe('1 folder in the transport');
+  });
+
+  it('a tick on a child is the object alone; + n under it takes the folder whole: one line, a pressed button, a bar on its rows', async () => {
     const { $, $$, ctl, tick } = await opened();
     $<HTMLButtonElement>('.tr-grp.browse .tr-gt')!.click();
     await flush(40);
@@ -263,19 +306,19 @@ describe('the tree', () => {
     expect(ctl.collection.rids()).toEqual([a.rid]);
     expect($('.tr-selcount')!.textContent).toBe('1 object in the transport');
     const sub = () => $<HTMLButtonElement>(`.tr-row[data-rid="${folder.rid}"] .tr-sub`)!;
-    expect(sub().textContent).toBe('+ 3 under it');
-    sub().click();
+    expect($(`.tr-row[data-rid="${folder.rid}"] .tr-under`)!.textContent).toBe('3 under it');
+    tick(folder.rid);
     await flush(40);
     expect($('.tr-selcount')!.textContent).toBe('1 folder in the transport');
     expect($('.tr-tab[data-tab="transport"]')!.textContent).toBe('Transport 1');
-    expect([sub().textContent, sub().getAttribute('aria-pressed'), sub().classList.contains('on')]).toEqual(['All 2 of 3 under it', 'true', true]);
+    expect([sub().textContent, sub().getAttribute('aria-pressed'), sub().classList.contains('on')]).toEqual(['2 of 3 under it', 'true', true]);
     // The ID BMP assigned is left out; the others are in, with the bar.
     expect($$('.tr-row.cov').map(r => r.querySelector('.tr-id')!.textContent)).toEqual(['swi_home_kpis', 'swi_home_news']);
     expect($<HTMLInputElement>(`.tr-ck[data-rid="${auto.rid}"]`)!.checked).toBe(false);
     // Unticking one inside keeps the folder as one line.
     tick(b.rid, false);
     expect($('.tr-selcount')!.textContent).toBe('1 folder in the transport');
-    expect(sub().textContent).toBe('All 1 of 3 under it');
+    expect(sub().textContent).toBe('1 of 3 under it');
     // The pressed button takes everything out again.
     sub().click();
     expect(ctl.collection.size).toBe(0);

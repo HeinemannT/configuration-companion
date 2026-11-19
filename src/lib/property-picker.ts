@@ -11,6 +11,10 @@ export interface PropertyPickerOption {
   label?: string;
   /** Concrete MethodConfig class used by the shared property badge. */
   configClass?: string;
+  /** A BMP system property (id, name, parent, ...): listed after the type's own, folded. */
+  system?: boolean;
+  /** Who already maps this property on the same form; it stays selectable. */
+  mappedBy?: string;
 }
 
 export interface PropertyPickerOptions {
@@ -138,7 +142,7 @@ export function propertyPicker(opts: PropertyPickerOptions): HTMLElement {
     spellcheck: 'false',
     disabled: opts.disabled,
     placeholder: opts.placeholder ?? 'Select property',
-    title: opts.title ?? 'Search by property ID, name, or type: ref, num, text, date, choice',
+    title: opts.title ?? 'Search by property name or ID',
   }) as HTMLInputElement;
   const toggle = h('button', {
     class: 'crev-property-picker__toggle',
@@ -179,59 +183,86 @@ export function propertyPicker(opts: PropertyPickerOptions): HTMLElement {
     if (type) badgeSlot.classList.remove('is-empty');
   };
 
+  /** The rows as listed now, in order: what the arrow keys and Enter walk over. */
+  let visible: PropertyPickerOption[] = [];
+  let rows: HTMLElement[] = [];
+  let systemOpen = false;
+
+  const markActive = (): void => {
+    rows.forEach((row, index) => row.classList.toggle('is-active', index === activeIndex));
+    if (open && rows[activeIndex]) input.setAttribute('aria-activedescendant', rows[activeIndex].id);
+    else input.removeAttribute('aria-activedescendant');
+  };
+
+  const optionRow = (option: PropertyPickerOption, index: number): HTMLElement => {
+    const id = option.value ? displayId(option) : '';
+    const name = option.value ? (option.label && option.label !== id ? option.label : id) : 'No property';
+    const type = badgeType(option);
+    const row = h('div', {
+      class: [
+        'crev-property-picker__option',
+        option.value === selectedValue ? 'is-selected' : '',
+        option.value ? '' : 'is-clear',
+      ].filter(Boolean).join(' '),
+      id: `${listId}-option-${index}`,
+      role: 'option',
+      'aria-selected': String(option.value === selectedValue),
+      'data-value': option.value,
+      title: option.value
+        ? [option.label, option.propertyId, option.value, option.configClass, option.mappedBy ? `mapped by ${option.mappedBy}` : '']
+            .filter(Boolean).join(' · ')
+        : 'Clear property mapping',
+      },
+      option.value
+        ? h('span', { class: 'crev-property-picker__option-badge' },
+            type ? typeBadge(type, { size: 'xs' }) : null,
+          )
+        : null,
+      h('span', { class: 'crev-property-picker__copy' },
+        h('span', { class: 'crev-property-picker__name' }, name),
+        option.mappedBy ? h('span', { class: 'crev-property-picker__mapped' }, 'Mapped') : null,
+        id && id !== name ? h('span', { class: 'crev-property-picker__id' }, id) : null,
+      ),
+    );
+    row.addEventListener('mousedown', event => {
+      event.preventDefault();
+      select(option);
+    });
+    return row;
+  };
+
+  // Built once per search text. Moving the pointer or the arrow keys only moves a class.
   const renderList = (): void => {
     const results = filtered();
-    activeIndex = Math.min(activeIndex, Math.max(0, results.length - 1));
+    const searching = Boolean(query.trim());
+    const own = results.filter(option => !option.system);
+    const system = results.filter(option => option.system);
+    const showSystem = system.length > 0 && (systemOpen || searching || !own.some(option => option.value));
+    visible = showSystem ? [...own, ...system] : own;
+    activeIndex = Math.min(activeIndex, Math.max(0, visible.length - 1));
     list.textContent = '';
-    if (!results.length) {
-      list.appendChild(h('div', { class: 'crev-property-picker__empty' }, 'No matching properties'));
-      input.removeAttribute('aria-activedescendant');
-      return;
-    }
-    results.forEach((option, index) => {
-      const primary = option.value ? displayId(option) : 'No property';
-      const secondary = option.value && option.label && option.label !== primary
-        ? option.label
-        : '';
-      const optionId = `${listId}-option-${index}`;
-      const type = badgeType(option);
-      const row = h('div', {
-        class: [
-          'crev-property-picker__option',
-          option.value === selectedValue ? 'is-selected' : '',
-          index === activeIndex ? 'is-active' : '',
-          option.value ? '' : 'is-clear',
-        ].filter(Boolean).join(' '),
-        id: optionId,
-        role: 'option',
-        'aria-selected': String(option.value === selectedValue),
-        'data-value': option.value,
-        title: option.value
-          ? [option.label, option.propertyId, option.value, option.configClass].filter(Boolean).join(' · ')
-          : 'Clear property mapping',
-        },
-        option.value
-          ? h('span', { class: 'crev-property-picker__option-badge' },
-              type ? typeBadge(type, { size: 'xs' }) : null,
-            )
-          : null,
-        h('span', { class: 'crev-property-picker__copy' },
-          h('span', { class: 'crev-property-picker__id' }, primary),
-          secondary ? h('span', { class: 'crev-property-picker__name' }, secondary) : null,
-        ),
-      );
-      row.addEventListener('mouseover', () => {
-        if (activeIndex === index) return;
-        activeIndex = index;
+    const found = results.filter(option => option.value).length;
+    list.appendChild(h('div', { class: 'crev-property-picker__count' },
+      searching ? `${found} of ${supplied.length}` : `${supplied.length} ${supplied.length === 1 ? 'property' : 'properties'}`));
+    rows = [];
+    own.forEach(option => { const row = optionRow(option, rows.length); rows.push(row); list.appendChild(row); });
+    if (system.length) {
+      const head = h('button', {
+        class: `crev-property-picker__group${showSystem ? ' is-open' : ''}`,
+        type: 'button',
+        tabindex: '-1',
+        'aria-expanded': String(showSystem),
+      }, h('span', {}, 'System properties'), h('span', { class: 'crev-property-picker__group-count' }, String(system.length)));
+      head.addEventListener('mousedown', event => {
+        event.preventDefault();
+        systemOpen = !showSystem;
         renderList();
       });
-      row.addEventListener('mousedown', event => {
-        event.preventDefault();
-        select(option);
-      });
-      list.appendChild(row);
-    });
-    if (open) input.setAttribute('aria-activedescendant', `${listId}-option-${activeIndex}`);
+      list.appendChild(head);
+      if (showSystem) system.forEach(option => { const row = optionRow(option, rows.length); rows.push(row); list.appendChild(row); });
+    }
+    if (!found && !rows.length) list.appendChild(h('div', { class: 'crev-property-picker__empty' }, 'No matching properties'));
+    markActive();
   };
 
   const restoreField = (): void => {
@@ -271,8 +302,10 @@ export function propertyPicker(opts: PropertyPickerOptions): HTMLElement {
     query = '';
     input.value = '';
     input.placeholder = 'Search properties';
-    activeIndex = Math.max(0, filtered().findIndex(option => option.value === selectedValue));
     renderList();
+    activeIndex = Math.max(0, visible.findIndex(option => option.value === selectedValue));
+    markActive();
+    rows[activeIndex]?.scrollIntoView?.({ block: 'nearest' });
     input.focus();
   };
 
@@ -293,7 +326,7 @@ export function propertyPicker(opts: PropertyPickerOptions): HTMLElement {
     else renderList();
   });
   input.addEventListener('keydown', event => {
-    const results = filtered();
+    const results = visible;
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       if (!open) {
@@ -304,8 +337,8 @@ export function propertyPicker(opts: PropertyPickerOptions): HTMLElement {
       activeIndex = results.length
         ? (activeIndex + offset + results.length) % results.length
         : 0;
-      renderList();
-      list.querySelector(`#${listId}-option-${activeIndex}`)?.scrollIntoView({ block: 'nearest' });
+      markActive();
+      rows[activeIndex]?.scrollIntoView?.({ block: 'nearest' });
     } else if (event.key === 'Enter' && open && results[activeIndex]) {
       event.preventDefault();
       select(results[activeIndex]);

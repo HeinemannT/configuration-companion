@@ -26,6 +26,7 @@ type LoadResult = Extract<InspectorMessage, { type: 'LAYOUT_LOAD_RESULT' }>;
 type BlastResult = Extract<InspectorMessage, { type: 'LAYOUT_BLAST_RESULT' }>;
 type FlowRefsResult = Extract<InspectorMessage, { type: 'LAYOUT_FLOW_REFS_RESULT' }>;
 type FlowRefChildrenResult = Extract<InspectorMessage, { type: 'LAYOUT_FLOW_REF_CHILDREN_RESULT' }>;
+type FlowSettingsResult = Extract<InspectorMessage, { type: 'LAYOUT_FLOW_SETTINGS_RESULT' }>;
 type TypeSchemasResult = Extract<InspectorMessage, { type: 'FETCH_TYPE_SCHEMAS_RESULT' }>;
 type PortableIdPreflightResult = Extract<InspectorMessage, { type: 'LAYOUT_PORTABLE_ID_PREFLIGHT_RESULT' }>;
 
@@ -213,6 +214,21 @@ function bakeRefChildren(): void {
 /** Fetch the CURRENT children of an existing off-page InputSet/EditPage the user just wired to, so the
  *  cell shows its real contents instead of the "unknown contents" note. Cached per ref for the session
  *  (re-opening/re-wiring never refetches). Fails soft — on error the cell keeps the honest note. */
+/** Read the stored settings of the element whose settings are open; they show once this answers. */
+export async function fetchFlowSettings(id: string, rid: string, className: string): Promise<void> {
+  const g = bp.gen;
+  const mine = (): boolean => sameSession(g) && bp.flowSettings?.id === id;
+  try {
+    const res = await sendRequest<FlowSettingsResult>({ type: 'LAYOUT_FLOW_SETTINGS', rid, className });
+    if (!mine()) return;
+    bp.flowSettings = res?.ok && res.values ? { ...bp.flowSettings!, stored: res.values } : { ...bp.flowSettings!, error: res?.error || 'The settings could not be read.' };
+  } catch (e) {
+    if (!mine()) return;
+    bp.flowSettings = { ...bp.flowSettings!, error: e instanceof Error ? e.message : String(e) };
+  }
+  render();
+}
+
 export async function fetchFlowRefChildren(refId: string, refClass: string): Promise<void> {
   if (bp.flowRefChildren.has(refId)) { bakeRefChildren(); return; }
   const g = bp.gen;

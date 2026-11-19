@@ -119,27 +119,27 @@ function resolution(response: ApplyResponse | undefined): ApplyResolution {
     return {
       kind: 'unverified',
       commitReportedOk: null,
-      message: 'Blueprint: the apply result could not be verified — refreshing.',
+      message: 'Blueprint: the apply result could not be verified. Refreshing.',
     };
   }
   if (response?.unverified) {
     return {
       kind: 'unverified',
       commitReportedOk: response.ok,
-      message: response.error || 'Blueprint: applied, but the result could not be verified — refreshing.',
+      message: response.error || 'Blueprint: applied, but the result could not be verified. Refreshing.',
     };
   }
   if (response?.stale && response.model) {
     return {
       kind: 'stale', model: response.model,
-      message: response.error || 'The page changed elsewhere, so it was reloaded. Re-apply your edits.',
+      message: response.error || 'The page changed elsewhere, so it was reloaded. Apply your changes again.',
       notes: response.notes ?? [],
     };
   }
   if (response?.partial && response.model) {
     return {
       kind: 'partial', model: response.model,
-      message: response.error || 'Some changes may not have applied. The layout was refreshed — check and re-apply what is missing.',
+      message: response.error || 'Some changes may not have applied. The layout was refreshed. Check it and apply what is missing again.',
       notes: response.notes ?? [],
     };
   }
@@ -279,7 +279,7 @@ export function createApplySession(
     }).then(resolution, () => ({
       kind: 'unverified' as const,
       commitReportedOk: null,
-      message: 'Blueprint: the apply result could not be verified — refreshing.',
+      message: 'Blueprint: the apply result could not be verified. Refreshing.',
     })).then((result): ApplyResolution => result.kind === 'applied' ? { ...result, changes: review.changes } : result).then(result => {
       // Once the command has been sent, its resolution is authoritative for
       // this session. `isCurrent` gates preparation/confirmation, but must not

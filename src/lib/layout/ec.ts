@@ -18,6 +18,7 @@ import { COMPOSITE_TYPES } from './constraints';
 // Shared EC sanitisation (escaping + identifier/id validation) — the same guards the other EC
 // generators use. ecClass/ecBid/ecStr/ecScalar are thin aliases of the shared guards.
 import { ecScalarLiteral, ecString, validateEcIdentifier as ecClass, validateBusinessId as ecBid, validateRid as ecRid } from '../ec-guards';
+import { settingsAssignments, settingsWords } from './flow-settings';
 import { styleAssignRhs, INVALID_COLOR_BID } from '../style-ec';
 import { OVERRIDABLE_PROPS, styleAssignments } from './types';
 import { SUPPORT_CATEGORY_KEY, VIRTUAL_TABSET_KEY, type PortableIdPlan } from './portable-ids';
@@ -147,7 +148,7 @@ export function compile(
   let supportCatRef: string | null = existingCat ? `t.${ecBid(existingCat.id)}` : null;
   const ensureSupportCat = (): string => {
     if (supportCatRef) return supportCatRef;
-    emit({ verb: 'create', text: `Create support Category "${supportCatName}" in Portal`,
+    emit({ verb: 'create', text: `Add folder "${supportCatName}" in Portal`,
       action: 'Add', object: supportCatName, objectType: 'Category', where: 'Portal',
       detail: withIdDetail(SUPPORT_CATEGORY_KEY),
       ec: `_fcat := root.portal.add(Category${idArg(SUPPORT_CATEGORY_KEY)}, name := ${ecStr(supportCatName)}) // page support folder` });
@@ -162,7 +163,7 @@ export function compile(
     if (m.tabsetVirtual) {
       const cat = ensureSupportCat();
       const tsName = m.tabsetName ?? '» New TabSet';
-      emit({ verb: 'create', text: `Create tabset "${tsName}" in ${supportCatName}`,
+      emit({ verb: 'create', text: `Add TabSet "${tsName}" in ${supportCatName}`,
         action: 'Add', object: tsName, objectType: 'TabSet', where: supportCatName,
         detail: withIdDetail(VIRTUAL_TABSET_KEY),
         ec: `_ts := ${cat}.add(TabSet${idArg(VIRTUAL_TABSET_KEY)}, name := ${ecStr(tsName)}) ${idComment(VIRTUAL_TABSET_KEY)}` });
@@ -183,11 +184,11 @@ export function compile(
         const where = par ? (par.kind === 'tab' ? `tab "${par.name}"` : `container "${par.name}"`) : 'the page';
         if (n.kind === 'tab') {
           const owner = m.tabsets?.find(t => t.id === s.parentId);
-          emit({ verb: 'create', id: n.id, text: `Create tab "${n.name}"`,
+          emit({ verb: 'create', id: n.id, text: `Add Tab "${n.name}"`,
             action: 'Add', object: n.name, objectType: 'Tab', where: owner?.name ?? s.parentId, detail: withIdDetail(n.id, `${n.cols.L}/6`),
             ec: `${v} := ${tabsetRef(s.parentId)}.add(Tab${idArg(n.id)}, name := ${ecStr(n.name)}, columnsLargeScreen := ${n.cols.L}${colsSuffix(n.cols)}) ${idComment(n.id)}` });
         } else if (n.kind === 'container') {
-          emit({ verb: 'create', id: n.id, text: `Create new container "${n.name}" (${n.cols.L}/6) in ${where}`,
+          emit({ verb: 'create', id: n.id, text: `Add Container "${n.name}" (${n.cols.L}/6) in ${where}`,
             action: 'Add', object: n.name, objectType: 'Container', where: par?.name, detail: withIdDetail(n.id, `${n.cols.L}/6`),
             ec: `${v} := ${ref(s.parentId)}.add(Container${idArg(n.id)}, name := ${ecStr(n.name)}, columnsLargeScreen := ${n.cols.L}${colsSuffix(n.cols)}) ${idComment(n.id)}` });
         } else if (s.parentKind === 'widget') {
@@ -198,7 +199,7 @@ export function compile(
           if (!parentClass || !COMPOSITE_TYPES.has(parentClass)) {
             throw new Error(`cannot add ${n.className} into a ${parentClass ?? 'widget'}; it is not a composite container`);
           }
-          emit({ verb: 'create', id: n.id, text: `Create ${n.className} "${n.name}" in ${parentClass}`,
+          emit({ verb: 'create', id: n.id, text: `Add ${n.className} "${n.name}" in ${parentClass}`,
             action: 'Add', object: n.name, objectType: n.className, where: par?.name, detail: withIdDetail(n.id),
             ec: `${v} := ${ref(s.parentId)}.add(${ecClass(n.className)}${idArg(n.id)}, name := ${ecStr(n.name)}) ${idComment(n.id)}` });
         } else {
@@ -275,8 +276,8 @@ export function compile(
       case 'reorder': {
         const label = byId.get(s.id)?.name ?? s.id;
         const anchor = s.beforeId ?? s.afterId!;
-        emit({ verb: 'reorder', id: s.id, text: `Reorder "${label}"`,
-          action: 'Reorder', object: label, objectType: byId.get(s.id)?.className,
+        emit({ verb: 'reorder', id: s.id, text: `Move "${label}"`,
+          action: 'Move', object: label, objectType: byId.get(s.id)?.className,
           detail: `${s.beforeId ? 'before' : 'after'} "${byId.get(anchor)?.name ?? anchor}"`,
           ec: `${ref(s.id)}.${s.beforeId ? 'moveBefore' : 'moveAfter'}(${ref(anchor)})` },
           !createParents.has(parentById.get(s.id) ?? ''));
@@ -307,13 +308,20 @@ export function compile(
           const typeArg = s.node.className === 'EditPage' && s.editPageType
             ? `, types := list(${ecClass(s.editPageType)})`
             : '';
-          emit({ verb: 'create', id: s.node.id, text: `Create ${s.node.className} "${s.node.name}" in ${supportCatName}`,
+          emit({ verb: 'create', id: s.node.id, text: `Add ${s.node.className} "${s.node.name}" in ${supportCatName}`,
             action: 'Add', object: s.node.name, objectType: s.node.className, where: supportCatName, detail: withIdDetail(s.node.id),
             ec: `${v} := ${cat}.add(${ecClass(s.node.className)}${idArg(s.node.id)}, name := ${ecStr(s.node.name)}${typeArg}) ${idComment(s.node.id)}` });
         } else {
           emit({ verb: 'create', id: s.node.id, text: `Add ${s.node.className} "${s.node.name}" to ${s.parentClass}`,
             action: 'Add', object: s.node.name, objectType: s.node.className, where: s.parentClass, detail: withIdDetail(s.node.id),
             ec: `${v} := ${fref(s.parentId, s.parentRid)}.add(${ecClass(s.node.className)}${idArg(s.node.id)}, name := ${ecStr(s.node.name)}) ${idComment(s.node.id)}` });
+          const born = settingsAssignments(s.node.className, s.node.settings);
+          if (born.length) {
+            emit({ verb: 'update', id: s.node.id, text: `Set ${settingsWords(s.node.className, s.node.settings)}`,
+              action: 'Change', object: s.node.name, objectType: s.node.className,
+              detail: settingsWords(s.node.className, s.node.settings),
+              ec: `${v}.change(${born.join(', ')})` });
+          }
           if (s.node.className === 'EditField' && s.node.prop) {
             emit({
               verb: 'update',
@@ -360,6 +368,17 @@ export function compile(
           ec: `${fref(s.id, s.rid)}.change(name := ${ecStr(s.name)})` });
         break;
       }
+      case 'flowSet': {
+        // Settings of an existing form element. Property names come from the closed table in
+        // flow-settings.ts; a step with none of them left compiles to nothing.
+        const parts = settingsAssignments(s.className, s.values);
+        if (!parts.length) break;
+        const words = settingsWords(s.className, s.values);
+        emit({ verb: 'update', id: s.id, text: `Set ${words}`,
+          action: 'Change', object: s.name ?? s.id, objectType: s.className, detail: words,
+          ec: `${fref(s.id, s.rid)}.change(${parts.join(', ')})` });
+        break;
+      }
       case 'flowProperty': {
         const node = flowById.get(s.id);
         emit({
@@ -378,8 +397,8 @@ export function compile(
         const anchor = s.beforeId ?? s.afterId!;
         const node = flowById.get(s.id);
         const anchorNode = flowById.get(anchor);
-        emit({ verb: 'reorder', id: s.id, text: `Reorder flow element`,
-          action: 'Reorder', object: node?.name ?? s.id, objectType: node?.className,
+        emit({ verb: 'reorder', id: s.id, text: `Move "${node?.name ?? s.id}"`,
+          action: 'Move', object: node?.name ?? s.id, objectType: node?.className,
           detail: `${s.beforeId ? 'before' : 'after'} "${anchorNode?.name ?? anchor}"`,
           ec: `${fref(s.id, s.rid)}.${s.beforeId ? 'moveBefore' : 'moveAfter'}(${fref(anchor)})` },
           !createParents.has(s.parentId));

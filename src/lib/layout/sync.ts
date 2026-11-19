@@ -843,7 +843,10 @@ export function parseFlows(log: string): Map<string, FlowProjection> {
 // ── flow "wire to existing" list (picker-open fetch, never in the main layout fetch) ─────────────
 
 /** One row of the workspace reference list the wire-to-existing picker shows. */
-export interface FlowRefListItem { id: string; rid: string; className: string; category?: string; name: string; }
+export interface FlowRefListItem { id: string; rid: string; className: string; category?: string; name: string; /** Widgets that link to it; absent when the list was too long to count. */ uses?: number; }
+
+/** Up to this many listed objects get their links counted (one reverse lookup each). */
+export const FLOW_LIST_COUNTED = 400;
 
 /** EC listing every InputSet OR EditPage under root.portal — bid/rid/class/categoryName/name only
  *  (SELECT verified live 2026-07-12: 63 refs in ~450ms on the dev workspace — lean enough for
@@ -853,24 +856,27 @@ export function buildFlowRefListEc(refClass: 'InputSet' | 'EditPage'): string {
     // One row per object, joined once: a large portal holds thousands of these, and a text grown row
     // by row is copied on every `+` (ec-parser.ts).
     `_list := SELECT ${refClass} FROM root.portal`,
+    `_count := _list.size()`,
     `_rows := _list.calculate(`,
     `     _x := self`,
-    `     "${FLOW_LIST_MARKER}" + _x.id.whenMissing("") + "|" + _x.rid + "|" + _x.className.whenMissing("") + "|" + ${safeWireTextEc('_x.parent.name.whenMissing("")')} + "|" + ${safeWireTextEc('_x.name.whenMissing("")')} + "\\n"`,
+    `     _u := ""`,
+    `     IF _count > ${FLOW_LIST_COUNTED} THEN _u := "" ELSE _u := str(_x.rref(${refClass === 'EditPage' ? 'editPage' : 'inputSet'}).size()) ENDIF`,
+    `     "${FLOW_LIST_MARKER}" + _x.id.whenMissing("") + "|" + _x.rid + "|" + _x.className.whenMissing("") + "|" + ${safeWireTextEc('_x.parent.name.whenMissing("")')} + "|" + _u + "|" + ${safeWireTextEc('_x.name.whenMissing("")')} + "\\n"`,
     `)`,
     `_rows.join("")`,
   ].join('\n'));
 }
 
-/** Parse the FLOW_LIST channel: bid|rid|class|catName|<name> (name last, free text). */
+/** Parse the FLOW_LIST channel: bid|rid|class|catName|uses|<name> (name last, free text). */
 export function parseFlowRefList(log: string): FlowRefListItem[] {
   const out: FlowRefListItem[] = [];
   for (const line of markerLines(log, FLOW_LIST_MARKER)) {
     const parts = line.split('|');
-    if (parts.length < 5) continue;
-    const [id, rid, className, category] = parts;
-    const name = parts.slice(4).join('|');
+    if (parts.length < 6) continue;
+    const [id, rid, className, category, uses] = parts;
+    const name = parts.slice(5).join('|');
     if (!id || !rid) continue;
-    out.push({ id, rid, className: className || '', ...(category ? { category } : {}), name: name || id });
+    out.push({ id, rid, className: className || '', ...(category ? { category } : {}), ...(/^\d+$/.test(uses) ? { uses: Number(uses) } : {}), name: name || id });
   }
   return out;
 }
@@ -1425,7 +1431,7 @@ export async function applyModel(
   // (currently an inferred DescriptionView.viewTypes on an enterprise instance) in its editable copy.
   if (diff(baseline, live.baseline).length > 0 || flowSignature(live.baseline) !== flowSignature(baseline)) {
     return { ok: false, noop: false, stale: true, plan, notes, script, model: live.model, baseline: live.baseline,
-      error: 'The page changed since you started editing. Review the refreshed layout and reapply.' };
+      error: 'The page changed since you started editing. Review the refreshed layout and apply again.' };
   }
   const occupiedIds = await occupiedPortableIdPlan(io, portableIds);
   if (occupiedIds.length) {
@@ -1464,7 +1470,7 @@ export async function applyModel(
     return { ok: res.ok, noop: false, unverified: true, partial: res.hasWarning || !res.ok, plan, notes, script, executionLog,
       error: res.ok
         ? 'Applied, but the result could not be verified (the reload failed). Refreshing the page to show the real state.'
-        : `Apply may have partly failed (${res.error || 'BMP error'}) and the result could not be verified (${e instanceof Error ? e.message : String(e)}). Reload the page and check what landed.` };
+        : `Apply may have partly failed (${res.error || 'BMP error'}) and the result could not be verified (${e instanceof Error ? e.message : String(e)}). Reload the page and check what was applied.` };
   }
   const landed = diff(baseline, reloaded.model).length > 0
     || flowSignature(reloaded.model) !== flowSignature(baseline);
@@ -1480,7 +1486,7 @@ export async function applyModel(
     return { ok: false, noop: false, partial: landed, plan, notes, script, executionLog,
       model: reloaded.model, baseline: reloaded.baseline,
       error: landed
-        ? `Apply failed partway: ${res.error || 'BMP error'}. Some changes DID land — the layout was refreshed to the real state; review it before re-applying.`
+        ? `Apply failed partway: ${res.error || 'BMP error'}. Some changes were applied. The layout was refreshed; review it before applying again.`
         : (res.error || 'Apply failed; the page is unchanged.') };
   }
   if (!landed) {
@@ -1508,7 +1514,7 @@ export async function applyModel(
     // possibly-partial so the UI asks the user to verify instead of claiming a clean save.
     return { ok: true, noop: false, partial: true, plan, notes, script, executionLog,
       model: reloaded.model, baseline: reloaded.baseline,
-      error: 'Applied, but BMP reported warnings — some steps may not have taken. The layout was refreshed; check it matches what you intended.' };
+      error: 'Applied, but BMP reported warnings. Some steps may not have been applied. The layout was refreshed; check it matches what you intended.' };
   }
   return { ok: true, noop: false, plan, notes, script, executionLog, model: reloaded.model, baseline: reloaded.baseline };
 }

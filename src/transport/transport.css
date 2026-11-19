@@ -100,7 +100,7 @@ html, body { height: 100%; margin: 0; background: var(--bg); }
  * a grid of its own, so no column is sized by its content: class, tags, date
  * and user start at one x on every row, and only the ID cell takes the
  * indent. */
-.tr-row { --ind: 0px; position: relative; display: grid; grid-template-columns: minmax(150px, 30%) minmax(0, 1fr) minmax(0, 14%) 72px 92px 60px 132px; align-items: center; column-gap: var(--space-2); min-height: 26px; padding: 0 var(--space-2); border-radius: var(--radius-2); font-size: var(--ui-fs-sm); cursor: pointer; }
+.tr-row { --ind: 0px; position: relative; display: grid; grid-template-columns: minmax(220px, 40%) minmax(0, 1fr) 72px 92px 64px 176px; align-items: center; column-gap: var(--space-2); min-height: 26px; padding: 0 var(--space-2); border-radius: var(--radius-2); font-size: var(--ui-fs-sm); cursor: pointer; }
 .tr-row:hover { background: var(--ui-row-hover); }
 /* A folder taken whole: a bar at the left edge of its rows. */
 .tr-row.cov { border-radius: 0; box-shadow: inset 2px 0 var(--brand); }
@@ -118,7 +118,7 @@ html, body { height: 100%; margin: 0; background: var(--bg); }
 .tr-caret:disabled { cursor: default; background: none; }
 .tr-caret .ui-disc-chev { margin: 0; }
 .tr-ck-none { flex: none; width: 14px; }
-.tr-tc .tr-id { flex: 1; min-width: 0; margin-left: var(--space-1); }
+.tr-tc .tr-nm { flex: 1; min-width: 0; }
 .tr-subc { display: flex; justify-content: flex-end; min-width: 0; cursor: default; }
 .tr-sub { max-width: 100%; height: 20px; padding: 0 var(--space-xs, 6px); border-radius: var(--radius-1); color: var(--text-helper); font-size: var(--ui-fs-sm); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .tr-sub:hover { background: var(--layer-hover); color: var(--text-primary); }
@@ -410,3 +410,24 @@ details.tr-uploads > summary { color: var(--text-warn); }
 /* Transport rows: two tags wrap inside the state column, never clipped. */
 .tr-trow .tr-tags { overflow: visible; padding: 2px 0; }
 .tr-trow .tr-tag { white-space: normal; overflow-wrap: anywhere; }
+
+/* Find rows: the type badge, the name, then the ID in its own column. An
+ * object with others under it has a heavier name; an ID BMP assigned is muted. */
+.tr-row { min-height: 28px; }
+.tr-tc { gap: var(--space-2); }
+.tr-row.fold .tr-nm { font-weight: 600; }
+.tr-row .tr-id { color: var(--text-secondary); }
+.tr-row .tr-id.num { color: var(--text-disabled); }
+.tr-row .bdg { display: inline-flex; align-items: stretch; flex: none; height: 18px; overflow: hidden; border: 1px solid var(--border-subtle); border-radius: var(--radius-1); font-size: 10px; font-weight: 600; line-height: 1; color: var(--text-primary); }
+.tr-row .bdg .tile { display: flex; align-items: center; justify-content: center; width: 20px; background: var(--c, var(--layer-active)); color: #fff; }
+.tr-row .bdg .tile svg { display: block; width: 11px; height: 11px; }
+.tr-row .bdg .lbl { display: flex; align-items: center; justify-content: center; width: 30px; background: var(--layer-01); font-family: var(--font-mono); letter-spacing: .02em; }
+.tr-row.dim .bdg, .tr-row.ctx .bdg { opacity: .55; }
+/* The end of a row: what a tick takes, and the object alone on hover. */
+.tr-subc { align-items: center; gap: var(--space-1); }
+.tr-under { color: var(--text-helper); font-size: var(--ui-fs-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tr-under.ask { color: var(--text-brand); font-weight: 500; }
+.tr-only { visibility: hidden; }
+.tr-row:hover .tr-only, .tr-only:focus-visible { visibility: visible; }
+.tr-row.cov { background: color-mix(in srgb, var(--brand) 5%, transparent); }
+.tr-row .bdg.plain .tile { background: var(--border-strong); }

@@ -17,6 +17,9 @@
  */
 
 import { attrs, btn, el, icon } from '../lib/dom';
+import { typeBadge } from '../lib/type-badge';
+import { svg } from '../lib/dom';
+import { ICON_FOLDER } from '../lib/icons';
 import { copyWithFeedback } from '../lib/copy-feedback';
 import type { UndoRecord } from '../lib/transport-undo';
 import { FILE_LIMIT_KB_MAX, FILE_LIMIT_KB_MIN, isTransportRoot, sizeKb, uploadText, TRANSPORT_SCAN_CAP, TRANSPORT_SCAN_TOTAL, type BundlePart, type BundleWarning, type TransportRoot } from '../lib/transport-bundle';
@@ -371,9 +374,28 @@ export function mountTransportView(host: HTMLElement, ctl: TransportController, 
   host.replaceChildren(root);
 
   // Delegated result list events.
+  /** A folder this large is taken on a second tick, so a slip does not add hundreds of objects. */
+  const LARGE_FOLDER = 500;
+  let armed: { rid: string; timer: number } | null = null;
+  const disarm = (): void => { if (armed) { clearTimeout(armed.timer); armed = null; } };
   list.addEventListener('change', e => {
     const t = e.target as HTMLInputElement;
-    if (t.classList.contains('tr-ck') && t.dataset.rid) ctl.setTicked(t.dataset.rid, t.checked);
+    if (!t.classList.contains('tr-ck') || !t.dataset.rid) return;
+    const rid = t.dataset.rid;
+    // A tick on an object with others under it takes it with everything under it.
+    if (t.checked && t.dataset.under !== undefined) {
+      if (Number(t.dataset.under) > LARGE_FOLDER && armed?.rid !== rid) {
+        disarm();
+        armed = { rid, timer: window.setTimeout(() => { armed = null; redrawList(); }, 8000) };
+        redrawList();
+        return;
+      }
+      disarm();
+      void ctl.takeAll(rid);
+      return;
+    }
+    if (!t.checked && ctl.wholeFolder(rid)) { ctl.releaseWhole(rid); return; }
+    ctl.setTicked(rid, t.checked);
   });
   const groupOf = (t: Element) => t.closest<HTMLElement>('.tr-grp')?.dataset.root as GroupKey | undefined;
   const inTree = (t: Element) => !!t.closest('.tr-grp.browse');
@@ -383,6 +405,7 @@ export function mountTransportView(host: HTMLElement, ctl: TransportController, 
     const pressed = sub.getAttribute('aria-pressed') === 'true';
     const head = sub.closest<HTMLElement>('.tr-gh');
     if (mode === 'whole') { if (sub.dataset.rid) ctl.releaseWhole(sub.dataset.rid); return; }
+    if (mode === 'alone') { if (sub.dataset.rid) ctl.setTicked(sub.dataset.rid, true); return; }
     if (mode === 'all') { if (sub.dataset.rid) void ctl.takeAll(sub.dataset.rid); return; }
     if (mode === 'area') {
       const root = sub.dataset.root as TransportRoot | undefined;
@@ -583,8 +606,22 @@ export function mountTransportView(host: HTMLElement, ctl: TransportController, 
   function subBtn(s: SubCtl): HTMLButtonElement {
     const b = attrs(plainBtn(`tr-sub${s.spec.mode === 'whole' ? ' on' : ''}`, subLabel(s.spec)), { 'aria-pressed': String(s.pressed), 'data-mode': s.spec.mode, ...s.attrs });
     b.disabled = ctl.locked || !!ctl.taking;
-    b.title = s.spec.mode === 'whole' ? 'Remove the folder and everything under it' : s.spec.mode === 'hits' ? (s.pressed ? 'Remove its matches' : 'Add its matches') : s.spec.mode === 'area' ? (s.pressed ? 'Remove what it added' : 'Add every object in the area') : 'Add it and everything under it as one folder';
+    const left = s.spec.mode === 'whole' ? s.spec.total - s.spec.taken : 0;
+    b.title = s.spec.mode === 'whole' ? `In the transport with what is under it. ${left ? `${count(left)} left out: unticked, or BMP assigned the ID (it may name another object on the target). Tick a row to add it. ` : ''}Click to take all of it out` : s.spec.mode === 'hits' ? (s.pressed ? 'Remove its matches' : 'Add its matches') : s.spec.mode === 'area' ? (s.pressed ? 'Remove what it added' : 'Add every object in the area') : 'Add it and everything under it as one folder';
     return b;
+  }
+
+  /** The type badge of a row. A class the type table does not know gets a code from its
+   *  name (Category: CAT, ListPropertySet: LPS) instead of one code for all, and a Category a folder. */
+  function rowBadge(className: string): HTMLElement {
+    const badge = typeBadge(className, { size: 'xs' });
+    const label = badge.querySelector('.lbl');
+    if (label?.textContent !== 'OBJ' || !className) return badge;
+    const capitals = className.match(/[A-Z]/g) ?? [];
+    label.textContent = capitals.length >= 3 ? capitals.slice(0, 3).join('') : className.slice(0, 3).toUpperCase();
+    badge.classList.add('plain');
+    if (className === 'Category') badge.querySelector('.tile')?.replaceChildren(svg(ICON_FOLDER));
+    return badge;
   }
 
   interface RowSpec {
@@ -609,32 +646,38 @@ export function mountTransportView(host: HTMLElement, ctl: TransportController, 
   function rowEl(o: RowSpec): HTMLElement {
     const r = o.row;
     const cell = el('span', 'tr-tc');
+    // An object with others under it that is not in the transport: its tick takes all of it.
+    // One taken out of a folder taken whole goes back in alone: its folder still holds what is under it.
+    const folder = !!r && o.sub?.spec.mode === 'all' && !ctl.inTransport(r.rid) && !ctl.leftOutOfFolder(r.rid);
     if (r) {
       const box = checkbox('tr-ck', `In transport: ${r.id || r.name || r.rid}`);
       box.dataset.rid = r.rid;
       box.checked = ctl.inTransport(r.rid);
       box.indeterminate = !box.checked && o.partly.has(r.rid);
-      box.disabled = ctl.locked;
-      cell.append(box);
+      box.disabled = ctl.locked || !!ctl.taking;
+      if (folder && o.sub?.spec.mode === 'all') box.dataset.under = String(o.sub.spec.count ?? '');
+      cell.append(box, rowBadge(r.className));
     } else {
       cell.append(el('span', 'tr-ck-none'));
     }
-    cell.append(attrs(el('span', 'tr-id', ...marked(o.id, o.words)), { title: o.id }));
-    const kids: Array<Node | null> = [cell];
+    // The name leads; the ID has its own column. An object without a name is known by its ID.
+    const name = r ? r.name || r.id : o.name || o.id;
+    cell.append(attrs(el('span', 'tr-nm', ...marked(name, o.words)), { title: name }));
+    const numeric = !!r && isNumericId(r);
+    const kids: Array<Node | null> = [cell, attrs(el('span', `tr-id${numeric ? ' num' : ''}`, ...marked(o.id, o.words)), { title: numeric ? NUMERIC_ID_TITLE : o.id })];
     if (r) {
       const tags = el('span', 'tr-tags');
       if (ctl.isNew(r)) tags.append(el('span', 'tr-tag new', 'new'));
       if (r.linkedTo) tags.append(linkedTag(r.linkedTo));
-      if (isNumericId(r)) tags.append(attrs(el('span', 'tr-tag auto', 'auto ID'), { title: NUMERIC_ID_TITLE }));
+      if (numeric) tags.append(attrs(el('span', 'tr-tag auto', 'auto ID'), { title: NUMERIC_ID_TITLE }));
+      const who = r.modifiedBy === 'System' ? '' : r.modifiedBy;
       kids.push(
-        attrs(el('span', 'tr-nm', ...marked(r.name, o.words)), { title: r.name }),
-        el('span', 'tr-cls', r.className),
         tags,
         attrs(el('span', 'tr-when', shortTime(r.modifiedIso, r.modified, now())), { title: r.modified }),
-        attrs(el('span', 'tr-who', r.modifiedBy), { title: r.modifiedBy }),
+        attrs(el('span', 'tr-who', who), { title: r.modifiedBy }),
       );
     } else {
-      kids.push(attrs(el('span', 'tr-nm', o.name), { title: o.name }), el('span', 'tr-cls'), el('span', 'tr-tags'), el('span', 'tr-when'), el('span', 'tr-who'));
+      kids.push(el('span', 'tr-tags'), el('span', 'tr-when'), el('span', 'tr-who'));
     }
     let caret: HTMLButtonElement | null = null;
     if (o.caret) {
@@ -643,10 +686,17 @@ export function mountTransportView(host: HTMLElement, ctl: TransportController, 
       });
     }
     const subc = el('span', 'tr-subc');
-    if (o.sub) subc.append(subBtn(o.sub));
+    if (folder && r && o.sub?.spec.mode === 'all') {
+      // Not in the transport: how much a tick takes, and the way to take the object alone.
+      const n = o.sub.spec.count;
+      const waiting = armed?.rid === r.rid;
+      const only = attrs(plainBtn('tr-sub tr-only', 'Only this'), { 'data-mode': 'alone', 'data-rid': r.rid, 'aria-pressed': 'false', title: 'Add this object without what is under it' });
+      only.disabled = ctl.locked || !!ctl.taking;
+      subc.append(only, el('span', `tr-under${waiting ? ' ask' : ''}`, waiting ? `Tick again to add ${count((n ?? 0) + 1)}` : n != null ? `${count(n)} under it` : ''));
+    } else if (o.sub) subc.append(subBtn(o.sub));
     const d = Math.min(o.depth, DEPTH_CAP);
     const cov = !!r && ctl.coveredBy(r.rid);
-    const cls = `tr-row${d ? ` tr-d${d}` : ''}${!r ? ' ctx' : ''}${o.dim ? ' dim' : ''}${cov ? ' cov' : ''}${o.exact ? ' hit-exact' : ''}`;
+    const cls = `tr-row${d ? ` tr-d${d}` : ''}${o.caret || o.sub ? ' fold' : ''}${!r ? ' ctx' : ''}${o.dim ? ' dim' : ''}${cov ? ' cov' : ''}${o.exact ? ' hit-exact' : ''}`;
     const row = el('div', cls, caret, el(r ? 'label' : 'span', 'tr-lb', ...kids), subc);
     attrs(row, { role: 'listitem', 'data-depth': String(o.depth), ...(o.key ? { 'data-key': o.key } : {}), ...(r ? { 'data-rid': r.rid } : {}) });
     return row;

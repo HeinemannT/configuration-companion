@@ -80,4 +80,30 @@ describe('propertyPicker', () => {
     expect([...picker.querySelectorAll<HTMLElement>('.crev-property-picker__option')]
       .map(option => option.dataset.value)).toEqual(['inherent_likelihood']);
   });
+
+  it('counts, folds system properties until searched, and marks a mapped property', () => {
+    const picker = propertyPicker({
+      value: '',
+      options: [
+        { ...options[0], mappedBy: 'Owner field' },
+        options[1],
+        { value: 'name', propertyId: 'name', label: 'Name', configClass: 'TextMethodConfig', system: true },
+      ],
+      onChange: vi.fn(),
+    });
+    document.body.appendChild(picker);
+    const input = picker.querySelector<HTMLInputElement>('.crev-property-picker__input')!;
+    input.click();
+    const values = (): (string | undefined)[] => [...picker.querySelectorAll<HTMLElement>('.crev-property-picker__option')].map(row => row.dataset.value);
+
+    expect(picker.querySelector('.crev-property-picker__count')?.textContent).toBe('3 properties');
+    expect(values()).toEqual(['', 'risk_owner', 'inherent_likelihood']);
+    expect(picker.querySelector('[data-value="risk_owner"] .crev-property-picker__mapped')?.textContent).toBe('Mapped');
+    expect(picker.querySelector('.crev-property-picker__group')?.textContent).toBe('System properties1');
+
+    input.value = 'name';
+    input.dispatchEvent(new Event('input'));
+    expect(picker.querySelector('.crev-property-picker__count')?.textContent).toBe('1 of 3');
+    expect(values()).toEqual(['name']);
+  });
 });

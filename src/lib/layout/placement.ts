@@ -33,10 +33,10 @@ export function resolveGapPlacement(children: LNode[], anchorId: string | undefi
     // container the slot sits between containers, where a widget can never render.
     const lastContainer = [...children].reverse().find(c => c.kind === 'container');
     if (lastContainer?.id === anchorId) return { ok: true, mode: 'after', targetId: anchorId };
-    return { ok: false, reason: 'widgets render after all containers — this slot sits between containers' };
+    return { ok: false, reason: 'BMP shows widgets after all containers, and this place is between containers' };
   }
   // Container into a widget-anchored gap: containers always render before every widget.
-  return { ok: false, reason: 'containers render before widgets — drop it beside a container instead' };
+  return { ok: false, reason: 'BMP shows containers before widgets. Drop it beside a container instead' };
 }
 
 /** Band-correct insertion INDEX for the add flows: after `afterId` when that slot is band-legal,

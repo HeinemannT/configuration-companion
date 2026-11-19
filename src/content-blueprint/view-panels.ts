@@ -148,9 +148,9 @@ function planRow(note: PlanNote, full = true): HTMLElement {
 }
 
 const OUTCOME_TITLE: Record<ApplyOutcome['kind'], string> = {
-  partial: 'Partial apply — verify the layout',
+  partial: 'Applied in part: check the layout',
   failed: 'Apply failed',
-  stale: 'Page changed — reloaded',
+  stale: 'Page changed, reloaded',
 };
 
 /** The persistent, dismissible outcome panel for a non-clean apply (stale / partial / failed). Unlike
@@ -171,7 +171,7 @@ export function outcomePanel(outcome: ApplyOutcome, ctx: BlueprintCtx): HTMLElem
   if (outcome.notes.length) {
     const cap = document.createElement('div'); cap.className = 'bp-outcome-cap';
     cap.textContent = outcome.kind === 'partial'
-      ? `These ${outcome.notes.length} step${outcome.notes.length === 1 ? '' : 's'} were requested — some may not have landed:`
+      ? `These ${outcome.notes.length} step${outcome.notes.length === 1 ? '' : 's'} were requested. Some may not have been applied:`
       : `These ${outcome.notes.length} step${outcome.notes.length === 1 ? '' : 's'} were requested:`;
     card.appendChild(cap);
     const list = document.createElement('div'); list.className = 'bp-outcome-list';
@@ -247,13 +247,13 @@ export function previewModal(review: ApplyReview, ctx: BlueprintCtx, applying = 
       + `outside this template${names ? ` (${names}${xfam.otherFamilies > 2 ? ', …' : ''})` : ''}. Your structural changes affect them too.`);
   } else if (xfam?.truncated) {
     // More users than the check lists: say so instead of staying silent about other pages.
-    warn('Some containers here are used in more places than could be checked. Your structural changes may affect other pages.');
+    warn('Some containers here are used in more places than could be checked. Changes to them may affect other pages.');
   }
   const flowBlast = impact?.flowBlast;
   if (flowBlast && flowBlast.sharedContainers > 0) {
     const usages = flowBlast.containers.flatMap(container => container.usages);
     const names = usages.map(usage => usage.name).filter(Boolean).slice(0, 2).join(', ');
-    warn(`${flowBlast.sharedContainers} edited form definition${flowBlast.sharedContainers === 1 ? ' is' : 's are'} shared by multiple views`
+    warn(`${flowBlast.sharedContainers} edited Input Set${flowBlast.sharedContainers === 1 ? ' or Edit Page is' : 's or Edit Pages are'} linked from several widgets`
       + `${names ? ` (${names}${usages.length > 2 ? ', …' : ''})` : ''}. Child changes appear in every referencing form.`);
   }
   // Shared Result-tab warning. The Result tab lives in the SHARED default_tabset, so structural edits
@@ -263,7 +263,7 @@ export function previewModal(review: ApplyReview, ctx: BlueprintCtx, applying = 
   if (ri.touched) {
     warn(ri.containers
       ? 'You are changing containers on the shared Result tab. A container added or moved here appears on EVERY scorecard that uses the default tab set, not just this one.'
-      : "You are editing the shared Result tab. These widgets are this scorecard's own, but the tab is shared across scorecards — review before applying.");
+      : "You are editing the shared Result tab. These widgets are this scorecard's own, but the tab is shared across scorecards. Review before applying.");
   }
   // Blast-radius warning. Deleting a tab cascades to every container/widget under it (a tab's contents
   // can't re-home the way a deleted container's widgets do), so one delete gesture can stage many. Make
@@ -381,15 +381,15 @@ function beforeAfter(base: LModel | null | undefined, desired: LModel, id: strin
 
 /** A minimal PlanNote for one step — the tray's fallback when compile() rejects the plan (e.g. a
  *  malformed colour id). Same verbs/actions as the compiler, just without where/detail/ec. */
-const STEP_ACTION: Record<PlanStep['kind'], PlanNote['action']> = { create: 'Add', update: 'Change', reparent: 'Move', reorder: 'Reorder', delete: 'Delete', flowCreate: 'Add', flowReorder: 'Reorder', flowDelete: 'Delete', flowFlag: 'Change', flowWire: 'Change', flowRename: 'Change', flowProperty: 'Change' };
-const STEP_VERB: Record<PlanStep['kind'], PlanNote['verb']> = { create: 'create', update: 'update', reparent: 'move', reorder: 'reorder', delete: 'delete', flowCreate: 'create', flowReorder: 'reorder', flowDelete: 'delete', flowFlag: 'update', flowWire: 'update', flowRename: 'update', flowProperty: 'update' };
+const STEP_ACTION: Record<PlanStep['kind'], PlanNote['action']> = { create: 'Add', update: 'Change', reparent: 'Move', reorder: 'Move', delete: 'Delete', flowCreate: 'Add', flowReorder: 'Move', flowDelete: 'Delete', flowFlag: 'Change', flowWire: 'Change', flowRename: 'Change', flowProperty: 'Change', flowSet: 'Change' };
+const STEP_VERB: Record<PlanStep['kind'], PlanNote['verb']> = { create: 'create', update: 'update', reparent: 'move', reorder: 'reorder', delete: 'delete', flowCreate: 'create', flowReorder: 'reorder', flowDelete: 'delete', flowFlag: 'update', flowWire: 'update', flowRename: 'update', flowProperty: 'update', flowSet: 'update' };
 function stepNote(base: LModel, m: LModel, s: PlanStep): PlanNote {
   const id = planStepId(s);
   // create/flowCreate carry their subject on `node`; flow steps otherwise name their subject by id
   // (flow rows live outside the LNode tree, so findNode can't see them).
   const node = s.kind === 'create' ? s.node
     : s.kind === 'flowCreate' ? { name: s.node.name, className: s.node.className }
-    : s.kind === 'flowReorder' || s.kind === 'flowDelete' || s.kind === 'flowFlag' || s.kind === 'flowWire' || s.kind === 'flowRename' || s.kind === 'flowProperty' ? { name: s.kind === 'flowRename' ? s.name : s.kind === 'flowDelete' ? s.name ?? id : id, className: s.kind === 'flowFlag' || s.kind === 'flowRename' || s.kind === 'flowDelete' ? s.className : s.kind === 'flowProperty' ? 'EditField' : undefined }
+    : s.kind === 'flowReorder' || s.kind === 'flowDelete' || s.kind === 'flowFlag' || s.kind === 'flowWire' || s.kind === 'flowRename' || s.kind === 'flowProperty' || s.kind === 'flowSet' ? { name: s.kind === 'flowRename' ? s.name : s.kind === 'flowDelete' ? s.name ?? id : id, className: s.kind === 'flowFlag' || s.kind === 'flowRename' || s.kind === 'flowDelete' ? s.className : s.kind === 'flowProperty' ? 'EditField' : s.kind === 'flowSet' ? s.className : undefined }
     : (findNode(m, id)?.node ?? findNode(base, id)?.node ?? null);
   return { verb: STEP_VERB[s.kind], id, text: node?.name ?? id, action: STEP_ACTION[s.kind], object: node?.name ?? id, objectType: node?.className };
 }

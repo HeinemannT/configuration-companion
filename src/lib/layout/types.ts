@@ -234,6 +234,8 @@ export interface FlowNode {
   name: string;
   /** Small right-aligned caption (propertyMapping, 'rich', 'TRUE', …). Rendered as textContent only. */
   prop?: string;
+  /** Settings staged on a NEW element (flow-settings.ts); they are written right after its add. */
+  settings?: Record<string, string | boolean>;
   required?: boolean;
   /** A page/column break — rendered as a quieter row. */
   isBreak?: boolean;
@@ -319,6 +321,9 @@ export interface FlowEdit {
    *  is the object the view creates copies of; `className` is its class, which gives a new edit page
    *  its type and the edit fields their properties. */
   objectTypeRef?: { targetId: string; targetRid: string; targetName: string; className: string };
+  /** Staged settings of an EXISTING form element, keyed by that element (flow-settings.ts):
+   *  `<element>.change(prop := value, …)`. Only the settings that differ from the stored ones. */
+  settings?: { className: string; values: Record<string, string | boolean> };
 }
 
 /** One step of an apply plan (the diff between baseline and desired). */
@@ -363,6 +368,7 @@ export type PlanStep =
   // businessId (staged-add / staged-new renames don't reach here — their name rides the create).
   | { kind: 'flowRename'; id: string; rid?: string; className?: string; name: string }
   | { kind: 'flowProperty'; id: string; rid?: string; parentId: string; accessor: string }
+  | { kind: 'flowSet'; id: string; rid?: string; className: string; name?: string; values: Record<string, string | boolean> }
   // reference wire on a flow widget: `<widget>.change(<prop> := <target>)` (+ createMode := "EDITORADD"
   // when setCreateMode). Emitted AFTER every flow create so a staged-new target's var exists; the
   // widget itself may be a staged layout add (its `_n<k>` var resolves through the same vars map).
@@ -384,7 +390,7 @@ export interface PlanNote {
   id?: string;
   /** Structured columns for the apply-log table (view-panels.previewModal). `text` stays the
    *  single-sentence fallback; these split it into uniform, scannable fields. */
-  action?: 'Add' | 'Style' | 'Change' | 'Reset' | 'Move' | 'Reorder' | 'Delete';
+  action?: 'Add' | 'Style' | 'Change' | 'Reset' | 'Move' | 'Delete';
   /** The affected object's display name. */
   object?: string;
   /** Its BMP className (Tab / Container / DescriptionView / …) — drives the type chip. */

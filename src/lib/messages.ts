@@ -908,6 +908,8 @@ export type LayoutMessage =
   // Wire-to-existing follow-up: the on-demand children of ONE existing off-page InputSet/EditPage the
   // user just wired to (the main fetch never projected it). Same shape as the main flow projection's
   // child rows; rendered as the reference's real current contents (staged adds/reorders layer on top).
+  | { type: 'LAYOUT_FLOW_SETTINGS'; rid: string; className: string }
+  | { type: 'LAYOUT_FLOW_SETTINGS_RESULT'; ok: boolean; values?: Record<string, string | boolean>; error?: string }
   | { type: 'LAYOUT_FLOW_REF_CHILDREN'; refId: string }
   | { type: 'LAYOUT_FLOW_REF_CHILDREN_RESULT'; ok: boolean; children?: FlowNode[]; error?: string };
 

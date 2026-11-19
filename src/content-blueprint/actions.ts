@@ -13,11 +13,13 @@ import { cancelDrag } from './gestures';
 import { isCheatSheetOpen, toggleCheatSheet, type CheatSheetOptions } from '../lib/cheat-sheet';
 import { typeInfo } from '../lib/object-window-table';
 import { flowChildPalette } from '../lib/layout/constraints';
+import { emptySetting, flowSettingsFor } from '../lib/layout/flow-settings';
+import { isTempId } from '../lib/layout/model';
 import { findNode, findTabOf, isResultTab, editableTabsets, walk } from '../lib/layout/model';
 import { bandInsertIndex, describePlacement } from '../lib/layout/placement';
 import { resize, setHeight, rename, remove, restoreNode, addWidget, addContainer, moveInto, swap, insertRelative, addTab, createTabset, toggleReset, setStyle, setDescriptionViewType, setDescriptionViewProperties } from '../lib/layout/edit';
 import { diff, summarizeChanges } from '../lib/layout/diff';
-import { effectiveFlowChildren, flowDiff, setObjectType, addFlowChild, reorderFlowChild, removeFlowAdd, deleteFlowChild, setActionFlag, addActionButton, flowChangeCount, stageNewFlowContainer, wireFlowRef, unwireFlowRef, renameFlowObject, setEditFieldProperty } from '../lib/layout/flow';
+import { effectiveFlowChildren, flowDiff, setObjectType, setFlowSetting, addFlowChild, reorderFlowChild, shiftFlowChild, removeFlowAdd, deleteFlowChild, setActionFlag, addActionButton, flowChangeCount, stageNewFlowContainer, wireFlowRef, unwireFlowRef, renameFlowObject, setEditFieldProperty } from '../lib/layout/flow';
 import { History } from '../lib/layout/history';
 import { maskStyle, type Breakpoint, type LModel, type NodeStyle } from '../lib/layout/types';
 import { sendToSW } from '../lib/content-port';
@@ -25,7 +27,7 @@ import { openObject } from '../lib/open-object';
 import { showToast } from '../lib/toast';
 import { bp, model } from './state';
 import { render } from './view';
-import { applySessionIO, fetchFlowRefs, fetchFlowRefChildren, fetchPropertySchemas, presentApplyResolution } from './service';
+import { applySessionIO, fetchFlowRefs, fetchFlowRefChildren, fetchPropertySchemas, fetchFlowSettings, presentApplyResolution } from './service';
 import { createApplySession, type ApplySession } from './apply-session';
 import { ensureColorSets } from './colors';
 import { loadPresets, savePreset, deletePreset } from './presets';
@@ -351,6 +353,11 @@ export function openFlowPicker(key: string, className: string, opts?: { afterId?
   render();
 }
 export function closeFlowPicker(): void { if (bp.flowPicker) { bp.flowPicker = null; bp.flowRefList = null; render(); } }
+/** A further page of an edit page: an EditPageBreak at its end, opened at once. */
+export function addEditPageStep(key: string): void {
+  bp.flowPicker = { key, className: 'EditPage' };
+  addFlowFromPicker('EditPageBreak');
+}
 /** Stage a new flow child from the open flow picker (type + name auto — no property forms). */
 export function addFlowFromPicker(className: string): void {
   const m = model(); const p = bp.flowPicker;
@@ -364,6 +371,10 @@ export function addFlowFromPicker(className: string): void {
     bp.selectedId = added.id;
   }
   mutate(added.model);
+  if (className !== 'EditField' && className !== 'EditPageColumnBreak') {
+    const id = added.id;
+    setTimeout(() => { if (bp.active && !bp.renaming) beginRename(id); }, 0);
+  }
 }
 /** The name a new element starts with, in the words of the add list: "Edit field" as BMP names its
  *  own (the canvas then shows the property instead), "Page 3" for the third page, the type's label for
@@ -385,6 +396,12 @@ export function addActionFromTray(name: string, tabContainer: string): void {
 export function doFlowReorder(key: string, id: string, afterId: string | null): void {
   const m = model(); if (!m) return;
   mutate(reorderFlowChild(m, key, id, afterId));
+}
+/** Move a form element one place earlier or later in its container, without dragging. */
+export function moveFlowChild(key: string, id: string, by: -1 | 1): void {
+  const m = model(); if (!m) return;
+  const next = shiftFlowChild(m, key, id, by);
+  if (next !== m) mutate(next);
 }
 /** Cancel a staged flow add before it reaches BMP. */
 export function cancelFlowAdd(key: string, id: string): void {
@@ -423,6 +440,30 @@ export function openWireExisting(widgetId: string, prop: 'inputSet' | 'editPage'
 /** Wire the picker's widget to the chosen existing InputSet/EditPage. When the target isn't on this
  *  page (no projection references it), fetch its real children on demand so the cell shows the current
  *  contents instead of an "unknown contents" note (FIX 2). */
+/** Open or close the editor of one Input Set row. */
+export function toggleRowEditor(key: string, id: string): void {
+  bp.rowEditor = bp.rowEditor?.id === id ? null : { key, id };
+  bp.flowPicker = null; bp.picker = null; bp.pickerOpts = null;
+  render();
+}
+export function closeRowEditor(): void { if (bp.rowEditor) { bp.rowEditor = null; render(); } }
+/** The settings of the selected edit page element, shown in its own editor (no panel). Starts the
+ *  read for an existing element the first time; returns what is known so far. */
+export function inlineFlowSettings(key: string, node: { id: string; className: string; name: string; rid?: string }): typeof bp.flowSettings {
+  if (!flowSettingsFor(node.className).length) return null;
+  if (bp.flowSettings?.id === node.id && bp.flowSettings.inline) return bp.flowSettings;
+  const existing = !isTempId(node.id) && !!node.rid;
+  bp.flowSettings = { key, id: node.id, className: node.className, name: node.name, inline: true, ...(existing ? { rid: node.rid } : {}),
+    stored: existing ? null : Object.fromEntries(flowSettingsFor(node.className).map(s => [s.prop, emptySetting(s)])) };
+  if (existing) void fetchFlowSettings(node.id, node.rid!, node.className);
+  return bp.flowSettings;
+}
+/** Stage one setting of the element whose settings are open. */
+export function changeFlowSetting(prop: string, value: string | boolean): void {
+  const m = model(); const open = bp.flowSettings;
+  if (!m || !open?.stored) return;
+  mutate(setFlowSetting(m, open.key, open.id, open.className, prop, value, open.stored[prop]));
+}
 /** Open the list of object types for a create view (the objects create views make copies of). */
 export function openObjectTypePicker(widgetId: string, at?: { x: number; y: number }): void {
   bp.flowPicker = { key: widgetId, className: 'ObjectType', wireExisting: true, ...(at ? { at } : {}) };
@@ -756,6 +797,7 @@ function installBlueprintLayers(): void {
   layer('menu', 'move-picker', () => !!bp.movePicker, closeMovePicker);
   layer('menu', 'picker', () => !!bp.picker, closePicker);
   layer('menu', 'flow-picker', () => !!bp.flowPicker, closeFlowPicker);
+  layer('menu', 'row-editor', () => !!bp.rowEditor, closeRowEditor);
   layer('menu', 'swatch', () => !!bp.swatch, closeSwatch);
   layer('menu', 'paint-panel', () => !!bp.paintPanel, closePaintPanel);
   layer('dialog', 'settings', () => !!bp.settingsOpen, closeSettings);
