@@ -28,6 +28,8 @@ import type { PageCtx } from '../common';
 const ctx: PageCtx = { environment: 'p1@https://bmp.example.test/', work: t => t, openTab: () => {} };
 const flush = () => new Promise(r => setTimeout(r, 0));
 const settle = async (n = 6) => { for (let i = 0; i < n; i++) await flush(); };
+/** Waits for work that takes real time (reading, compressing and drawing a file), however slow the machine. */
+const until = (check: () => void) => vi.waitFor(check, { timeout: 5000, interval: 10 });
 
 function sets(hex = 'rgb(31,95,168)'): ColorSetData[] {
   return [
@@ -188,6 +190,7 @@ describe('Images tab', () => {
     Object.defineProperty(input, 'files', { value: [file('erm.svg', '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"/>'), file('notes.txt', 'x')], configurable: true });
     input.dispatchEvent(new Event('change'));
     await settle(10);
+    await until(() => expect(tab.root.textContent).toContain('1 file is not an image'));
     expect(tab.root.querySelector('.ci-group .ci-ghead')?.textContent).toContain('New');
     expect((tab.root.querySelector('.ci-idin') as HTMLInputElement).value).toBe('icon_erm');
     const bar = tab.root.querySelector<HTMLElement>('.ci-confirm')!;
@@ -197,8 +200,10 @@ describe('Images tab', () => {
 
     api.writeChanges.mockResolvedValue({ ok: true, written: 1 });
     api.readImages.mockResolvedValue({ folders: FOLDERS, files: [...FILES, { rid: '5', id: 'icon_erm', name: 'erm.png', folderId: 'nav' }], fetchedAt: 2 });
-    bar.querySelector<HTMLButtonElement>('.ui-btn.primary')!.click();
-    await settle(10);
+    // Save is enabled only once the file has been read, drawn and encoded.
+    await until(() => expect(tab.root.querySelector<HTMLButtonElement>('.ci-confirm .ui-btn.primary')!.disabled).toBe(false));
+    tab.root.querySelector<HTMLButtonElement>('.ci-confirm .ui-btn.primary')!.click();
+    await until(() => expect(tab.root.querySelector('.ci-result')?.textContent).toContain('icon_erm is named erm.png'));
     const [env, colors, files] = api.writeChanges.mock.calls[0];
     expect(env).toBe('p1@https://bmp.example.test/');
     expect(colors).toEqual([]);
@@ -214,7 +219,7 @@ describe('Images tab', () => {
     const file = Object.assign(new File(['x'], 'home.png'), { arrayBuffer: async () => new Uint8Array([1]).buffer });
     Object.defineProperty(input, 'files', { value: [file], configurable: true });
     input.dispatchEvent(new Event('change'));
-    await settle(10);
+    await until(() => expect(tab.root.querySelector<HTMLInputElement>('.ci-idin')?.value).toBe('icon_home_2'));
     // 'icon_home' is taken: the proposal is home_2 style.
     const id = tab.root.querySelector<HTMLInputElement>('.ci-idin')!;
     expect(id.value).toBe('icon_home_2');
@@ -234,7 +239,7 @@ describe('Images tab', () => {
     const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"/>';
     Object.defineProperty(input, 'files', { value: [file('photo.jpg', noise(30_000)), file('erm.svg', new TextEncoder().encode(svg))], configurable: true });
     input.dispatchEvent(new Event('change'));
-    await settle(12);
+    await until(() => expect(tab.root.querySelector('.ci-confirm .ci-confirm-h')?.textContent).toBe('Save 1 change'));
     const tiles = () => [...tab.root.querySelectorAll<HTMLElement>('.ci-group:first-child .ci-itile:not(.drop)')];
     const tileOf = (name: string) => tiles().find(t => t.querySelector('.ci-nm')?.textContent?.startsWith(name))!;
     expect(tileOf('photo').querySelector('.ci-over')?.textContent).toBe('Too large');
@@ -250,7 +255,7 @@ describe('Images tab', () => {
     expect(tab.root.querySelector('.ci-panel .ci-over-note')?.textContent).toMatch(/^photo\.jpg is \d+ KB\. One write holds about 17 KB\.$/);
     // A smaller size brings it under the limit: it is no longer marked and the bar leaves nothing out.
     [...tab.root.querySelectorAll<HTMLButtonElement>('.ci-panel .ci-seg button')].find(b => b.textContent === '48')!.click();
-    await settle(12);
+    await until(() => expect(tab.root.querySelector('.ci-confirm .ci-confirm-h')?.textContent).toBe('Save 2 changes'));
     expect(tab.root.querySelector('.ci-over')).toBeNull();
     expect(tab.root.querySelector('.ci-panel .ci-over-note')?.textContent).toBe('');
     expect(tab.root.querySelector('.ci-confirm')?.textContent).not.toContain('over what one write holds');
@@ -266,7 +271,7 @@ describe('Images tab', () => {
     expect(tab.root.querySelector<HTMLElement>('.ci-confirm')!.hidden).toBe(true);
     const size24 = [...tab.root.querySelectorAll<HTMLButtonElement>('.ci-panel .ci-seg button')].find(b => b.textContent === '24')!;
     size24.click();
-    await settle(10);
+    await until(() => expect(tab.root.querySelector<HTMLElement>('.ci-confirm')!.hidden).toBe(false));
     expect(tab.root.querySelector<HTMLElement>('.ci-confirm')!.hidden).toBe(false);
     expect(tab.root.querySelector('.ci-confirm .ci-note')?.textContent).toBe('Changes it everywhere it is linked.');
     expect(tab.hasUnsaved()).toBe(true);
