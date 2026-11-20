@@ -77,7 +77,10 @@ export function buildFileOps(
     if (fileFits(op)) ops.push(op); else tooLarge.push(op.name);
   }
   for (const { file, out } of changes) {
-    const op: FileOp = { kind: 'change', id: file.id, name: outputName(file.name, out.mime), mime: out.mime, base64: out.base64 ?? toBase64(out.bytes) };
+    const name = outputName(file.name, out.mime);
+    // BMP keeps the object's name when only the content is written (a preview on the server shows the name written
+    // separately): a file that changes type is renamed in the same write, so `erm.svg` does not hold a PNG.
+    const op: FileOp = { kind: 'change', id: file.id, name, mime: out.mime, base64: out.base64 ?? toBase64(out.bytes), ...(name !== file.name ? { rename: true } : {}) };
     if (fileFits(op)) ops.push(op); else tooLarge.push(op.name);
   }
   return { ops, tooLarge };

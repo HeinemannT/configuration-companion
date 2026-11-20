@@ -11,6 +11,7 @@
   --pt-violet:#8a3ffc;
   --pt-violet-dk:#6d28d9;
   --pt-violet-soft:#f4efff;
+  --pt-interim:#7b77a0;
   --pt-red:#cf2a4d;
   --pt-green:#137a40;
   --pt-shadow:0 1px 2px rgba(20,22,28,.06),0 8px 24px rgba(20,22,28,.10);
@@ -64,6 +65,7 @@
 #crev-pointtell-layer .pt-tx:disabled{opacity:.35;cursor:default}
 #crev-pointtell-layer .pt-ib.pt-warn,#crev-pointtell-layer .pt-tx.pt-warn{background:#fdecef;color:var(--pt-red)}
 #crev-pointtell-layer .pt-x{margin-left:2px}
+#crev-pointtell-layer .pt-tx[hidden]{display:none}
 #crev-pointtell-layer .pt-copy{
   display:inline-flex;align-items:center;height:32px;margin-left:4px;padding:0 4px 0 0;border-radius:8px;
   background:var(--pt-violet);color:#fff;box-shadow:0 1px 2px rgba(60,20,120,.25);
@@ -107,14 +109,12 @@
 #crev-pointtell-layer .pt-drop{fill:var(--pt-violet);stroke:var(--pt-violet);stroke-width:1.2;stroke-linejoin:round;cursor:pointer}
 #crev-pointtell-layer .pt-badge:hover .pt-drop{fill:var(--pt-violet-dk);stroke:var(--pt-violet-dk)}
 #crev-pointtell-layer .pt-badge text{fill:#fff;font:700 11.5px 'BPInter',system-ui,sans-serif;pointer-events:none}
-#crev-pointtell-layer .pt-badge-staged .pt-drop{fill:#fff}
-#crev-pointtell-layer .pt-badge-staged text{fill:var(--pt-violet-dk)}
 #crev-pointtell-layer .pt-badge.pt-pop{animation:pt-pop 260ms cubic-bezier(.3,1.5,.5,1) both}
 #crev-pointtell-layer .pt-badge.pt-flash{animation:pt-flash .5s ease-in-out 3}
 @keyframes pt-pop{from{transform:scale(.12);opacity:0}to{transform:scale(1);opacity:1}}
 @keyframes pt-flash{50%{transform:scale(1.35)}}
 #crev-pointtell-layer .pt-tip-badge{
-  display:none;width:max-content;max-width:260px;padding:5px 9px;border-radius:6px;background:#1f2330;color:#fff;
+  display:none;text-align:left;width:max-content;max-width:260px;padding:5px 9px;border-radius:6px;background:#1f2330;color:#fff;
   font:500 12px/1.35 'BPInter',system-ui,sans-serif;white-space:pre-wrap;word-break:break-word;box-shadow:var(--pt-shadow-sm);
 }
 #crev-pointtell-layer .pt-badge.pt-tip-on .pt-tip-badge{display:block}
@@ -133,7 +133,6 @@
   display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:20px;height:20px;border-radius:50%;
   background:var(--pt-violet);color:#fff;font:700 11px/1 'BPInter',system-ui,sans-serif;
 }
-#crev-pointtell-layer .pt-num-staged{background:#fff;color:var(--pt-violet-dk);box-shadow:inset 0 0 0 1.5px var(--pt-violet)}
 #crev-pointtell-layer .pt-typ{
   flex:0 0 auto;padding:2px 5px;border-radius:3px;background:var(--type-color,#8d8d8d);color:#fff;
   font:700 9.5px/1.2 'BPInter',system-ui,sans-serif;letter-spacing:.02em;
@@ -154,11 +153,13 @@
 #crev-pointtell-layer .pt-read-x:hover{background:#f1f2f5;color:var(--pt-ink)}
 #crev-pointtell-layer .pt-area-wrap{position:relative}
 #crev-pointtell-layer .pt-area{
-  display:block;width:100%;margin:0;padding:8px 30px 8px 10px;resize:none;
+  display:block;width:100%;margin:0;padding:8px var(--pt-pr,30px) 8px 10px;resize:none;
   font:13px/1.4 'BPInter',system-ui,sans-serif;color:var(--pt-ink);background:#fff;
   border:1px solid #d3d8e0;border-radius:7px;outline:none;
 }
 #crev-pointtell-layer .pt-area::placeholder{color:#8b93a0}
+/* No scrollbar in a two-line field: it would narrow the text when it shows, and the words heard would wrap differently from the text. It still scrolls. */
+#crev-pointtell-layer .pt-area{scrollbar-width:none}
 #crev-pointtell-layer .pt-area:focus{border-color:var(--pt-violet);box-shadow:0 0 0 3px rgba(138,63,252,.14)}
 #crev-pointtell-layer .pt-trash{
   position:absolute;right:5px;bottom:5px;width:22px;height:22px;display:grid;place-items:center;padding:0;border:0;border-radius:5px;
@@ -167,17 +168,57 @@
 #crev-pointtell-layer .pt-trash svg{width:13px;height:13px;fill:currentColor}
 #crev-pointtell-layer .pt-trash:hover{background:#fdecef;color:var(--pt-red)}
 #crev-pointtell-layer .pt-mic{
-  position:absolute;right:29px;bottom:5px;width:22px;height:22px;display:grid;place-items:center;padding:0;border:0;border-radius:5px;
-  background:transparent;color:#9aa1ad;cursor:pointer;
+  position:absolute;z-index:2;right:29px;bottom:4px;width:24px;height:24px;display:grid;place-items:center;padding:0;margin:0;border-radius:50%;
+  border:1px solid #dcdce4;background:linear-gradient(#fff,#f6f6fa);color:#2a2540;cursor:pointer;box-shadow:0 1px 2px rgba(20,22,40,.08);
+  touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;outline:none;
+  transition:transform 150ms cubic-bezier(.16,1,.3,1),background-color 120ms ease-out,border-color 120ms ease-out,color 120ms ease-out,box-shadow 150ms ease-out;
 }
-#crev-pointtell-layer .pt-mic svg{width:13px;height:13px}
-#crev-pointtell-layer .pt-mic:hover{background:#f1f2f5;color:var(--pt-ink)}
-#crev-pointtell-layer .pt-mic[aria-pressed=true]{background:#f1eafe;color:var(--pt-violet)}
-/* Listening: the field's edge pulses, and what is still being heard shows under the text in a lighter tone. */
-#crev-pointtell-layer .pt-listening .pt-area{border-color:var(--pt-violet);animation:pt-listen 1.2s ease-in-out infinite}
-#crev-pointtell-layer .pt-interim{padding:4px 10px 2px;font:13px/1.4 'BPInter',system-ui,sans-serif;color:#8b93a0}
-@keyframes pt-listen{0%,100%{box-shadow:0 0 0 2px rgba(138,63,252,.10)}50%{box-shadow:0 0 0 5px rgba(138,63,252,.28)}}
-@media (prefers-reduced-motion:reduce){#crev-pointtell-layer .pt-listening .pt-area{animation:none;box-shadow:0 0 0 4px rgba(138,63,252,.22)}}
+#crev-pointtell-layer .pt-mic.pt-end{right:5px}
+#crev-pointtell-layer .pt-mic svg{width:15px;height:15px;overflow:visible;fill:none;stroke:currentColor}
+#crev-pointtell-layer .pt-mic .gcap{fill:transparent;transition:fill 120ms ease-out}
+#crev-pointtell-layer .pt-mic .gr{opacity:.4;transition:stroke 120ms ease-out,opacity 120ms ease-out}
+#crev-pointtell-layer .pt-mic:hover{background:var(--pt-violet-soft);border-color:#e4d8ff;color:var(--pt-violet)}
+#crev-pointtell-layer .pt-mic:focus-visible{box-shadow:0 0 0 2px #fff,0 0 0 4px rgba(138,63,252,.6)}
+/* Held: simply filled and a little larger, the capsule white. */
+#crev-pointtell-layer .pt-mic[aria-pressed=true]{background:var(--pt-violet);border-color:var(--pt-violet);color:#fff;transform:scale(1.08);box-shadow:0 3px 10px rgba(138,63,252,.38)}
+#crev-pointtell-layer .pt-mic[aria-pressed=true] .gcap{fill:#fff}
+#crev-pointtell-layer .pt-mic[aria-pressed=true] .gr{stroke:var(--pt-violet);opacity:.9}
+/* The voice state: a layer over the text area, same box and same type (the field does not change size, the text does not move). */
+#crev-pointtell-layer .pt-listening .pt-area{color:transparent;caret-color:transparent;border-color:var(--pt-violet);box-shadow:0 0 0 3px rgba(138,63,252,.14)}
+#crev-pointtell-layer .pt-listening .pt-area::placeholder,#crev-pointtell-layer .pt-vo .pt-area::placeholder{color:transparent}
+#crev-pointtell-layer .pt-voice{
+  position:absolute;z-index:1;inset:1px;box-sizing:border-box;padding:8px var(--pt-pr,30px) 8px 10px;overflow:hidden;border-radius:6px;pointer-events:none;
+  font:13px/1.4 'BPInter',system-ui,sans-serif;color:var(--pt-ink);opacity:0;transition:opacity 200ms ease-out;
+}
+#crev-pointtell-layer .pt-listening .pt-voice{opacity:1}
+#crev-pointtell-layer .pt-voice.pt-sc{-webkit-mask-image:linear-gradient(transparent 0,#000 15px);mask-image:linear-gradient(transparent 0,#000 15px)}
+#crev-pointtell-layer .pt-vw-flow{position:relative;min-height:18px;white-space:pre-wrap;overflow-wrap:break-word;transition:transform 260ms cubic-bezier(.16,1,.3,1)}
+#crev-pointtell-layer .pt-vw-ph{position:absolute;left:0;top:0;white-space:nowrap;color:#a6a2c0;opacity:1;transition:opacity 70ms ease-out}
+#crev-pointtell-layer .pt-vw-end{display:inline-block;width:0;height:1.4em;vertical-align:top}
+/* A word lands with a small rise and fade, lighter until it is final, then firms to the text colour. */
+#crev-pointtell-layer .pt-w{position:relative;display:inline-block;white-space:nowrap;color:var(--pt-interim);transform-origin:0 100%;animation:pt-w-in 270ms cubic-bezier(.16,1,.3,1) var(--d,0ms) backwards}
+#crev-pointtell-layer .pt-w.pt-w-now{animation:none}
+#crev-pointtell-layer .pt-w::after{content:attr(data-w);position:absolute;left:0;top:0;color:var(--pt-ink);opacity:0;transition:opacity 420ms ease var(--fd,0ms)}
+#crev-pointtell-layer .pt-w.f::after{opacity:1}
+#crev-pointtell-layer .pt-voice.pt-quick .pt-w::after{transition-duration:140ms;transition-delay:0ms}
+#crev-pointtell-layer .pt-w-old{position:absolute;left:0;top:0;white-space:nowrap;pointer-events:none}
+@keyframes pt-w-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+/* The caret follows the end of the words and swells a little with the voice. */
+#crev-pointtell-layer .pt-vw-caret{position:absolute;left:0;top:0;width:2px;height:18px;pointer-events:none;transition:transform 130ms cubic-bezier(.16,1,.3,1)}
+#crev-pointtell-layer .pt-vw-bar{position:absolute;left:0;top:2px;width:2px;height:14px;border-radius:1px;background:var(--pt-violet);opacity:.8}
+#crev-pointtell-layer .pt-vw-halo{position:absolute;left:-5px;top:-1px;width:12px;height:20px;border-radius:6px;background:rgba(138,63,252,.5);filter:blur(5px);opacity:.08}
+@media (prefers-reduced-motion:reduce){
+  #crev-pointtell-layer .pt-voice,#crev-pointtell-layer .pt-vw-flow,#crev-pointtell-layer .pt-vw-caret,#crev-pointtell-layer .pt-vw-ph,#crev-pointtell-layer .pt-w::after,#crev-pointtell-layer .pt-mic,#crev-pointtell-layer .pt-mic .gcap,#crev-pointtell-layer .pt-mic .gr{transition:none}
+  #crev-pointtell-layer .pt-w{animation:none}
+  #crev-pointtell-layer .pt-vw-halo{display:none}
+}
+/* The listener: the product's mark, behind the field's edge (position and stacking are set in listener.ts). */
+#crev-pointtell-layer .pt-listener .pt-mascot{margin:0;transform-origin:50% 100%}
+/* The one question before the first use of the microphone, in the field. */
+#crev-pointtell-layer .pt-voice-ask{margin-top:6px;padding:8px 10px;border-radius:7px;background:var(--pt-violet-soft)}
+#crev-pointtell-layer .pt-field[data-ask-up] .pt-voice-ask{margin:0 0 6px}
+#crev-pointtell-layer .pt-voice-ask-text{color:var(--pt-ink);line-height:1.4}
+#crev-pointtell-layer .pt-voice-ask-row{display:flex;justify-content:flex-end;gap:6px;margin-top:8px}
 
 /* The list of marks */
 #crev-pointtell-layer .pt-list{min-width:340px;max-width:min(560px,calc(100vw - 32px));max-height:50vh;overflow:auto;padding:4px}
@@ -190,38 +231,6 @@
 #crev-pointtell-layer .pt-row-who{display:flex;align-items:center;gap:6px;flex:0 0 38%;min-width:0}
 #crev-pointtell-layer .pt-row-name{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #crev-pointtell-layer .pt-row-words{flex:1 1 auto;min-width:0;color:var(--pt-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#crev-pointtell-layer .pt-row-staged{flex:0 0 auto;color:var(--pt-violet-dk);font-weight:600}
-
-/* The paste panel and what the answer came to */
-#crev-pointtell-layer .pt-sheet{
-  width:min(560px,calc(100vw - 32px));max-height:min(70vh,640px);display:flex;flex-direction:column;
-  background:var(--pt-ground);border:1px solid var(--pt-line);border-radius:10px;box-shadow:var(--pt-shadow);padding:10px 12px 12px;
-}
-#crev-pointtell-layer .pt-sheet-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
-#crev-pointtell-layer .pt-sheet-title{font-weight:600}
-#crev-pointtell-layer .pt-sheet .pt-area{width:100%;margin:0;padding:8px 10px;border:1.5px solid var(--pt-violet)}
-#crev-pointtell-layer .pt-sheet .pt-area:disabled{background:#f6f7f9;border-color:var(--pt-line);color:var(--pt-muted)}
-#crev-pointtell-layer .pt-sheet-out{display:flex;flex-direction:column;min-height:0;margin-top:8px}
-#crev-pointtell-layer .pt-sheet-msg{padding:8px 2px;color:var(--pt-muted)}
-#crev-pointtell-layer .pt-sheet-err{color:var(--pt-red)}
-#crev-pointtell-layer .pt-sheet-banner{padding:6px 8px;margin-bottom:6px;border-radius:5px;background:#fff6e5;color:#7a4a00}
-#crev-pointtell-layer .pt-sheet-list{overflow:auto;min-height:0;display:flex;flex-direction:column;gap:8px;padding:2px 0}
-#crev-pointtell-layer .pt-note{border-top:1px solid #eceef2;padding-top:6px}
-#crev-pointtell-layer .pt-note:first-child{border-top:0;padding-top:0}
-#crev-pointtell-layer .pt-note-h{display:flex;align-items:center;gap:8px;min-width:0;margin-bottom:3px}
-#crev-pointtell-layer .pt-note-text{color:var(--pt-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-#crev-pointtell-layer .pt-note-none{font-weight:600;color:var(--pt-muted)}
-#crev-pointtell-layer .pt-res{display:flex;align-items:baseline;flex-wrap:wrap;gap:6px;padding:2px 0 2px 28px;line-height:1.4}
-#crev-pointtell-layer .pt-res-mark{flex:0 0 12px;margin-left:-16px;font-weight:700;text-align:center}
-#crev-pointtell-layer .pt-res-ok .pt-res-mark{color:var(--pt-green)}
-#crev-pointtell-layer .pt-res-no{color:var(--pt-muted)}
-#crev-pointtell-layer .pt-res-q .pt-res-mark{color:var(--pt-violet-dk)}
-#crev-pointtell-layer .pt-res-none{color:var(--pt-muted);font-style:italic}
-#crev-pointtell-layer .pt-res-sub{flex-basis:100%;color:var(--pt-muted);font-size:11.5px}
-#crev-pointtell-layer .pt-res-ok .pt-res-sub{color:#8a5a00}
-#crev-pointtell-layer .pt-res-act{padding:4px 8px;margin-left:auto;background:var(--pt-violet-soft);color:var(--pt-violet-dk)}
-#crev-pointtell-layer .pt-sheet-f{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px;padding-top:8px;border-top:1px solid #eceef2}
-#crev-pointtell-layer .pt-sheet-count{color:var(--pt-muted)}
 
 /* The paper of a drawn tab: a calm white sheet with six faint columns, the real tabs under a light veil, the name inside the stroke. */
 #crev-pointtell-layer .pt-paper-col{background:#f5f6f8;border-radius:2px}
@@ -229,26 +238,107 @@
 #crev-pointtell-layer .pt-tab-label{display:flex;align-items:center;justify-content:center;padding:4px 10px 0;color:var(--pt-violet-dk);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center}
 #crev-pointtell-layer .pt-tab-label:not(.pt-tab-on){color:#7a6a9c;font-weight:500}
 #crev-pointtell-layer .pt-tab-label.pt-tab-new{color:#8a8f99;font-weight:500}
-#crev-pointtell-layer .pt-direct{border-bottom:1px solid var(--pt-line-2);margin-bottom:8px;padding-bottom:6px}
-#crev-pointtell-layer .pt-direct-h{font-size:11.5px;font-weight:600;color:var(--pt-muted);margin:2px 0 6px}
 #crev-pointtell-layer .pt-read-sub{padding:0 10px 4px;color:var(--pt-muted);font-size:11.5px}
 
-/* The paper page of a drawn page: the name as its title, the tab rule, the card that creates it. */
+/* The paper page of a drawn page: the name as its title and the tab rule. */
 #crev-pointtell-layer .pt-crumb-new{display:flex;align-items:center;color:#8a8f99;font:14px/1 'BPInter',system-ui,sans-serif;white-space:pre}
 #crev-pointtell-layer .pt-tab-rule{background:#dfe3e8}
 #crev-pointtell-layer .pt-page-title{margin:0;padding:0 6px;border:0;border-radius:6px;background:transparent;color:#161616;font:700 24px/1.2 'BPInter',system-ui,sans-serif;outline:none}
 #crev-pointtell-layer .pt-page-title:hover{background:#f3f5f8}
 #crev-pointtell-layer .pt-page-title:focus{background:#fff;box-shadow:inset 0 0 0 1.5px var(--pt-violet)}
-#crev-pointtell-layer .pt-card{background:var(--pt-ground);border:1px solid var(--pt-line);border-radius:12px;box-shadow:var(--pt-shadow);padding:12px 14px 12px;display:flex;flex-direction:column;gap:8px}
-#crev-pointtell-layer .pt-card-row{display:flex;align-items:center;gap:10px}
-#crev-pointtell-layer .pt-card-l{flex:0 0 44px;color:var(--pt-muted)}
-#crev-pointtell-layer .pt-card-kinds{flex:1;display:flex;gap:2px;padding:2px;border-radius:7px;background:var(--pt-well)}
-#crev-pointtell-layer .pt-card-kind{flex:1;padding:5px 8px;border:0;border-radius:5px;background:transparent;color:var(--pt-muted);font:500 12px/1.2 'BPInter',system-ui,sans-serif;cursor:pointer}
-#crev-pointtell-layer .pt-card-kind.on{background:#fff;color:var(--pt-ink);box-shadow:0 1px 2px rgba(20,22,28,.12)}
-#crev-pointtell-layer .pt-card-id,#crev-pointtell-layer .pt-card-under{flex:1;min-width:0;height:30px;padding:0 8px;border:1px solid var(--pt-line);border-radius:6px;background:#fff;color:var(--pt-ink);font:12px/1 'BPInter',system-ui,sans-serif}
-#crev-pointtell-layer .pt-card-id{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-#crev-pointtell-layer .pt-card-id:focus,#crev-pointtell-layer .pt-card-under:focus{outline:none;border-color:var(--pt-violet)}
-#crev-pointtell-layer .pt-card-what{color:var(--pt-muted);font-size:11.5px;line-height:1.4}
-#crev-pointtell-layer .pt-card-status{min-height:16px;color:var(--pt-muted);font-size:11.5px}
-#crev-pointtell-layer .pt-card-status.pt-card-err{color:var(--pt-red)}
-#crev-pointtell-layer .pt-card-foot{display:flex;justify-content:flex-end;gap:8px}
+
+/* What was sent to Claude: the "n sent" button and its list. Quiet: a state dot, words, the time. */
+#crev-pointtell-layer .pt-sent-btn{position:relative;font-weight:600}
+#crev-pointtell-layer .pt-sent-btn.pt-news::after{content:"";position:absolute;top:5px;right:3px;width:7px;height:7px;border-radius:50%;background:var(--pt-violet);box-shadow:0 0 0 2px var(--pt-ground)}
+#crev-pointtell-layer .pt-sent{width:380px;padding:0}
+#crev-pointtell-layer .pt-sent-bar{display:flex;align-items:center;justify-content:space-between;gap:4px;padding:8px 8px 8px 12px;border-bottom:1px solid var(--pt-line-2)}
+#crev-pointtell-layer .pt-sent-title{flex:1 1 auto;font-weight:600}
+#crev-pointtell-layer .pt-sent-setup{height:26px;padding:0 8px;border:0;border-radius:6px;background:transparent;color:var(--pt-muted);font:500 12px/1 'BPInter',system-ui,sans-serif;cursor:pointer}
+#crev-pointtell-layer .pt-sent-setup:hover{background:var(--pt-violet-soft);color:var(--pt-violet-dk)}
+#crev-pointtell-layer .pt-sent-waiting{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px 0 8px;color:var(--pt-ink);font:400 12px/1 'BPInter',system-ui,sans-serif;white-space:nowrap}
+#crev-pointtell-layer .pt-sent-waiting::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--pt-green)}
+#crev-pointtell-layer .pt-sent-start{height:26px;padding:0 10px;border:0;border-radius:6px;background:transparent;color:var(--pt-violet-dk);font:600 12px/1 'BPInter',system-ui,sans-serif;cursor:pointer}
+#crev-pointtell-layer .pt-sent-start:hover{background:var(--pt-violet-soft)}
+#crev-pointtell-layer .pt-sent-start.pt-primary{background:var(--pt-violet);color:#fff}
+#crev-pointtell-layer .pt-sent-start.pt-primary:hover{background:var(--pt-violet-dk)}
+#crev-pointtell-layer .pt-sent-row{padding:8px 12px;border-bottom:1px solid var(--pt-line-2)}
+#crev-pointtell-layer .pt-sent-row:last-child{border-bottom:0}
+#crev-pointtell-layer .pt-sent-head{display:flex;align-items:center;gap:7px;min-width:0}
+#crev-pointtell-layer .pt-dot{flex:0 0 auto;width:7px;height:7px;border-radius:50%;background:#b8bec8}
+#crev-pointtell-layer .pt-st-taken .pt-dot,#crev-pointtell-layer .pt-st-working .pt-dot{background:var(--pt-violet)}
+#crev-pointtell-layer .pt-st-done .pt-dot{background:var(--pt-green)}
+#crev-pointtell-layer .pt-st-question .pt-dot{background:#c27a00}
+#crev-pointtell-layer .pt-st-cannot .pt-dot{background:var(--pt-red)}
+#crev-pointtell-layer .pt-sent-state{font-weight:600;white-space:nowrap}
+#crev-pointtell-layer .pt-st-queued .pt-sent-state{color:var(--pt-muted);font-weight:500}
+#crev-pointtell-layer .pt-sent-page{flex:1 1 auto;min-width:0;color:var(--pt-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#crev-pointtell-layer .pt-sent-time{flex:0 0 auto;color:var(--pt-muted);font-variant-numeric:tabular-nums}
+#crev-pointtell-layer .pt-sent-reply{margin:4px 0 0 14px;color:var(--pt-ink);line-height:1.4;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+#crev-pointtell-layer .pt-sent-note{padding:8px 12px;color:var(--pt-muted)}
+
+/* Marks that went to Claude: the same drop, drawn in outline so new marks stand out; a small state at its edge. */
+#crev-pointtell-layer .pt-badge.pt-sent{filter:drop-shadow(0 1px 1px rgba(20,22,28,.14))}
+#crev-pointtell-layer .pt-badge.pt-sent .pt-drop{fill:#fff;stroke:var(--pt-violet);stroke-width:1.5}
+#crev-pointtell-layer .pt-badge.pt-sent text{fill:var(--pt-violet-dk)}
+#crev-pointtell-layer .pt-badge.pt-sent:hover .pt-drop,#crev-pointtell-layer .pt-badge.pt-kin .pt-drop{fill:var(--pt-violet-soft);stroke:var(--pt-violet-dk)}
+#crev-pointtell-layer .pt-badge.pt-st-done .pt-drop{stroke:#9b74e6}
+#crev-pointtell-layer .pt-pip circle{stroke:#fff;stroke-width:1.6}
+#crev-pointtell-layer .pt-pip-queued circle{fill:#aab1bc}
+#crev-pointtell-layer .pt-pip-busy circle{fill:var(--pt-violet);animation:pt-breathe 1.8s ease-in-out infinite}
+#crev-pointtell-layer .pt-pip-done circle{fill:var(--pt-green)}
+#crev-pointtell-layer .pt-pip-question circle{fill:#c27a00}
+#crev-pointtell-layer .pt-pip-cannot circle{fill:var(--pt-red)}
+/* The user has to act on a sent sketch: no chat takes sketches, nobody works on it, or it is no longer listed. */
+#crev-pointtell-layer .pt-pip-need circle{fill:#6b7280}
+#crev-pointtell-layer .pt-sent-row.pt-need .pt-dot,#crev-pointtell-layer .pt-reply.pt-need .pt-dot{background:#6b7280}
+#crev-pointtell-layer .pt-row-state.pt-need{color:var(--pt-ink)}
+#crev-pointtell-layer .pt-reply-need{color:var(--pt-ink)}
+#crev-pointtell-layer .pt-reply-go .pt-reply-act{margin-right:auto}
+#crev-pointtell-layer .pt-pip-g{fill:none;stroke:#fff;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+#crev-pointtell-layer .pt-badge .pt-pip .pt-pip-t{fill:#fff;font:800 8px 'BPInter',system-ui,sans-serif}
+#crev-pointtell-layer .pt-pip-news{filter:drop-shadow(0 0 2.5px rgba(138,63,252,.85))}
+@keyframes pt-breathe{50%{opacity:.45}}
+#crev-pointtell-layer .pt-tip-sent{max-width:280px}
+#crev-pointtell-layer .pt-tip-head{display:block;color:#c9ccd6;font-size:11.5px}
+#crev-pointtell-layer .pt-tip-head b{color:#fff;font-weight:600}
+#crev-pointtell-layer .pt-tip-reply{display:-webkit-box;margin-top:3px;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+#crev-pointtell-layer .pt-num-sent{background:#fff;color:var(--pt-violet-dk);box-shadow:inset 0 0 0 1.5px var(--pt-violet)}
+
+/* The reply at the marks */
+#crev-pointtell-layer .pt-reply{padding:10px 12px 10px}
+#crev-pointtell-layer .pt-reply-head{display:flex;align-items:center;gap:7px;min-width:0;margin-right:-6px}
+#crev-pointtell-layer .pt-reply-state{font-weight:600;white-space:nowrap}
+#crev-pointtell-layer .pt-reply-num{flex:1 1 auto;min-width:0;color:var(--pt-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#crev-pointtell-layer .pt-reply-act.pt-reply-clear{height:22px;padding:0 6px;color:var(--pt-muted);font-weight:500}
+#crev-pointtell-layer .pt-reply-act.pt-reply-clear:hover{color:var(--pt-violet-dk)}
+#crev-pointtell-layer .pt-st-taken .pt-dot,#crev-pointtell-layer .pt-st-working .pt-dot,#crev-pointtell-layer .pt-st-answered .pt-dot{background:var(--pt-violet)}
+#crev-pointtell-layer .pt-reply-text{margin-top:7px;font-size:13px;line-height:1.45;color:var(--pt-ink);white-space:pre-wrap;overflow-wrap:break-word;max-height:9.5em;overflow:auto}
+#crev-pointtell-layer .pt-reply-text.pt-quiet{color:var(--pt-muted);font-size:12px}
+#crev-pointtell-layer .pt-reply-you{display:flex;gap:8px;margin-top:8px;padding:6px 8px;border-radius:7px;background:var(--pt-well);line-height:1.4}
+#crev-pointtell-layer .pt-reply-you-k{flex:0 0 auto;color:var(--pt-muted);font-weight:600}
+#crev-pointtell-layer .pt-reply-you-t{min-width:0;overflow-wrap:break-word}
+#crev-pointtell-layer .pt-reply .pt-area-wrap{margin-top:9px}
+#crev-pointtell-layer .pt-reply-go{display:flex;justify-content:flex-end;margin-top:6px}
+#crev-pointtell-layer .pt-reply-send{padding:7px 12px;font-weight:600}
+#crev-pointtell-layer .pt-reply-foot{display:flex;align-items:center;gap:4px;margin:9px -6px -4px 0;padding-top:8px;border-top:1px solid var(--pt-line-2)}
+#crev-pointtell-layer .pt-reply-mark{flex:1 1 auto;display:flex;align-items:center;gap:7px;min-width:0;color:var(--pt-muted)}
+#crev-pointtell-layer .pt-reply-mark .pt-num{width:18px;height:18px;font-size:10px}
+#crev-pointtell-layer .pt-reply-words{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#crev-pointtell-layer .pt-reply-act{flex:0 0 auto;height:24px;padding:0 8px;border:0;border-radius:6px;background:transparent;color:var(--pt-violet-dk);font:600 12px/1 'BPInter',system-ui,sans-serif;cursor:pointer}
+#crev-pointtell-layer .pt-reply-act:hover{background:var(--pt-violet-soft)}
+
+/* The marks list once something was sent; the sent list's rows lead to their marks. */
+#crev-pointtell-layer .pt-list-tools{display:flex;gap:2px;padding:0 0 4px;margin-bottom:2px;border-bottom:1px solid var(--pt-line-2)}
+#crev-pointtell-layer .pt-row-state{flex:0 0 auto;color:var(--pt-muted);font-size:11.5px;white-space:nowrap}
+#crev-pointtell-layer .pt-row-state.pt-st-done{color:var(--pt-green)}
+#crev-pointtell-layer .pt-row-state.pt-st-question{color:#a86a00}
+#crev-pointtell-layer .pt-row-state.pt-st-cannot{color:var(--pt-red)}
+#crev-pointtell-layer button.pt-sent-row{display:block;width:100%;border:0;border-bottom:1px solid var(--pt-line-2);background:transparent;text-align:left;font:inherit;color:inherit;cursor:pointer}
+#crev-pointtell-layer button.pt-sent-row:hover{background:#f7f8fa}
+#crev-pointtell-layer button.pt-sent-row.pt-new{background:var(--pt-violet-soft)}
+#crev-pointtell-layer .pt-sent-num{flex:0 0 auto;min-width:18px;height:16px;padding:0 4px;border-radius:8px;background:var(--pt-well);color:var(--pt-muted);font:600 10.5px/16px 'BPInter',system-ui,sans-serif;text-align:center}
+#crev-pointtell-layer .pt-sent-btn.pt-ping{animation:pt-ping 700ms cubic-bezier(.3,1.5,.5,1) 2}
+@keyframes pt-ping{40%{transform:translateY(-2px)}}
+@media (prefers-reduced-motion:reduce){
+  #crev-pointtell-layer .pt-pip-busy circle,#crev-pointtell-layer .pt-sent-btn.pt-ping{animation:none}
+}

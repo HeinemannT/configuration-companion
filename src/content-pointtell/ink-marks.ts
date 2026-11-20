@@ -14,6 +14,7 @@ import type { PtAnchor, PtMark, PtPoint, PtStroke } from '../lib/point-tell/type
 import { addMark, markByNumber, setMarks } from './marks';
 import { pt } from './state';
 import type { InkStrokeIn } from './ink-canvas';
+import { isSent } from '../lib/point-tell/sent-marks';
 
 // ── Where a mark's ink is now ───────────────────────────────────────────────────────────────────
 
@@ -59,7 +60,9 @@ export function visibleStrokes(): InkStrokeIn[] {
   const out: InkStrokeIn[] = [];
   for (const m of pt.marks) {
     const strokes = markStrokes(m);
-    strokes?.forEach((s, i) => out.push({ key: strokeKey(m.n, i), points: s.points, ...(s.r ? { r: s.r } : {}) }));
+    // Ink that went to Claude is quieter: the marks drawn since stand out.
+    const quiet = isSent(m);
+    strokes?.forEach((s, i) => out.push({ key: strokeKey(m.n, i), points: s.points, ...(s.r ? { r: s.r } : {}), ...(quiet ? { quiet } : {}) }));
   }
   return out;
 }
@@ -192,10 +195,10 @@ function read(strokes: PtStroke[]): InkReading {
  */
 function pairMarks(cur: PtMark): { merged: PtMark; other: PtMark } | null {
   const scene = pt.scene;
-  if (!scene || !cur.ink || cur.staged) return null;
+  if (!scene || !cur.ink) return null;
   for (let i = pt.marks.length - 1; i >= 0; i--) {
     const other = pt.marks[i];
-    if (other.n === cur.n || other.staged || !other.ink) continue;
+    if (other.n === cur.n || !other.ink) continue;
     for (const [a, b] of [[cur, other], [other, cur]] as const) {
       if (b.meaning?.kind !== 'add' || b.text.trim()) continue;
       const ends = arrowOf(scene, inkStrokes(a));

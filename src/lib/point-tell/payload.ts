@@ -1,3 +1,4 @@
+// Not used by the interface at present: Point and tell is one way. Kept for a later two-way channel.
 /**
  * The copied text: a short instruction and one JSON object. Every mark says what it `drew` (a fact), what
  * Companion `guess`es it means (absent when unsure) and what the user `says`; the marked objects' current
@@ -12,7 +13,6 @@ import { buildOutline, pageSignature, type OutlineNode } from './outline';
 import { assignRefs, type RefTable } from './refs';
 import { buildColours, buildVocabulary, changeableProps, type PtColour, type PtProp, type PtVocabulary } from './vocabulary';
 import { draftTabs, isDraftId, isTabMark, withDrafts } from './drafts';
-import { directOps } from './direct';
 import { drewOf, guessOf, rawPlace } from './phrases';
 import type { PtCopiedMark, PtCopySnapshot, PtMark } from './types';
 import type { ColorSetData } from '../types';
@@ -171,15 +171,12 @@ export function buildPayload(input: PayloadInput): Built {
 
   const liveRef = input.liveTabId ? refOf(refs, input.liveTabId) : null;
   const ctx = { refs, ...(liveRef ? { shownTab: liveRef } : {}) };
-  const direct = directOps(marks, refs);
-  const handledNotes = new Set(direct.map(o => o.notes[0]));
 
   const now: PtCopySnapshot['now'] = {};
   const objects: Record<string, ObjectOut> = {};
   const copied: PtCopiedMark[] = [];
   const markOut: MarkOut[] = marks.map(m => {
-    // A mark Companion stages itself needs nothing from the AI: its objects are not repeated.
-    for (const id of handledNotes.has(m.n) ? [] : m.targets) {
+    for (const id of m.targets) {
       const node = findNode(model, id)?.node;
       const ref = refOf(refs, id);
       if (!node || !ref || objects[ref]) continue;
@@ -200,8 +197,8 @@ export function buildPayload(input: PayloadInput): Built {
     const drew = drewOf(m, ctx);
     const guess = guessOf(m, ctx, draft);
     const says = m.text.trim();
-    // A drawn tab is always added by Companion (named or not), and so is a named widget sketch or a move with no words.
-    const handled = handledNotes.has(m.n) || !!draft;
+    // A drawn tab is added by Companion whether it is named or not.
+    const handled = !!draft;
     const mean = m.meaning;
     const place = mean?.kind === 'add' ? rawPlace(ctx, mean.place) : mean?.kind === 'move' ? rawPlace(ctx, mean.to) : null;
     copied.push({
@@ -246,7 +243,6 @@ export function buildPayload(input: PayloadInput): Built {
     now,
     marks: copied,
     ...(drafts.length ? { drafts } : {}),
-    ...(direct.length ? { direct } : {}),
   };
   const instruction = instructionFor({ handled: copied.some(c => c.handled), tabs: drafts.length > 0, newPage: !!input.newPage, screenshot: !!input.screenshot });
   return { payload, snapshot, refs, colours, instruction };

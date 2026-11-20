@@ -4,11 +4,11 @@
 import { describe, expect, it } from 'vitest';
 import type { ColorSetData } from '../../types';
 import {
-  addColor, addSet, changeCount, editColor, emptyDraft, hasChanges, pendingChanges, problems, removeNewSet, renameNewColor, setViews,
-  verifyColors,
+  addColor, addColors, addSet, changeCount, editColor, emptyDraft, hasChanges, knownColors, pendingChanges, problems, removeNewSet, renameNewColor,
+  scaleColors, setViews, verifyColors,
 } from '../colors-draft';
 import { buildFileOps, idProblem, isOverLimit, newImagesFor, outputName, overLimitText, storedKb, verifyFiles, type NewImage } from '../images-draft';
-import { FILE_LIMIT_KB } from '../write-ops';
+import { buildFileWriteEc, FILE_LIMIT_KB } from '../write-ops';
 import type { ImageIndex } from '../image-files';
 
 const SETS: ColorSetData[] = [
@@ -37,6 +37,40 @@ describe('color draft', () => {
     expect(rows[0]).toMatchObject({ kind: 'change', name: 'Steadfast blue', from: '#1F5FA8', to: '#1A56A0', detail: '#1F5FA8 → #1A56A0' });
     expect(rows[1].detail).toBe('name: Steadfast navy → Deep navy');
     expect(changeCount(d)).toBe(2);
+  });
+
+  it('adds pasted colors and the steps of a scale with IDs that follow the set and each other', () => {
+    let n = 0;
+    const pasted = addColors(emptyDraft(), SETS, 'swi_brand', [{ name: 'Primary', hex: '#0e8a9c' }, { name: '', hex: '#F2A541' }, { name: 'Primary', hex: '#111111' }], () => `p${++n}`);
+    expect(pasted.added.map(a => [a.id, a.name, a.hex])).toEqual([
+      ['swi_primary', 'Primary', '#0E8A9C'], ['swi_color', 'Color', '#F2A541'], ['swi_primary_2', 'Primary', '#111111'],
+    ]);
+    const steps = scaleColors('Steadfast blue', [{ step: 100, hex: '#E3F4F7' }, { step: 500, hex: '#1F5FA8' }, { step: 900, hex: '#06323A' }]);
+    expect(steps.map(s => s.name)).toEqual(['Steadfast blue 100', 'Steadfast blue 900']);
+    const scaled = addColors(emptyDraft(), SETS, 'swi_brand', steps, () => `s${++n}`);
+    expect(scaled.added.map(a => a.id)).toEqual(['swi_steadfast_blue_100', 'swi_steadfast_blue_900']);
+    expect(pendingChanges(SETS, scaled.draft).ops).toHaveLength(2);
+    // Numbered IDs go on with the next number.
+    const numbered: ColorSetData[] = [{ id: 'act', name: 'Action', folder: 'f', colors: [{ bid: 'act_colour_1', name: 'A', rgb: 'rgb(1,1,1)' }, { bid: 'act_colour_2', name: 'B', rgb: 'rgb(2,2,2)' }] }];
+    expect(addColors(emptyDraft(), numbered, 'act', steps, () => `x${++n}`).added.map(a => a.id)).toEqual(['act_colour_3', 'act_colour_4']);
+  });
+
+  it('does not repeat the leading word of its neighbours in the IDs of a scale or a paste', () => {
+    const own: ColorSetData[] = [{ id: 'qa_set', name: 'QA', folder: 'f', colors: [
+      { bid: 'qa_set_brand_teal', name: 'Brand teal', rgb: 'rgb(1,1,1)' }, { bid: 'qa_set_sunrise', name: 'Sunrise', rgb: 'rgb(2,2,2)' }, { bid: 'qa_set_deep_navy', name: 'Deep navy', rgb: 'rgb(3,3,3)' }] }];
+    let n = 0;
+    const steps = scaleColors('Brand teal', [100, 300, 500, 700, 900].map(step => ({ step, hex: '#808080' })), 'qa_set_brand_teal');
+    expect(addColors(emptyDraft(), own, 'qa_set', steps, () => `k${++n}`).added.map(a => a.id)).toEqual([
+      'qa_set_brand_teal_100', 'qa_set_brand_teal_300', 'qa_set_brand_teal_700', 'qa_set_brand_teal_900']);
+    const empty: ColorSetData[] = [{ id: 'qa_set', name: 'QA', folder: 'f', colors: [] }];
+    expect(addColors(emptyDraft(), empty, 'qa_set', ['Brand teal', 'Brand sand', 'Brand navy', 'Brand red'].map(name => ({ name, hex: '#808080' })), () => `k${++n}`).added.map(a => a.id)).toEqual([
+      'qa_set_brand_teal', 'qa_set_brand_sand', 'qa_set_brand_navy', 'qa_set_brand_red']);
+  });
+
+  it('knows every color of the sets as changed on the page, except the one being edited', () => {
+    const d = editColor(emptyDraft(), SETS[0], 'swi_blue', 'hex', '#1A56A0');
+    const known = knownColors(SETS, d, 'swi_navy');
+    expect(known.map(k => k.hex)).toEqual(['#1A56A0', '#2E7D32']);
   });
 
   it('adds a color with an ID in the style of its neighbours, that follows its name', () => {
@@ -131,6 +165,15 @@ describe('image draft', () => {
       { kind: 'change', id: 'icon_erm', name: 'erm.png', mime: 'image/png', base64: 'QUFB' },
     ]);
     expect(tooLarge).toEqual(['big.png']);
+  });
+
+  it('renames a file whose type changes (an SVG written as a PNG, a replaced file), in the same write', () => {
+    const svgFile = { rid: '7', id: 'card_icon_asset', name: 'asset.svg', folderId: 'icons' };
+    const { ops } = buildFileOps([], [{ file: svgFile, out: { bytes: bytes(3), mime: 'image/png' } }, { file: INDEX.files[0], out: { bytes: bytes(3), mime: 'image/png' } }], b => btoa(String.fromCharCode(...b)));
+    expect(ops[0]).toMatchObject({ kind: 'change', name: 'asset.png', rename: true });
+    expect(ops[1]).not.toHaveProperty('rename');
+    expect(buildFileWriteEc(ops[0])).toBe('r.card_icon_asset.change(content := "asset.png;image/png;QUFB", name := "asset.png")');
+    expect(buildFileWriteEc(ops[1])).toBe('r.icon_ics.change(content := "ics.png;image/png;QUFB")');
   });
 
   it('says at once whether a file fits one write, with its size and the limit', () => {

@@ -9,6 +9,7 @@ export const GENERATED_ROOT_DIRECTORIES = Object.freeze([
   'access',
   'assets',
   'chunks',
+  'claude-setup',
   'codesearch',
   'colors-images',
   'diff',

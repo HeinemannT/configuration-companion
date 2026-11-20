@@ -9,16 +9,17 @@
  */
 import { ICON_TRASH, ICON_X } from '../lib/icons';
 import { findNode } from '../lib/layout/model';
+import { shownNumbers } from '../lib/point-tell/numbering';
 import { tagSpec } from '../lib/point-tell/tag-words';
 import { getTypeAbbr, getTypeColor } from '../lib/type-registry';
 import { dropReading, forgetGroup, liftPoint, markBox, markStrokes, removeMark } from './ink-marks';
 import { closeEditor, markByNumber } from './marks';
 import { noteInput } from './mascot';
 import { pt, type PtEditor } from './state';
-import { VOICE_HOLD_KEY } from '../lib/point-tell/voice';
+import { VOICE_TOGGLE_KEY } from '../lib/point-tell/voice';
 import { Z, placed } from './view';
-import { endVoice, listening, micButton, startVoice, voiceOffered } from './voice';
-import { fetchFanout } from './service';
+import { asking, closeAsk, endVoice, listening, micButton, toggleVoice, voiceSupported } from './voice';
+import { fanoutCache, fetchFanout } from './service';
 import { isDraftId, isTabMark } from '../lib/point-tell/drafts';
 
 const WIDTH = 268;
@@ -39,6 +40,10 @@ function inkPoints(n: number): Array<[number, number]> {
   return out;
 }
 
+/** How many sample points of ink lie under a box (page coordinates), with a little margin. */
+const covers = (pts: Array<[number, number]>, left: number, top: number, w: number, h: number, pad = 8): number =>
+  pts.filter(p => p[0] >= left - pad && p[0] <= left + w + pad && p[1] >= top - pad && p[1] <= top + h + pad).length;
+
 /** The field's place (page coordinates): the first candidate that keeps off the ink and inside the window. */
 function place(card: HTMLElement, ed: PtEditor): { left: number; top: number } {
   const W = card.offsetWidth || WIDTH, H = card.offsetHeight || 96;
@@ -51,10 +56,7 @@ function place(card: HTMLElement, ed: PtEditor): { left: number; top: number } {
   if (m && box) {
     const lift = ed.lift ?? liftPoint(m) ?? [box.left + box.width, box.top + box.height];
     const pts = inkPoints(m.n);
-    const hits = (c: { left: number; top: number }): number => {
-      const pad = 8;
-      return pts.filter(p => p[0] >= c.left - pad && p[0] <= c.left + W + pad && p[1] >= c.top - pad && p[1] <= c.top + H + pad).length;
-    };
+    const hits = (c: { left: number; top: number }): number => covers(pts, c.left, c.top, W, H);
     const bottom = box.top + box.height, right = box.left + box.width;
     const candidates = [
       clamp(lift[0] + GAP, lift[1] - 10),
@@ -130,8 +132,7 @@ function readingRow(ed: PtEditor): HTMLElement | null {
   return null;
 }
 
-/** Pages per template, read once per template and kept for the session. */
-const fanouts = new Map<string, number | null>();
+const fanouts = fanoutCache;
 
 /** The one muted line under the reading when the tab or widget goes to a shared template: "On template X, 295 pages". */
 function templateLine(ed: PtEditor): HTMLElement | null {
@@ -191,7 +192,8 @@ export function renderField(): void {
   card.style.visibility = 'hidden'; // measured, then placed, before it is ever seen: no jump
   card.style.pointerEvents = 'auto';
   card.setAttribute('role', 'dialog');
-  card.setAttribute('aria-label', ed.n === null ? 'New comment' : `Comment on mark ${ed.n}`);
+  const shown = ed.n === null ? undefined : shownNumbers(pt.marks).get(ed.n);
+  card.setAttribute('aria-label', shown === undefined ? 'New comment' : `Comment on mark ${shown}`);
   card.dataset.key = keyOf(ed);
 
   const row = readingRow(ed);
@@ -207,15 +209,33 @@ export function renderField(): void {
   area.rows = 2;
   area.placeholder = placeholderFor(ed);
   area.setAttribute('aria-label', 'Comment');
-  area.title = 'Enter saves. Shift+Enter makes a new line.';
+  area.title = voiceSupported() ? `Enter saves. Shift+Enter makes a new line. ${VOICE_TOGGLE_KEY} starts and stops talking.` : 'Enter saves. Shift+Enter makes a new line.';
   // BMP's own shortcuts and listeners must not see what is typed here.
   for (const type of ['keydown', 'keyup', 'keypress'] as const) area.addEventListener(type, (e) => e.stopPropagation());
-  const ghost = document.createElement('div');
-  ghost.className = 'pt-interim'; ghost.hidden = true; ghost.setAttribute('aria-live', 'polite');
-  const listen = (): void => { void startVoice(card, area, ghost); };
+  // The field grew (the question about voice opened): it stays off the ink and inside the window, above the dock. The text area
+  // never moves: the question opens below it, or above it (the field's top moving up by what it grew) when below would cover the ink.
+  const fit = (): void => {
+    const room = window.scrollY + window.innerHeight - DOCK_ROOM;
+    const ask = card.querySelector<HTMLElement>('.pt-voice-ask'), restTop = Number(card.dataset.restTop), restH = Number(card.dataset.restH);
+    if (ask && ed.n !== null && Number.isFinite(restTop) && Number.isFinite(restH)) {
+      const pts = inkPoints(ed.n), h = card.offsetHeight, w = card.offsetWidth, left = card.offsetLeft;
+      const options = [restTop, restTop + restH - h].filter(t => t >= window.scrollY + 8 && t + h <= room);
+      if (options.length) {
+        // Below first; above only when it covers less of the ink.
+        const top = options.reduce((best, t) => (covers(pts, left, t, w, h) < covers(pts, left, best, w, h) ? t : best));
+        if (top !== restTop) { card.dataset.askUp = '1'; card.insertBefore(ask, card.querySelector('.pt-area-wrap')); }
+        card.style.top = `${top}px`;
+        return;
+      }
+    }
+    const over = card.offsetTop + card.offsetHeight - room;
+    if (over > 0) card.style.top = `${Math.max(window.scrollY + 8, Math.round(card.offsetTop - over))}px`;
+  };
   area.addEventListener('keydown', (e) => {
-    // Voice: hold the key to listen; Escape while listening only cancels the listening.
-    if (e.key === VOICE_HOLD_KEY && voiceOffered()) { e.preventDefault(); if (!e.repeat && !listening()) listen(); return; }
+    // Voice: the key starts listening and stops it, as the microphone does (while voice comments are off it asks once whether to
+    // turn them on). Escape while listening only cancels the listening, and while the question is open only closes it.
+    if (e.key === VOICE_TOGGLE_KEY && voiceSupported()) { e.preventDefault(); if (!e.repeat) toggleVoice(card, area, fit); return; }
+    if (e.key === 'Escape' && asking(card)) { e.preventDefault(); closeAsk(card); return; }
     if (listening()) {
       if (e.key === 'Escape') { e.preventDefault(); endVoice(false); return; }
       if (e.key === 'Enter' && !e.shiftKey) endVoice(true);
@@ -225,12 +245,10 @@ export function renderField(): void {
     else if (e.key === 'Escape') { e.preventDefault(); forgetGroup(); closeEditor(true, area.value); }
   });
   area.addEventListener('input', noteInput);
-  area.addEventListener('keyup', (e) => { if (e.key === VOICE_HOLD_KEY && listening()) endVoice(true); });
   area.addEventListener('blur', () => { if (listening()) endVoice(true); });
   wrap.appendChild(area);
-  if (voiceOffered()) {
-    const mic = micButton(() => { if (listening()) endVoice(true); else listen(); });
-    wrap.appendChild(mic);
+  if (voiceSupported()) {
+    wrap.appendChild(micButton(card, area, fit));
   }
 
   if (ed.n !== null) {
@@ -242,8 +260,12 @@ export function renderField(): void {
     trash.addEventListener('click', (e) => { e.stopPropagation(); closeEditor(false); removeMark(n); });
     wrap.appendChild(trash);
   }
+  // With no bin the microphone sits in the corner. A class, not :last-child: the voice layer added while listening
+  // comes after it, and the microphone must not move out from under the pointer that clicks it off.
+  if (!wrap.querySelector('.pt-trash')) wrap.querySelector('.pt-mic')?.classList.add('pt-end');
+  // The words keep clear of the buttons in the corner (the microphone and the bin).
+  wrap.style.setProperty('--pt-pr', `${wrap.querySelectorAll('.pt-mic').length * 24 + wrap.querySelectorAll('.pt-trash').length * 22 + 10}px`);
   card.appendChild(wrap);
-  card.appendChild(ghost);
   layer.appendChild(card);
   pt.fieldEl = card;
 
@@ -251,6 +273,7 @@ export function renderField(): void {
   card.style.left = `${Math.round(at.left)}px`;
   card.style.top = `${Math.round(at.top)}px`;
   card.style.visibility = '';
+  card.dataset.restTop = String(Math.round(at.top)); card.dataset.restH = String(card.offsetHeight);
   area.focus({ preventScroll: true });
   area.setSelectionRange(area.value.length, area.value.length);
 }

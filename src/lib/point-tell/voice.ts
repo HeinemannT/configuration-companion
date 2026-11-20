@@ -4,8 +4,10 @@
  * way recognition can fail. The browser's speech recognition itself is in content-pointtell/voice.
  */
 export const VOICE_KEY = 'crev_pt_voice';
-/** Held down while the comment field is open: listen while it is held. A function key does not type and does not scroll. */
-export const VOICE_HOLD_KEY = 'F2';
+/** In an open comment field: start listening, and press again to stop. A function key does not type and does not scroll. */
+export const VOICE_TOGGLE_KEY = 'F2';
+/** What the microphone in the field does when pressed: start, or (while listening) stop. */
+export const micLabel = (listening: boolean): string => (listening ? 'Stop talking' : 'Talk');
 
 export type VoiceLang = 'en-US' | 'de-DE';
 export interface VoicePrefs {

@@ -120,6 +120,12 @@ export function measureCrumbRow(model: LModel): { rect: Rect; lastId: string } |
   return { rect: { left, top: lr.top, width: Math.max(160, Math.min(520, document.documentElement.clientWidth - left - 24)), height: lr.height }, lastId: model.pageId, ...(parent ? { parent } : {}) };
 }
 
+/** The name of the page BMP shows: the last breadcrumb's label. */
+export function currentPageName(): string | undefined {
+  const items = [...document.querySelectorAll('.corpo-breadcrumbs__item')];
+  return items[items.length - 1]?.querySelector('.nav-bar-item-label')?.textContent?.trim() || undefined;
+}
+
 /** Sorted list of the rids on screen: changes exactly when BMP swaps tabs or redraws its widgets. */
 export function ridSignature(): string {
   return [...document.querySelectorAll('[data-rid]')].map(el => (el as HTMLElement).dataset.rid).sort().join(',');

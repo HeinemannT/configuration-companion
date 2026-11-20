@@ -1,3 +1,4 @@
+// Not used by the interface at present: Point and tell is one way. Kept for a later two-way channel.
 /**
  * From an answer to staged changes: each operation is judged against the page (the allowlist of the
  * vocabulary, the layout rules, what the page looked like when it was copied) and, when it passes, applied

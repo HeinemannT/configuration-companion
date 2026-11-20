@@ -3,6 +3,8 @@
 #crev-pointtell-layer .pt-mascot .mk-body { transform-box: view-box; transform-origin: 15px 24px; }
 #crev-pointtell-layer .pt-mascot .mk-body[data-pose="doze"] { transform: translateY(.5px) rotate(5deg); transition: transform 500ms ease-in-out; }
 #crev-pointtell-layer .pt-mascot .mk-face { transition: transform 90ms linear; }
+/* The eyes follow the pointer: a short ease toward each new spot (set once a frame by mascot.ts). */
+#crev-pointtell-layer .pt-mascot .mark-look { transition: transform 150ms cubic-bezier(.22,.8,.3,1); }
 #crev-pointtell-layer .pt-mascot .mk-eye > * { opacity: 0; transition: opacity 60ms linear; }
 #crev-pointtell-layer .pt-mascot .mk-eye[data-s="op"] .mk-open,
 #crev-pointtell-layer .pt-mascot .mk-eye[data-s="sh"] .mk-sleep,

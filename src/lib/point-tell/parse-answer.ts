@@ -1,3 +1,4 @@
+// Not used by the interface at present: Point and tell is one way. Kept for a later two-way channel.
 /**
  * An AI's answer, as text, to the structure the page can judge. Tolerant of how chat answers look: prose
  * around the JSON, a markdown fence, curly quotes, a trailing comma, a // comment. Strict about what it

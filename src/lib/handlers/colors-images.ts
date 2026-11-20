@@ -14,6 +14,7 @@
  *    asks and reads again afterwards; this handler does not undo.
  */
 import { register, type HandlerMeta } from '../handler-registry';
+import { closePanelInWindow } from '../companion-tabs';
 import { ctxOf, getCtx, type SwContext } from '../sw-context';
 import { environmentMatches, environmentMismatchError, environmentToken } from '../environment';
 import { buildImageIndexEc, parseImageIndexLog } from '../colors-images/image-files';
@@ -51,6 +52,7 @@ export async function openColorsImages(tab: ColorsImagesTab | undefined, source:
       }
       await chrome.tabs.update(existing.id, { active: true });
       await chrome.windows.update(origin?.windowId ?? existing.windowId, { focused: true });
+      await closePanelInWindow(existing.windowId);
     } else {
       await chrome.tabs.create({ url, ...(origin?.id != null ? { windowId: origin.windowId, index: origin.index + 1, openerTabId: origin.id } : {}) });
     }

@@ -13,7 +13,7 @@
  */
 
 const REPO = 'HeinemannT/configuration-companion';
-const RELEASES_URL = `https://github.com/${REPO}/releases`;
+export const RELEASES_URL = `https://github.com/${REPO}/releases`;
 const LATEST_API = `https://api.github.com/repos/${REPO}/releases/latest`;
 const CACHE_KEY = 'crev_update_check';
 const CHECK_INTERVAL = 24 * 60 * 60 * 1000; // 24h — GitHub API is unauthenticated → 60 req/hr/IP

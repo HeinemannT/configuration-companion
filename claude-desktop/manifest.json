@@ -1,0 +1,87 @@
+{
+  "manifest_version": "0.3",
+  "name": "configuration-companion",
+  "display_name": "Configuration Companion",
+  "version": "0.3.1",
+  "description": "Work through sketches sent from Configuration Companion in one Claude chat, and answer them back.",
+  "long_description": "Configuration Companion lets you draw and comment on a live Corporater BMP page. This extension queues what you send with Send to Claude, lets Claude take the sketches one after another in a working chat, and shows Claude's answers back in the browser. It listens only on this computer (127.0.0.1) and only for the browser extension. Sketches are also saved as files in the folder Configuration Companion/Sessions in your user folder, and deleted after 7 days.",
+  "author": {
+    "name": "Configuration Companion"
+  },
+  "icon": "icon.png",
+  "server": {
+    "type": "node",
+    "entry_point": "server/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/server/index.js"
+      ],
+      "env": {
+        "COMPANION_FOLDER": "${user_config.folder}",
+        "COMPANION_WAIT_SECONDS": "${user_config.wait_seconds}"
+      }
+    }
+  },
+  "user_config": {
+    "folder": {
+      "type": "directory",
+      "title": "Sessions folder",
+      "description": "Where sketches and replies are saved as files. Leave it as it is unless you need another place.",
+      "default": "${HOME}/Configuration Companion/Sessions",
+      "required": false
+    },
+    "wait_seconds": {
+      "type": "number",
+      "title": "Wait for a sketch (seconds)",
+      "description": "How long Claude waits for a sketch in one call. 0 lets Configuration Companion choose. Above 50 makes Claude Desktop stop the call.",
+      "default": 0,
+      "min": 0,
+      "max": 600,
+      "required": false
+    }
+  },
+  "tools": [
+    {
+      "name": "next_sketch",
+      "description": "Takes the next sketch from Configuration Companion, or waits a while for one. The result says what to do next."
+    },
+    {
+      "name": "reply",
+      "description": "Records your answer to a sketch. The result says what to do next."
+    },
+    {
+      "name": "get_sketch",
+      "description": "Shows a sketch without taking it: the newest, or one by number."
+    },
+    {
+      "name": "list_sketches",
+      "description": "Lists the sketches kept, newest first, with their states."
+    },
+    {
+      "name": "clear_session",
+      "description": "Deletes the sketches of this session and their files. Use it only when the user asks."
+    }
+  ],
+  "prompts": [
+    {
+      "name": "working-session",
+      "description": "Work through the sketches sent from Configuration Companion, one after another.",
+      "text": "Work through my Configuration Companion sketches as they arrive. Call next_sketch, do what the sketch asks in BMP, tell me and the sketch with reply, then call next_sketch again. Keep going until I say stop."
+    },
+    {
+      "name": "companion-sketch",
+      "description": "Insert the newest sketch sent from Configuration Companion.",
+      "text": "Use the get_sketch tool to read the newest sketch from Configuration Companion and act on it."
+    }
+  ],
+  "compatibility": {
+    "platforms": [
+      "darwin",
+      "win32"
+    ],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  }
+}

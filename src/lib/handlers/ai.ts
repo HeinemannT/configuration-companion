@@ -31,6 +31,7 @@ import { ChangeTicketLifecycle, type ChangePreviewScope, type ChangeTicketTarget
 import type { ToolResult } from '../ai/tools';
 import { toolFailure, toolSuccess } from '../ai/tool-results';
 import type { BmpClient } from '../bmp-client';
+import { openPanelOnTab } from '../companion-tabs';
 import {
   editorContextForTab,
   isCurrentEditorContext,
@@ -536,7 +537,7 @@ register('AI_CHAT_HANDOFF', (msg, _respond, meta) => {
   // Open the side panel on the sender's tab. No-op when already open; the forwarded message survives panel
   // startup via pendingPanelMessages.
   if (meta.senderTabId != null) {
-    chrome.sidePanel.open({ tabId: meta.senderTabId }).catch(e => log.swallow('ai:handoff:open', e));
+    openPanelOnTab(meta.senderTabId, meta.senderUrl).catch(e => log.swallow('ai:handoff:open', e));
   }
   ctx.sendToPanel(msg);
 });

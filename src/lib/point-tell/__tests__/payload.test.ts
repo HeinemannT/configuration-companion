@@ -43,7 +43,7 @@ describe('payload', () => {
     expect(payload.marks).toEqual([
       { n: 1, drew: 'arrow from o5 ending just before o4', guess: 'move o5 before o4', says: 'Make this the first button' },
       { n: 2, drew: 'cross over o2' },
-      { n: 3, drew: 'square at row 3, columns 4-6, bars inside', guess: 'add a chart, 3 columns wide, after o5', says: 'A chart of risks by owner', handled: true },
+      { n: 3, drew: 'square at row 3, columns 4-6, bars inside', guess: 'add a chart, 3 columns wide, after o5', says: 'A chart of risks by owner' },
       { n: 4, drew: 'underline under o1', says: 'Add owner and due date' },
       { n: 5, drew: 'circle around o4, o5' },
       { n: 6, drew: 'ink near o3', says: 'Why this?' },
@@ -75,7 +75,7 @@ describe('payload', () => {
   it('the snapshot keeps the full "now" (with columns) and the structure behind each guess', () => {
     const { snapshot } = buildPayload({ model: fixtureModel(), marks: six, colors, liveTabId: 'tab_overview', scope: 'template', now: 1 });
     expect(snapshot.now.btn_new_risk).toEqual({ columns: 1, headerColor: 'k3', shadow: true });
-    expect(snapshot.marks[2]).toMatchObject({ n: 3, guess: 'add a chart, 3 columns wide, after o5', handled: true, add: { widget: 'chart', types: ['BarChart', 'LineChart'], columns: 3, place: { after: 'o5' } } });
+    expect(snapshot.marks[2]).toMatchObject({ n: 3, guess: 'add a chart, 3 columns wide, after o5', add: { widget: 'chart', types: ['BarChart', 'LineChart'], columns: 3, place: { after: 'o5' } } });
     expect(snapshot.marks[0]).toMatchObject({ move: { to: { before: 'o4' } } });
   });
 

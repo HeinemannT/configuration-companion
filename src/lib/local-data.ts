@@ -109,6 +109,10 @@ export const STORED_KEYS: readonly StoredKey[] = [
   { key: 'companion-access-operations', match: 'exact', area: 'indexeddb', onProfile: 'env-value', onReset: 'remove', what: 'Access apply journals' },
   { key: 'crev-code-index', match: 'exact', area: 'indexeddb', onProfile: 'keep', onReset: 'keep', what: 'code index (cleared by the caller: clearCodeIndex)' },
   // Context menus: whether this browser session has ensured the entries (see context-menus.ts).
+  { key: 'crev_claude_link_port', match: 'exact', area: 'session', onProfile: 'keep', onReset: 'remove', what: 'port where Claude Desktop answered (Send to Claude)' },
+  { key: 'crev_claude_link_test_port', match: 'exact', area: 'session', onProfile: 'keep', onReset: 'remove', what: 'test only: the one port a test listener answers on (Send to Claude); Companion never sets it' },
+  { key: 'crev_claude_link_test_port_count', match: 'exact', area: 'session', onProfile: 'keep', onReset: 'remove', what: 'test only: how many ports from the test port to try (Send to Claude); Companion never sets it' },
+  { key: 'crev_pt_seen_rev', match: 'exact', area: 'session', onProfile: 'keep', onReset: 'remove', what: 'which replies from Claude were looked at, per sketch (Send to Claude)' },
   { key: 'crev_menus_ready', match: 'exact', area: 'session', onProfile: 'keep', onReset: 'remove', what: 'context menu entries ensured this session' },
   // Page-layer preferences (served to content scripts by handlers/page-prefs.ts).
   { key: 'crev_overlay_bounds_', match: 'prefix', area: 'local', onProfile: 'keep', onReset: 'remove', what: 'in-page window positions' },
@@ -126,7 +130,7 @@ export const STORED_KEYS: readonly StoredKey[] = [
   // Session: state of open windows and the running worker, rebuilt as the user works.
   ...['crev_conn_snapshot', 'crev_settings_snapshot', 'crev_debug', 'crev_connection_trace_enabled', 'crev_tab_detection',
     'crev_inspect_active_by_window', 'crev_blueprint_active_by_window', 'crev_blueprint_tab_by_window', 'crev_display_by_window',
-    'crev_frame_served', 'crev_active_tab', 'crev_conn_recovery'].map((key): StoredKey => ({
+    'crev_frame_served', 'crev_active_tab', 'crev_conn_recovery', 'crev_panel_hidden_tabs'].map((key): StoredKey => ({
     key, match: 'exact', area: 'session', onProfile: 'keep', onReset: 'keep', what: 'running state' })),
   // Web storage the worker cannot reach: a BMP page's own storage (written by
   // content scripts) and Companion pages' localStorage. Tab- or view-only state.
@@ -138,6 +142,8 @@ export const STORED_KEYS: readonly StoredKey[] = [
   { key: 'crev_pt_stage:', match: 'prefix', area: 'page', onProfile: 'keep', onReset: 'keep', what: 'A pasted answer handed to Blueprint, read once (page sessionStorage)' },
   { key: 'crev_pt_staged:', match: 'prefix', area: 'page', onProfile: 'keep', onReset: 'keep', what: 'Which notes the staged changes belong to (page sessionStorage)' },
   { key: 'crev_pt_noticed', match: 'exact', area: 'page', onProfile: 'keep', onReset: 'keep', what: 'The first-copy notice was shown (page sessionStorage)' },
+  { key: 'crev_pt_drawn_hint', match: 'exact', area: 'page', onProfile: 'keep', onReset: 'keep', what: 'The note that a sent picture was drawn, not captured, was shown (page sessionStorage)' },
+  { key: 'crev_pt_answers', match: 'exact', area: 'page', onProfile: 'keep', onReset: 'keep', what: 'Which sent sketches were answers to a question from Claude, given at the marks (page sessionStorage)' },
 ];
 
 /** `crev_` text in the source that is not a storage key. */

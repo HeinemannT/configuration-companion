@@ -1,4 +1,5 @@
 import { register, type HandlerMeta } from '../handler-registry';
+import { closePanelInWindow } from '../companion-tabs';
 import { ctxOf, getCtx, type SwContext } from '../sw-context';
 import { environmentToken } from '../environment';
 import { handleAccessRequest } from '../access-workspace/service';
@@ -40,6 +41,7 @@ export async function openAccessWorkspace(destination?: AccessDestination, expec
       }
       await chrome.tabs.update(existing.id, { active: true });
       await chrome.windows.update(origin?.windowId ?? existing.windowId, { focused: true });
+      await closePanelInWindow(existing.windowId);
     } else await chrome.tabs.create({ url: entryUrl, ...(origin?.id != null
       ? { windowId: origin.windowId, index: origin.index + 1, openerTabId: origin.id } : {}) });
   });

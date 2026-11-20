@@ -28,7 +28,6 @@ import { blueprintFontFaceCss } from './content-blueprint/font-face';
 import { rememberTarget, rememberedTarget } from './content-blueprint/resume-note';
 import { isTempId } from './lib/layout/model';
 import { clearDockRoom } from './content-blueprint/bar-place';
-import { clearStaged } from './lib/point-tell/store';
 
 export { isBlueprintActive };
 
@@ -276,7 +275,6 @@ export function disableBlueprint(): void {
   // review surface mounted until it settles; tearing down now would discard
   // the only authoritative outcome even though cancel() correctly no-ops.
   if (bp.applySession?.state.phase === 'applying') return;
-  if (bp.loadedRid) clearStaged(bp.loadedRid); // staged-from-notes changes are gone with the session: the notes are plain notes again
   keepEditing(); // an open discard confirm belongs to this session
   cancelGesture(); // rip out any in-flight drag/resize listeners + body-level ghost/line elements
   clearHintTimer(); // a pending flashHint render() must not fire after teardown

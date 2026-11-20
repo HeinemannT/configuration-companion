@@ -7,19 +7,13 @@
  */
 
 import { register } from '../handler-registry';
+import { deliverSketch, fetchStatus, requeueSketch, type SendDeps, type SketchPush } from '../claude-link';
+import { DESKTOP_CONFIG, handoverFor } from '../point-tell/desktop-policy';
 import { ctxOf, type SwContext } from '../sw-context';
 import { ensureContentScript } from '../tab-awareness';
 import { reportFrameOpenFailure } from '../frame-open-failure';
 import { errorMessage, log } from '../logger';
-import { isRidShaped } from '../rid-shape';
-import { routedProps } from '../point-tell/routes';
 import { VOICE_KEY, readVoicePrefs } from '../point-tell/voice';
-import { ChangeTicketLifecycle, type ChangePreviewScope } from '../ai/change-ticket';
-import { buildAncestorsEc, parseAncestors } from '../browse-tree';
-import { buildCreatePageEc, buildReadBackEc, checkCreatePage, parseCreatePage } from '../point-tell/create-page';
-import { CONTEXT_OBJECT, createEcFrame } from '../ec-parser';
-import { environmentMatches, environmentMismatchError, environmentToken } from '../environment';
-import { userScript } from '../script-kinds';
 import { toggleInspect } from './inspect';
 import { setBlueprintActive } from './layout';
 
@@ -77,131 +71,123 @@ register('POINT_TELL_STATE', async (msg, _respond, meta) => {
   ctxOf(meta).sendToPanelByWindow(tab.windowId, { type: 'POINT_TELL_STATE', active: msg.active });
 });
 
-// Page -> worker: the notes asked for changes to be staged. Point and tell is already off in the page;
-// Blueprint opens on that same tab, where the page loads the changes into it.
-register('POINT_TELL_STAGE', async (_msg, _respond, meta) => {
-  const tabId = meta.senderTabId;
-  if (tabId == null) return;
-  const tab = await chrome.tabs.get(tabId).catch(() => undefined);
-  if (tab?.windowId == null) return;
-  const ctx = ctxOf(meta);
-  if (ctx.isInspectActive(tab.windowId)) await toggleInspect(tab.windowId);
-  await setBlueprintActive(tab.windowId, true, tabId);
-});
-
-/** Code longer than this is not copied into the text: the AI would be given half of it. */
-const MAX_BODY = 8000;
-const MAX_READ = 12;
-
-// Page -> worker: what the noted objects hold in text properties and code, read once on Copy (version 1.1).
-register('POINT_TELL_READ_NOW', async (msg, respond, meta) => {
-  const ctx = ctxOf(meta);
-  if (!ctx.client) { respond({ type: 'POINT_TELL_NOW_DATA', ok: false, error: 'Not connected' }); return; }
-  const wanted = (Array.isArray(msg.items) ? msg.items : [])
-    .filter(i => !!i && isRidShaped(i.rid) && typeof i.className === 'string' && i.className.length < 80)
-    .filter(i => { const r = routedProps(i.className); return r.code.length > 0 || r.text.length > 0; })
-    .filter((i, at, all) => all.findIndex(o => o.rid === i.rid) === at)
-    .slice(0, MAX_READ);
-  if (!wanted.length) { respond({ type: 'POINT_TELL_NOW_DATA', ok: true, objects: {} }); return; }
-  try {
-    const { objects } = await ctx.client.readFullObjects(wanted.map(i => i.rid));
-    const out: Record<string, { text: Record<string, string>; code: Record<string, string>; omitted: string[] }> = {};
-    for (const { rid, className } of wanted) {
-      const obj = objects[rid];
-      if (!obj) continue;
-      const { code, text } = routedProps(className);
-      const entry = { text: {} as Record<string, string>, code: {} as Record<string, string>, omitted: [] as string[] };
-      for (const prop of text) { const v = obj.props[prop]; if (v && v.text) entry.text[prop] = v.text; }
-      for (const prop of code) {
-        const v = obj.props[prop];
-        if (!v || !v.text) continue;
-        if (v.text.length > MAX_BODY) entry.omitted.push(prop); else entry.code[prop] = v.text;
-      }
-      out[rid] = entry;
-    }
-    respond({ type: 'POINT_TELL_NOW_DATA', ok: true, objects: out });
-  } catch (e) {
-    respond({ type: 'POINT_TELL_NOW_DATA', ok: false, error: errorMessage(e) });
-  }
-});
-
-/** The receipts of previews: one use each, ten minutes, lost when the worker restarts (then a new preview is needed). */
-const pagePreviews = new ChangeTicketLifecycle(10 * 60_000);
-
-const scopeOf = (ctx: SwContext): ChangePreviewScope | null => (ctx.client?.commandUser ? { profileId: ctx.settings.activeProfileId, serverUrl: ctx.client.serverUrl, actor: ctx.client.commandUser } : null);
-
-// Page -> worker: where a new page may go. Read-only.
-register('POINT_TELL_PARENTS', async (msg, respond, meta) => {
-  const ctx = ctxOf(meta);
-  if (!ctx.client) { respond({ type: 'POINT_TELL_PARENTS_DATA', ok: false, error: 'Not connected' }); return; }
-  if (!isRidShaped(msg.rid)) { respond({ type: 'POINT_TELL_PARENTS_DATA', ok: false, error: 'Not an object RID' }); return; }
-  try {
-    const frame = createEcFrame();
-    const r = await ctx.client.executeEcOn(buildAncestorsEc(CONTEXT_OBJECT, frame), msg.rid, undefined, 20_000);
-    const crumbs = r.ok ? parseAncestors(r.log ?? '', frame) : [];
-    respond({ type: 'POINT_TELL_PARENTS_DATA', ok: true, parents: crumbs.slice().reverse() });
-  } catch (e) {
-    respond({ type: 'POINT_TELL_PARENTS_DATA', ok: false, error: errorMessage(e) });
-  }
-});
-
-// Page -> worker: create the empty page. The one write here that is not a Blueprint apply: previewed on the server first (a
-// warning stops it, for instance a duplicate ID that BMP would replace), one use of the receipt, the same script, read back after.
-register('POINT_TELL_CREATE_PAGE', async (msg, respond, meta) => {
-  const ctx = ctxOf(meta);
-  const fail = (error: string, outcomeUnknown = false): void => respond({ type: 'POINT_TELL_CREATE_PAGE_RESULT', ok: false, error, ...(outcomeUnknown ? { outcomeUnknown: true } : {}) });
-  const client = ctx.client;
-  if (!client) { fail('Not connected'); return; }
-  if (!environmentMatches(ctx, msg.environment)) { fail(environmentMismatchError(ctx, msg.environment)); return; }
-  const bad = checkCreatePage(msg.plan);
-  if (bad) { fail(bad); return; }
-  const scope = scopeOf(ctx);
-  if (!scope) { fail('Sign in to BMP first.'); return; }
-  const code = userScript(buildCreatePageEc(msg.plan));
-  try {
-    if (msg.phase === 'preview') {
-      const preview = await client.executeEc(code, undefined, false);
-      const warnings = (preview.outputEntries ?? []).filter(e => e.logType === 'WARNING').map(e => e.message);
-      const text = preview.error || preview.log || '';
-      if (!preview.ok || preview.hasError) { fail(firstLine(errorLine(preview.outputEntries) ?? text) || 'BMP did not accept this.'); return; }
-      if (preview.hasWarning || warnings.length) { fail(firstLine(warnings[0] ?? text)); return; }
-      respond({ type: 'POINT_TELL_CREATE_PAGE_RESULT', ok: true, previewId: pagePreviews.issue(code, scope, text), environment: environmentToken(ctx) });
-      return;
-    }
-    const used = msg.previewId ? pagePreviews.consume(msg.previewId, scope) : null;
-    if (!used || !used.ok || used.code !== code) { fail('Check again, then create the page.'); return; }
-    const res = await client.executeEc(code, undefined, true);
-    if (!res.ok) { fail(firstLine(res.error || res.log || 'The page was not created.'), !!res.outcomeUnknown); return; }
-    const made = parseCreatePage(res.log ?? '');
-    if (!made) { fail('Whether the page was created is not known. Look under its parent before trying again.', true); return; }
-    // Read back: the page is there, of the class asked, under the parent asked.
-    const back = await client.executeEc(userScript(buildReadBackEc(made.rid)), undefined, false);
-    const seen = parseCreatePage(back.log ?? '');
-    if (!seen || seen.className !== msg.plan.kind || (seen.parentRid && seen.parentRid !== msg.plan.parentRid)) {
-      ctx.logActivity('warn', 'Point and tell: the new page could not be confirmed', `RID ${made.rid}`, { category: 'change', action: 'create-page' });
-      fail('The page was written, but reading it back did not match. Look under its parent before trying again.', true);
-      return;
-    }
-    ctx.logActivity('success', `Point and tell: created ${msg.plan.kind} ${made.id || made.rid}`, `Under RID ${msg.plan.parentRid}`, { category: 'change', action: 'create-page' });
-    respond({ type: 'POINT_TELL_CREATE_PAGE_RESULT', ok: true, rid: made.rid, id: made.id });
-  } catch (e) {
-    fail(errorMessage(e), msg.phase === 'commit');
-  }
-});
-
-/** BMP's first line, without the position in the script and the tail about what it did instead. */
-const firstLine = (t: string): string => (t.split(/\r?\n/).find(l => l.trim()) ?? '').replace(/ A new id was assigned instead.*$/, '').replace(/ at line \d+, column \d+.*$/, '').trim().slice(0, 240);
-const errorLine = (entries: ReadonlyArray<{ logType?: string; message: string }> | undefined): string | undefined => entries?.find(e => e.logType === 'ERROR')?.message;
-
 // Page -> worker: the voice-comment setting. Content scripts cannot read the extension's storage, so the
-// page asks; `noticed` stores that the first-use line (where the audio goes) was shown.
+// page asks; `noticed` stores that the first-use line (where the audio goes) was shown, and `on: true` is
+// the answer "Turn on" to the confirm in the comment field (the same setting as in Preferences; turning it
+// on there is the only way the microphone's question is asked again, so the notice counts as shown).
 register('POINT_TELL_VOICE', async (msg, respond) => {
   let prefs = readVoicePrefs(undefined);
   try {
     prefs = readVoicePrefs((await chrome.storage.local.get(VOICE_KEY))[VOICE_KEY]);
-    if (msg.noticed === true && !prefs.noticed) { prefs = { ...prefs, noticed: true }; await chrome.storage.local.set({ [VOICE_KEY]: prefs }); }
+    const next = { ...prefs, ...(msg.on === true && !prefs.on ? { on: true, noticed: true } : {}), ...(msg.noticed === true ? { noticed: true } : {}) };
+    if (next.on !== prefs.on || next.noticed !== prefs.noticed) { prefs = next; await chrome.storage.local.set({ [VOICE_KEY]: prefs }); }
   } catch (e) { log.swallow('handler:pointTellVoice', e); }
   respond({ type: 'POINT_TELL_VOICE_DATA', prefs });
+});
+
+// Page -> worker: the name of the server profile the page belongs to, for the copied brief (read from what is already held; no server call).
+register('POINT_TELL_SERVER', async (_msg, respond, meta) => {
+  const ctx = ctxOf(meta);
+  const profile = ctx.settings?.profiles?.find(p => p.id === ctx.settings.activeProfileId);
+  respond({ type: 'POINT_TELL_SERVER_DATA', ...(profile?.label ? { name: profile.label } : {}) });
+});
+
+// Page -> worker: Send to Claude. The brief goes over a short-lived WebSocket to Claude Desktop's local
+// listener (loopback; no host permission). The port that answered is kept for the session so the next
+// send does not probe the range; a failed remembered port is dropped.
+const LINK_PORT_KEY = 'crev_claude_link_port';
+/**
+ * Test only: one port to try instead of the range, so a test's own listener is reached and the user's Claude Desktop
+ * is not. Read from session storage, which pages and content scripts cannot write (storage-access.ts); set from the
+ * worker's console or by a test rig. Never set by Companion itself.
+ */
+export const LINK_TEST_PORT_KEY = 'crev_claude_link_test_port';
+
+/** Which ports to try: the test port alone when one is set, else the range with the remembered port first. */
+/** Test only, with the test port: how many ports from it to try (1 to 5), so a test can run several copies. */
+export const LINK_TEST_COUNT_KEY = 'crev_claude_link_test_port_count';
+
+export async function linkDeps(): Promise<SendDeps> {
+  const kept = await chrome.storage.session.get([LINK_PORT_KEY, LINK_TEST_PORT_KEY, LINK_TEST_COUNT_KEY]).catch(() => ({})) as Record<string, unknown>;
+  const test = kept[LINK_TEST_PORT_KEY];
+  if (typeof test === 'number' && Number.isInteger(test) && test >= 1024 && test <= 65535) {
+    const n = kept[LINK_TEST_COUNT_KEY];
+    const count = typeof n === 'number' && Number.isInteger(n) && n >= 1 && n <= 5 ? n : 1;
+    const remembered = kept[LINK_PORT_KEY];
+    return { basePort: test, count, preferred: typeof remembered === 'number' ? remembered : null };
+  }
+  const remembered = kept[LINK_PORT_KEY];
+  return { preferred: typeof remembered === 'number' ? remembered : null };
+}
+
+/** The link's settings for every conversation: the ports, and Companion's settings for a copy that holds older ones. */
+async function linkDepsWithConfig(): Promise<SendDeps> {
+  return { ...(await linkDeps()), config: DESKTOP_CONFIG };
+}
+
+// The page makes the key once per press of Send and sends it again when the worker gave no answer (the worker can be
+// stopped mid-send); a server with `key` keeps the sketch once, an older one is looked up in its list first.
+register('POINT_TELL_SEND', async (msg, respond) => {
+  if (msg.type !== 'POINT_TELL_SEND') return;
+  const push: SketchPush = {
+    text: msg.text,
+    ...(msg.page ? { page: msg.page } : {}),
+    ...(msg.pageKey ? { pageKey: msg.pageKey } : {}),
+    ...(msg.picture ? { picture: msg.picture } : {}),
+    ...(msg.key && /^[A-Za-z0-9_-]{1,64}$/.test(msg.key) ? { key: msg.key } : {}),
+    ...(msg.follows ? { follows: msg.follows } : {}),
+    handover: handoverFor(),
+  };
+  const result = await deliverSketch(push, await linkDepsWithConfig(), { ...(msg.retry ? { retry: true } : {}), ...(msg.since ? { since: msg.since } : {}) });
+  if (result.ok) await chrome.storage.session.set({ [LINK_PORT_KEY]: result.port }).catch(() => undefined);
+  else if (result.reason === 'none') await chrome.storage.session.remove(LINK_PORT_KEY).catch(() => undefined);
+  // The hello stays in the worker: the page needs only the outcome.
+  if (result.ok) delete result.hello;
+  respond({ type: 'POINT_TELL_SEND_DATA', result });
+});
+
+// Page -> worker: "Send again" on a sketch nobody works on, by the server's id (servers with `requeue`).
+register('POINT_TELL_REQUEUE', async (msg, respond) => {
+  if (msg.type !== 'POINT_TELL_REQUEUE') return;
+  respond({ type: 'POINT_TELL_REQUEUE_DATA', result: await requeueSketch(msg.id, await linkDepsWithConfig()) });
+});
+
+// Page -> worker: the sent sketches with their states and Claude's replies (a short-lived socket again, nothing
+// stays open). `seen` says which replies the user looked at, per sketch; it is kept for the browser session so a
+// badge does not come back after a reload.
+const SEEN_KEY = 'crev_pt_seen_rev';
+register('POINT_TELL_STATUS', async (msg, respond) => {
+  if (msg.type !== 'POINT_TELL_STATUS') return;
+  const store = chrome.storage.session;
+  const held = ((await store.get(SEEN_KEY).catch(() => ({}))) as Record<string, unknown>)[SEEN_KEY];
+  const seen: Record<string, number> = held && typeof held === 'object' ? { ...(held as Record<string, number>) } : {};
+  if (msg.seen && typeof msg.seen === 'object') {
+    let changed = false;
+    for (const [k, v] of Object.entries(msg.seen)) if (typeof v === 'number' && v > (seen[k] ?? 0)) { seen[k] = v; changed = true; }
+    if (changed) await store.set({ [SEEN_KEY]: seen }).catch(() => undefined);
+  }
+  const result = await fetchStatus(await linkDepsWithConfig());
+  if (result.ok) await store.set({ [LINK_PORT_KEY]: result.port }).catch(() => undefined);
+  respond({ type: 'POINT_TELL_STATUS_DATA', result, seen });
+});
+
+// Page or panel -> worker: the Claude Desktop page (claude-setup/), where the desktop extension is downloaded and
+// its state shown. One tab: an open one is brought forward. It opens next to the tab that asked.
+const SETUP_PATH = 'claude-setup/claude-setup.html';
+export async function openClaudeSetup(meta: { senderTabId?: number; panelWindowId?: number | null }): Promise<void> {
+  const url = chrome.runtime.getURL(SETUP_PATH);
+  const existing = (await chrome.tabs.query({})).find(t => (t.url ?? t.pendingUrl)?.split(/[?#]/)[0] === url);
+  if (existing?.id != null) {
+    await chrome.tabs.update(existing.id, { active: true });
+    await chrome.windows.update(existing.windowId, { focused: true });
+    return;
+  }
+  const opener = meta.senderTabId != null ? await chrome.tabs.get(meta.senderTabId).catch(() => undefined)
+    : (await chrome.tabs.query({ active: true, ...(meta.panelWindowId != null ? { windowId: meta.panelWindowId } : { lastFocusedWindow: true }) }).catch(() => []))[0];
+  await chrome.tabs.create({ url, ...(opener?.id != null ? { windowId: opener.windowId, index: opener.index + 1, openerTabId: opener.id } : {}) });
+}
+register('OPEN_CLAUDE_SETUP', async (_msg, _respond, meta) => {
+  try { await openClaudeSetup(meta); } catch (e) { log.swallow('handler:openClaudeSetup', e); }
 });
 
 // Page -> worker: a picture of the visible part of the sender's tab, for the Screenshot button. The page

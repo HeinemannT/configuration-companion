@@ -76,6 +76,10 @@ const SEEDS: Seed[] = [
     { area: 'session', key: `${prefix}two`, value: { environment: ENV2 }, afterDelete: 'kept', afterReset: 'removed' },
   ]),
   { area: 'session', key: 'crev_menus_ready', value: true, afterDelete: 'kept', afterReset: 'removed' },
+  { area: 'session', key: 'crev_claude_link_port', value: 47615, afterDelete: 'kept', afterReset: 'removed' },
+  { area: 'session', key: 'crev_claude_link_test_port', value: 47650, afterDelete: 'kept', afterReset: 'removed' },
+  { area: 'session', key: 'crev_claude_link_test_port_count', value: 2, afterDelete: 'kept', afterReset: 'removed' },
+  { area: 'session', key: 'crev_pt_seen_rev', value: { 1: 3 }, afterDelete: 'kept', afterReset: 'removed' },
   { area: 'session', key: 'crev_access_mode_subjects', value: { environment: ENV1, subjects: [] }, afterDelete: 'removed', afterReset: 'removed' },
   { area: 'session', key: `crev_access_mode_subject:${ENV1}`, value: { rid: '1' }, afterDelete: 'removed', afterReset: 'removed' },
   { area: 'session', key: `crev_access_mode_subject:${ENV2}`, value: { rid: '2' }, afterDelete: 'kept', afterReset: 'removed' },
@@ -89,7 +93,7 @@ const SEEDS: Seed[] = [
   { area: 'session', key: 'crev_connection_trace', value: [], afterDelete: 'kept', afterReset: 'removed' },
   ...['crev_conn_snapshot', 'crev_settings_snapshot', 'crev_debug', 'crev_connection_trace_enabled', 'crev_tab_detection',
     'crev_inspect_active_by_window', 'crev_blueprint_active_by_window', 'crev_blueprint_tab_by_window', 'crev_display_by_window',
-    'crev_frame_served', 'crev_active_tab', 'crev_conn_recovery'].map((key): Seed => ({ area: 'session', key, value: 1, afterDelete: 'kept', afterReset: 'kept' })),
+    'crev_frame_served', 'crev_active_tab', 'crev_conn_recovery', 'crev_panel_hidden_tabs'].map((key): Seed => ({ area: 'session', key, value: 1, afterDelete: 'kept', afterReset: 'kept' })),
   // Not ours: never touched.
   { area: 'local', key: 'someone_else', value: 1, afterDelete: 'kept', afterReset: 'kept' },
 ];

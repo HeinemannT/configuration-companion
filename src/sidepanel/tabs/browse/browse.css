@@ -92,11 +92,21 @@ button.bw-grp:hover { background: var(--layer-01); }
 .bw-chev:not(:empty)::after { content: ""; position: absolute; inset: -6px -4px; }
 .bw-chev .ic { transition: transform 80ms; }
 .bw-chev.closed .ic { transform: rotate(-90deg); }
-.bw-lbl { flex: 1 1 0; min-width: 0; height: var(--ui-row-h); display: flex; flex-wrap: wrap; align-content: flex-start; overflow: hidden; }
-.bw-nm { flex: 0 1 auto; max-width: 100%; min-width: 0; line-height: var(--ui-row-h); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The label is one line: the name, then the ID against the row's end (its
+   right edge is the same at every depth), both on one baseline. A short ID
+   stays whole. A long one (.mid, cut in two spans by view.ts) gives way
+   first, down to 10ch with an ellipsis in the middle (the full ID is in its
+   title), and only then does the name shorten, to no less than 8em. The
+   marker of the current row sits before the ID, so the ID keeps its place. */
+.bw-lbl { flex: 1 1 0; min-width: 0; height: 20px; display: flex; align-items: baseline; gap: var(--space-2); }
+.bw-nm { flex: 0 1 auto; min-width: min(8em, 100%); line-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bw-nm.unnamed { color: var(--text-helper); }
-.bw-id { flex: none; margin-left: var(--space-2); line-height: var(--ui-row-h); }
-.bw-mark { display: grid; flex: none; place-items: center; width: 16px; height: 16px; color: var(--text-brand); }
+.bw-id { flex: 0 0 auto; min-width: 0; max-width: 60%; margin-left: auto; text-align: right; line-height: 20px; overflow: hidden; text-overflow: ellipsis; }
+.bw-id.mid { flex: 0 20 auto; display: flex; justify-content: flex-end; min-width: 10ch; overflow: visible; }
+.bw-id.mid .h { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
+.bw-id.mid .t { flex: none; white-space: pre; }
+.bw-mark { display: grid; flex: none; place-items: center; align-self: center; width: 16px; height: 16px; margin-left: auto; color: var(--text-brand); }
+.bw-mark + .bw-id { margin-left: 0; }
 
 /* current position: band, bar, bold name, marker icon */
 .bw-row.cur { --band: var(--brand-bg); }

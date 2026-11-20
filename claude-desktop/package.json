@@ -1,0 +1,26 @@
+{
+  "name": "configuration-companion-claude-desktop",
+  "version": "0.3.1",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "description": "Desktop extension that lets Claude Desktop read sketches sent from Configuration Companion.",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "pack": "node scripts/build.mjs --pack",
+    "test": "node --test \"test/*.test.js\" \"test/host/*.test.js\"",
+    "soak": "node test/host/soak.js",
+    "model-run": "node test/host/model-run.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "ws": "8.23.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@anthropic-ai/mcpb": "2.1.2"
+  }
+}

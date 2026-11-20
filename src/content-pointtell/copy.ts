@@ -1,24 +1,23 @@
 /**
- * Point and tell: Copy. The notes, the outline and the vocabulary go to the clipboard as one text for an
- * AI chat; what the AI was shown is kept in the tab (the snapshot), so the pasted answer can be judged
- * against it. The first copy in a tab says what the text contains.
+ * Point and tell: Copy. The marks go to the clipboard as a short brief that a person pastes into a coding agent
+ * (see lib/point-tell/brief.ts). It is one way: nothing is kept for an answer, and nothing is read from the server
+ * for it (the page, its template and the marks are already here; the server's name is held by the worker).
+ * The first copy in a tab says what the text contains.
  */
 import { copyFailureMessage, copyTextResult } from '../lib/copy-feedback';
-import { showToast } from '../lib/toast';
 import { findNode } from '../lib/layout/model';
-import { buildPayload, clipboardText, type ObjectExtras } from '../lib/point-tell/payload';
-import { routedProps } from '../lib/point-tell/routes';
-import { saveCopy } from '../lib/point-tell/store';
-import { isPageMark } from '../lib/point-tell/drafts';
-import { marksKey } from './marks';
-import { holdReading, react } from './mascot';
+import { showToast } from '../lib/toast';
+import { briefAddress, buildBrief, type BriefInput, type BriefTemplate } from '../lib/point-tell/brief';
+import { briefMarks, correctionsOf, earlierSketches, freshMarks } from '../lib/point-tell/sent-marks';
 import { screenshotWaiting } from './capture';
-import { colorSets, ensureColors, fetchNow } from './service';
+import { react } from './mascot';
+import { currentPageName } from './measure';
+import { fanoutCache } from './service';
 import { pt } from './state';
 
 const NOTICE_KEY = 'crev_pt_noticed';
 export const PROMPT_FIRST = "Answer the browser's prompt first, then copy again.";
-export const NOTICE = "The text contains this page's object names and IDs.";
+export const NOTICE = "The text names this page, its objects and IDs, and the page address.";
 
 function firstCopy(): boolean {
   try {
@@ -28,50 +27,76 @@ function firstCopy(): boolean {
   } catch { return false; }
 }
 
-/** The notes that go out: the ones not yet staged in Blueprint. */
-export const copyable = () => pt.marks.filter(m => !m.staged && !isPageMark(m));
+/** The notes a brief can hold: every mark but the one that drew a page (the page is in the brief's own line). */
+export const copyable = () => briefMarks(pt.marks);
+/** What the next send and Copy for AI carry: the marks not sent yet, and the sent ones changed since. */
+export const freshNow = () => freshMarks(pt.marks);
+/** Some marks of this page went to Claude already. */
+export const anySent = (): boolean => pt.marks.some(m => !!m.sent);
 
-/** What the noted objects hold in text properties and code (one small read, only for objects that have any; none for a page of plain layout). */
-async function readExtras(marks: ReturnType<typeof copyable>): Promise<Record<string, ObjectExtras> | undefined> {
-  if (!pt.model) return undefined;
-  const items: Array<{ rid: string; className: string; id: string }> = [];
-  // Only a mark with words can ask for a change of text or code; a cross is about the object, not its contents.
-  for (const id of new Set(marks.filter(m => m.text.trim() && m.meaning?.kind !== 'crossed').flatMap(m => m.targets))) {
-    const node = findNode(pt.model, id)?.node;
-    const r = node ? routedProps(node.className) : null;
-    if (node?.rid && r && (r.code.length || r.text.length)) items.push({ rid: node.rid, className: node.className, id });
-  }
-  if (!items.length) return undefined;
-  const read = await Promise.race([fetchNow(items), new Promise<null>(r => setTimeout(() => r(null), 4000))]);
-  if (!read) return undefined;
-  const out: Record<string, ObjectExtras> = {};
-  for (const it of items) {
-    const e = read[it.rid];
-    if (e) out[it.id] = { text: e.text, code: e.code, omitted: e.omitted };
-  }
-  return out;
+/** The shared template the page uses, from what is already read (the count of pages only when it was read before). */
+function templateNow(): BriefTemplate | undefined {
+  const model = pt.model, ctx = pt.ctx;
+  if (!model || pt.page || !ctx) return undefined;
+  const own = { id: model.pageId, ...(model.pageName ? { name: model.pageName } : {}), ...(model.pageClass ? { className: model.pageClass } : {}) };
+  // An object shown through an EnterpriseTemplate: the layout read is the template's, always.
+  if (ctx.viewedObject) return { ...own, className: 'EnterpriseTemplate', shared: true, pages: null };
+  if (pt.scope === 'template' && ctx.templateRid) return { ...own, shared: true, pages: fanoutCache.get(model.pageId) ?? null };
+  if (ctx.templateId) return { id: ctx.templateId, shared: false };
+  return undefined;
 }
 
-export async function copyMarks(): Promise<void> {
-  const marks = copyable();
+/** The page or object on screen while the layout is a shared template's. */
+function viewedNow(template: BriefTemplate | undefined): BriefInput['viewed'] | undefined {
+  const ctx = pt.ctx;
+  if (!template?.shared || !ctx) return undefined;
+  const shown = currentPageName();
+  const v = ctx.viewedObject;
+  if (v) return { ...(v.id ? { id: v.id } : {}), ...(v.name || shown ? { name: v.name || shown } : {}), ...(v.className ? { className: v.className } : {}) };
+  return ctx.instanceId ? { id: ctx.instanceId, ...(shown ? { name: shown } : {}) } : undefined;
+}
+
+/** Everything the brief needs, from the page as it is now. `onlyNew`: the brief is the next sketch (corrections say so, earlier sketches are named). */
+export function briefInput(marks: BriefInput['marks'], onlyNew = false): BriefInput | null {
+  const model = pt.model;
+  if (!model) return null;
+  const template = templateNow();
+  const viewed = viewedNow(template);
+  const shelf = pt.page?.shelf;
+  const sv = shelf?.ctx?.viewedObject;
+  const from = shelf
+    ? sv
+      ? { ...(sv.id ? { id: sv.id } : {}), ...(sv.name ? { name: sv.name } : {}), ...(sv.className ? { className: sv.className } : {}) }
+      : shelf.scope === 'template'
+        ? { ...(shelf.ctx?.instanceId ? { id: shelf.ctx.instanceId } : {}), className: shelf.model.pageClass }
+        : { ...(shelf.model.pageName ? { name: shelf.model.pageName } : {}), id: shelf.model.pageId, className: shelf.model.pageClass }
+    : undefined;
+  const liveTab = pt.scene?.liveTabId ? findNode(model, pt.scene.liveTabId)?.node : null;
+  const address = briefAddress(window.location.href, liveTab?.rid);
+  return {
+    model, marks, liveTabId: pt.scene?.liveTabId ?? null, screenshot: pt.shot,
+    ...(template ? { template } : {}),
+    ...(viewed ? { viewed } : {}),
+    ...(pt.page ? { newPage: { name: pt.page.name, ...(from ? { from } : {}) } } : {}),
+    server: { ...(pt.serverName ? { name: pt.serverName } : {}), ...(address ? { address } : {}) },
+    ...(onlyNew ? { corrections: correctionsOf(marks), earlier: earlierSketches(pt.marks) } : {}),
+  };
+}
+
+/** Copy for AI: what is new (like a send), or everything (`all`, and when nothing is new). */
+/** "Copied 2 marks", "Copied all 5 marks". */
+export const copiedWords = (n: number, all: boolean): string => `Copied ${all ? 'all ' : ''}${n} mark${n === 1 ? '' : 's'}`;
+
+export async function copyMarks(all = false): Promise<void> {
+  const fresh = freshNow();
+  const every = all || !fresh.length;
+  const marks = every ? copyable() : fresh;
   if (!pt.model || !marks.length) return;
-  const gen = pt.gen;
-  // The colours: usually read already; if not, wait for them briefly (the click's permission lasts a few seconds).
-  const done = holdReading();
-  let extras: Awaited<ReturnType<typeof readExtras>>;
-  try {
-    if (!colorSets()) await Promise.race([ensureColors(), new Promise(r => setTimeout(r, 3000))]);
-    extras = await readExtras(marks);
-  } finally { done(); }
-  if (!pt.active || pt.gen !== gen || !pt.model) return;
-  const { payload, snapshot, instruction } = buildPayload({
-    model: pt.model, marks, colors: colorSets(), liveTabId: pt.scene?.liveTabId ?? null, scope: pt.scope, now: Date.now(), screenshot: pt.shot, newPage: !!pt.page,
-    ...(extras ? { extras } : {}),
-  });
-  const res = await copyTextResult(clipboardText(payload, instruction));
+  const input = briefInput(marks, !every);
+  if (!input) return;
+  const res = await copyTextResult(buildBrief(input));
   if (!res.ok) { showToast(screenshotWaiting() ? PROMPT_FIRST : copyFailureMessage(res.reason), 'error'); return; }
-  saveCopy(marksKey(), snapshot);
   react('nod');
   const n = marks.length;
-  showToast(`Copied ${n} note${n === 1 ? '' : 's'} for an AI chat.${firstCopy() ? ` ${NOTICE}` : ''}`, 'success', undefined, { key: 'crev-pt-copy', long: true });
+  showToast(`${copiedWords(n, every && anySent())} as a brief for your coding agent.${firstCopy() ? ` ${NOTICE}` : ''}`, 'success', undefined, { key: 'crev-pt-copy', long: true });
 }

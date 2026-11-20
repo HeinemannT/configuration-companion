@@ -163,12 +163,22 @@ function actions(e: { rid: string; id: string }, third: 'locate' | 'reveal' | nu
   );
 }
 
+/** A long ID is cut in the middle when the column is narrow, so both its
+ *  start and its end show (IDs of one family differ at the end). With
+ *  query marks the ID stays whole and is cut at its end. */
+const ID_TAIL = 5;
+const cuts = (id: string, toks: readonly string[]): boolean => !toks.length && id.length > ID_TAIL + 5;
+function idNodes(id: string, toks: readonly string[]): Node[] {
+  if (!cuts(id, toks)) return marked(id, toks);
+  return [el('span', 'h', id.slice(0, -ID_TAIL)), el('span', 't', id.slice(-ID_TAIL))];
+}
+
 /** Name, then the ID in mono. A click on the ID copies it (Shift: the RID)
  *  instead of opening the row. */
 function label(rid: string, name: string, id: string, toks: readonly string[]): HTMLElement {
   return el('span', 'bw-lbl',
     el('span', `bw-nm${name ? '' : ' unnamed'}`, ...marked(name || '(unnamed)', toks)),
-    id ? attrs(el('span', 'bw-id ui-id', ...marked(id, toks)), { 'data-act': 'copyid', 'data-rid': rid, title: `Copy ${id}. Shift-click copies the RID` }) : null);
+    id ? attrs(el('span', `bw-id ui-id${cuts(id, toks) ? ' mid' : ''}`, ...idNodes(id, toks)), { 'data-act': 'copyid', 'data-rid': rid, title: `Copy ${id}. Shift-click copies the RID` }) : null);
 }
 
 export interface TreeRowState {
@@ -184,9 +194,12 @@ export function treeRow(n: BrowseNode, st: TreeRowState): HTMLElement {
     attrs(chev, { 'data-act': 'toggle', 'data-rid': n.rid, title: st.expanded ? 'Collapse' : 'Expand' });
   }
   const name = n.name || n.businessId;
+  // The marker sits inside the label, before the ID, so the ID keeps its
+  // column at the row's end on the current row too.
+  const lbl = label(n.rid, n.name, n.businessId, []);
+  if (st.current) lbl.insertBefore(attrs(el('span', 'bw-mark', icon('b-cur', 'ic-sm')), { title: 'Current position' }), lbl.querySelector('.bw-id'));
   const row = attrs(el('div', `bw-row${st.current ? ' cur' : ''}${st.selected ? ' kb' : ''}`,
-    chev, kindIcon(n.type), label(n.rid, n.name, n.businessId, []),
-    st.current ? attrs(el('span', 'bw-mark', icon('b-cur', 'ic-sm')), { title: 'Current position' }) : null,
+    chev, kindIcon(n.type), lbl,
     actions({ rid: n.rid, id: n.businessId }, 'locate'),
   ), {
     id: `bw-t-${n.rid}`, role: 'treeitem', 'data-key': `t:${n.rid}`, 'data-rid': n.rid, 'data-act': 'row',

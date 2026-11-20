@@ -111,3 +111,21 @@ describe('copyWithToast', () => {
     expect(document.querySelector('.crev-toast--error')?.getAttribute('role')).toBe('alert');
   });
 });
+
+describe('copyWithFeedback text target', () => {
+  it('puts back the target\'s own markup, not just its text, once the result has shown', async () => {
+    vi.useFakeTimers();
+    try {
+      const target = document.createElement('span');
+      target.innerHTML = '<span class="h">tax_tpl_con</span><span class="t">trol</span>';
+      document.body.append(target);
+      await copyWithFeedback('x', target, { textTarget: target, ms: 100, write: async () => true });
+      expect(target.textContent).toBe('Copied');
+      vi.advanceTimersByTime(101);
+      expect(target.querySelector('.h')?.textContent).toBe('tax_tpl_con');
+      expect(target.querySelector('.t')?.textContent).toBe('trol');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

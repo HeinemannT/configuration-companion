@@ -89,6 +89,39 @@ export function addColor(draft: ColorDraft, sets: readonly ColorSetData[], setId
   return { draft: { ...draft, newColors: [...draft.newColors, added] }, added };
 }
 
+/** Several new colors in a set at once (pasted, or the steps of a scale), each
+ *  with an ID that follows the set and the ones added before it. */
+export function addColors(
+  draft: ColorDraft, sets: readonly ColorSetData[], setId: string, items: ReadonlyArray<{ name: string; hex: string; id?: string }>, nextKey: () => string,
+): { draft: ColorDraft; added: NewColor[] } {
+  let d = draft;
+  const added: NewColor[] = [];
+  for (const it of items) {
+    const r = addColor(d, sets, setId, nextKey(), normalizeHex(it.hex) ?? it.hex, it.name.trim() || 'Color');
+    // An ID the caller gives (the steps of a scale: the base ID and the step) stands where it is free.
+    const taken = new Set([...takenIds(sets, d), ...colorsOfSet(sets.find(s => s.id === setId), setId, d).map(c => c.id)].map(x => x.toLowerCase()));
+    if (it.id && isValidId(it.id) && !taken.has(it.id.toLowerCase())) {
+      const added1 = { ...r.added, id: it.id };
+      d = { ...r.draft, newColors: r.draft.newColors.map(n => n.key === added1.key ? added1 : n) };
+      added.push(added1);
+      continue;
+    }
+    d = r.draft;
+    added.push(r.added);
+  }
+  return { draft: d, added };
+}
+
+/** The steps of a scale from a color, named after it (`Steadfast teal 100`); the base itself is not added again. */
+export function scaleColors(baseName: string, steps: ReadonlyArray<{ step: number; hex: string }>, baseId?: string): Array<{ name: string; hex: string; step: number; id?: string }> {
+  return steps.filter(s => s.step !== 500).map(s => ({ name: `${baseName.trim()} ${s.step}`, hex: s.hex, step: s.step, ...(baseId ? { id: `${baseId}_${s.step}` } : {}) }));
+}
+
+/** Every color of the sets as read and as changed on the page: what a new color is compared with. */
+export function knownColors(sets: readonly ColorSetData[], draft: ColorDraft, exceptKey?: string): Array<{ key: string; name: string; hex: string }> {
+  return setViews(sets, draft).flatMap(v => v.colors).filter(c => c.key !== exceptKey).map(c => ({ key: c.key, name: c.name, hex: c.hex }));
+}
+
 /** The name of a new color changed: its ID follows until the person edits the ID. */
 export function renameNewColor(draft: ColorDraft, sets: readonly ColorSetData[], key: string, name: string): ColorDraft {
   const cur = draft.newColors.find(n => n.key === key);

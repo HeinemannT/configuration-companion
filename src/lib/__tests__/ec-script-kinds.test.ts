@@ -42,7 +42,6 @@ import { buildIdentityEc } from '../handlers/code-search';
 import { buildStudioChildrenEc } from '../handlers/studio';
 import { buildImageIndexEc } from '../colors-images/image-files';
 import { buildColorWriteEc, buildFileWriteEc } from '../colors-images/write-ops';
-import { buildCreatePageEc, buildReadBackEc } from '../point-tell/create-page';
 import { buildContextQueryEc } from '../handlers/ai-tools';
 import { buildSuggestEc, buildSuggestPartEc } from '../compare-read';
 import { buildRefRidsEc, groupRefExprs } from '../ref-rid';
@@ -216,8 +215,6 @@ const ENTRIES: Entry[] = [
   { fn: 'buildFlowContainerBlastEc', kind: 'user', a: () => buildFlowContainerBlastEc(Array.from({ length: 20 }, (_, i) => ({ id: `ref_${i}`, className: 'InputSet' as const, ref: `t.ref_${i}` }))) },
   { fn: 'buildIdChangeEc', kind: 'user', a: () => userScript(buildIdChangeEc(Array.from({ length: 20 }, (_, i) => ({ rid: `90000000000000${String(i).padStart(5, '0')}`, space: 't', className: 'ActionButton', name: 'x', from: `${5000 + i}`, to: `btn_${'x'.repeat(50)}_${i}` })))) },
   { fn: 'buildPortableIdOccupancyEc', kind: 'user', a: () => buildPortableIdOccupancyEc(Array.from({ length: 40 }, (_, i) => `portable_id_${i}`)) },
-  { fn: 'buildCreatePageEc', kind: 'user', a: () => userScript(buildCreatePageEc({ parentRid: RID_A, kind: 'Scorecard', id: 'sc_x', name: 'X' })) },
-  { fn: 'buildReadBackEc', kind: 'user', a: () => userScript(buildReadBackEc(RID_A)) },
   { fn: 'buildColorWriteEc', kind: 'user', a: () => userScript(buildColorWriteEc([{ kind: 'change', id: 'swi_blue', hex: '#1A56A0' }, { kind: 'add', setId: 'swi_brand', id: 'swi_new', name: 'New', hex: '#112233' }])) },
   { fn: 'buildFileWriteEc', kind: 'user', a: () => userScript(buildFileWriteEc({ kind: 'add', folderId: 'folder_icons', id: 'icon_x', name: 'x.png', mime: 'image/png', base64: 'A'.repeat(20_000) })) },
   { fn: 'buildContextQueryEc', kind: 'user', a: () => userScript(buildContextQueryEc(CONTEXT_OBJECT, 'ActionButton', undefined, ['name', 'id', 'showExpression'])) },

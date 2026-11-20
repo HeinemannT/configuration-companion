@@ -43,6 +43,18 @@ export function clearHover(): void {
   renderHover();
 }
 
+/**
+ * Open a note at the point for voice (a still press): on the object a click would note, else on the page. A tab pill
+ * is not switched and a drawn page is not opened. False (and the usual sentence) for an object only on this instance.
+ */
+export function noteAt(p: PtPointer, openFor: (ids: string[]) => void): boolean {
+  if (!pt.scene) return false;
+  const t = targetAt(p);
+  if (t?.foreign) { showToast(FOREIGN_SENTENCE, 'info'); return false; }
+  openFor(t ? [t.id] : []);
+  return true;
+}
+
 /** What a click does. A plain click on a BMP tab pill switches the tab; Alt on it, or a click on an object, is a note. */
 export function clickAt(p: PtPointer, openFor: (ids: string[]) => void): void {
   const scene = pt.scene;

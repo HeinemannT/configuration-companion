@@ -357,6 +357,14 @@ describe('sync.resolvePageContext', () => {
     expect(ctx.target).toBe('template');
     expect(ctx.enterpriseObjectType).toBe('CeIssue');
   });
+  it('enterprise: keeps the object shown through the template (ID, class, a name that holds the separator)', async () => {
+    const probe = `${'<<<CREV_CTX>>>'}enterprise|${TMPL_RID}|organisation_template|EnterpriseTemplate|default_tabset|Organisation|900|europe|Europe | West`;
+    const r = await resolvePageContext({ exec: vi.fn(async () => ({ ok: true, log: probe })) }, '7337507295915295083');
+    expect(r).toMatchObject({ pageId: 'organisation_template', tabsetRid: '900', viewedObject: { id: 'europe', name: 'Europe | West', className: 'Organisation' } });
+    expect(r?.enterpriseObjectType).toBeUndefined(); // only a Ce* class feeds DescriptionView defaults
+    const risk = `${'<<<CREV_CTX>>>'}enterprise|${TMPL_RID}|5923|EnterpriseTemplate|default_tabset|CeIssue||1042|Late supplier`;
+    expect(await resolvePageContext({ exec: vi.fn(async () => ({ ok: true, log: risk })) }, '1')).toMatchObject({ enterpriseObjectType: 'CeIssue', viewedObject: { id: '1042', name: 'Late supplier', className: 'CeIssue' } });
+  });
   it('enterprise: preserves a dedicated tabset discovered from template widget placement', async () => {
     const probe = `${'<<<CREV_CTX>>>'}enterprise|${TMPL_RID}|5923|EnterpriseTemplate|org_custom_tabs`;
     const r = await resolvePageContext({ exec: vi.fn(async () => ({ ok: true, log: probe })) }, '5977812347502735400');

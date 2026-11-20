@@ -1,3 +1,4 @@
+// Not used by the interface at present: Point and tell is one way. Kept for a later two-way channel.
 /**
  * What a change that Blueprint cannot stage opens: code goes to the editor (on that property) as a diff to
  * accept or reject, text to the object window as a draft. The user reviews and saves there, with that window's

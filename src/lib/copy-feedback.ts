@@ -140,13 +140,14 @@ export async function copyWithFeedback(text: string, target: HTMLElement, opts: 
   const cls = ok ? opts.okClass : opts.failClass;
   const label = ok ? COPY_OK_TEXT : COPY_FAILED_TEXT;
   const textTarget = opts.textTarget;
-  const original = textTarget?.textContent ?? null;
+  // The child nodes, not just the text, so a target with markup of its own (an ID cut in two spans) comes back as it was.
+  const original = textTarget ? [...textTarget.childNodes] : null;
   const originalTitle = target.getAttribute('title');
   if (textTarget) textTarget.textContent = label;
   if (cls) target.classList.add(cls);
   if (!ok) target.setAttribute('title', sentence);
   setTimeout(() => {
-    if (textTarget && textTarget.textContent === label) textTarget.textContent = original;
+    if (textTarget && original && textTarget.textContent === label) textTarget.replaceChildren(...original);
     if (cls) target.classList.remove(cls);
     if (!ok) {
       if (originalTitle == null) target.removeAttribute('title');

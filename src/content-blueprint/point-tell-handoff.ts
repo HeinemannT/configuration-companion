@@ -1,3 +1,4 @@
+// Not used by the interface at present: Point and tell is one way. Kept for a later two-way channel.
 /**
  * Point and tell hands a pasted answer to Blueprint. Blueprint has just loaded the page; the answer is
  * judged again on that fresh model (the same pure code the paste panel used) and each note's operations

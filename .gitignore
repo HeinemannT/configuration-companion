@@ -11,6 +11,7 @@ dist/
 /access/
 /assets/
 /chunks/
+/claude-setup/
 /codesearch/
 /colors-images/
 /diff/
@@ -26,3 +27,7 @@ dist/
 /plans/
 /bench/
 /experiments/
+
+# Desktop extension for Claude Desktop (built bundle, local install)
+/claude-desktop/build/
+/claude-desktop/node_modules/

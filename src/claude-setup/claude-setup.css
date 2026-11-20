@@ -1,0 +1,38 @@
+/* Claude Desktop: a narrow page in its own tab. The header is the one of Colors and images (mark, title); below it
+ * one column: a line, the state, three numbered steps. Colours and type from styles/tokens.css and styles/ui.css;
+ * spacing on the 4/8 px rhythm. */
+
+body { margin: 0; }
+
+.cs-head { display: flex; align-items: center; gap: 10px; height: 48px; padding: 0 16px; border-bottom: 1px solid var(--border-subtle); }
+.cs-mark { display: block; flex: none; width: 24px; height: 24px; }
+.cs-mark > svg { display: block; width: 24px; height: 24px; overflow: visible; }
+.cs-h1 { margin: 0; font-size: 14px; line-height: 20px; font-weight: 600; }
+
+.cs { max-width: 520px; margin: 0 auto; padding: 32px 16px 48px; }
+.cs-lede { margin: 0 0 16px; color: var(--text-secondary); }
+
+.cs-status { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 4px 4px 4px 12px; border-radius: var(--radius-2); background: var(--layer-01); }
+.cs-status-t { min-width: 0; }
+.cs-grow { flex: 1; }
+
+.cs-steps { list-style: none; margin: 24px 0 0; padding: 0; }
+.cs-step { display: flex; gap: 12px; padding: 16px 0; }
+.cs-step + .cs-step { border-top: 1px solid var(--border-subtle); }
+.cs-n { flex: none; display: inline-grid; place-content: center; width: 24px; height: 24px; border-radius: 50%; background: var(--brand-bg); color: var(--text-brand); font-size: var(--ui-fs-sm); font-weight: 600; }
+.cs-body { flex: 1; min-width: 0; padding-top: 2px; }
+
+.cs-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: -4px; } /* a 28 px control centred on the 24 px number */
+.cs-btn { display: inline-flex; align-items: center; text-decoration: none; }
+.cs-btn[hidden] { display: none; }
+.cs-file { overflow: hidden; text-overflow: ellipsis; }
+
+.cs-title { font-weight: 600; }
+.cs-path { margin: 4px 0 0; padding-left: 20px; }
+.cs-path li { padding-left: 2px; }
+.cs-note { margin: 8px 0 0; font-size: var(--ui-fs-sm); line-height: 16px; color: var(--text-helper); }
+
+.cs-waiting { display: inline-flex; align-items: center; gap: 8px; height: 28px; color: var(--text-secondary); }
+.cs-waiting[hidden] { display: none; }
+.cs-facts { list-style: none; margin: 8px 0 0; padding: 0 0 0 12px; font-size: var(--ui-fs-sm); line-height: 18px; color: var(--text-helper); }
+.cs-facts:empty { display: none; }

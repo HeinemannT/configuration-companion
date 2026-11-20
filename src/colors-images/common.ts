@@ -18,10 +18,10 @@ export interface PageCtx {
 }
 
 /** The foot of a list: when the copy was read, and Refresh. */
-export function readFoot(ms: number | null, onRefresh: () => void, disabledReason?: string): HTMLElement {
+export function readFoot(ms: number | null, onRefresh: () => void, disabledReason?: string, reading = false): HTMLElement {
   const refresh = btn('ci-link', undefined, onRefresh, 'Refresh');
-  if (disabledReason) { refresh.disabled = true; refresh.title = disabledReason; }
-  return el('div', 'ci-side-f', el('span', 'ci-read', ms == null ? 'Not read' : `Read ${readDate(ms)}`), refresh);
+  if (disabledReason || reading) { refresh.disabled = true; if (disabledReason) refresh.title = disabledReason; }
+  return el('div', 'ci-side-f', el('span', 'ci-read', reading ? 'Reading…' : ms == null ? 'Not read' : `Read ${readDate(ms)}`), refresh);
 }
 
 export interface ConfirmRow {

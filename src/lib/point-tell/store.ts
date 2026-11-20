@@ -3,7 +3,7 @@
  * gone when the tab closes, the same place Blueprint keeps its edit target and its resume note). Reading
  * is defensive: storage may be blocked, hold another version, or hold anything at all.
  */
-import type { PtCopySnapshot, PtDraft, PtGridPlace, PtInk, PtMark, PtMeaning, PtOp, PtRawPlace, PtWidgetKind, PtPlace, PtPoint, PtRefEntry } from './types';
+import type { PtCopySnapshot, PtDraft, PtGridPlace, PtInk, PtMark, PtMeaning, PtOp, PtRawPlace, PtWidgetKind, PtPlace, PtPoint, PtRefEntry, PtSent, PtSketchRef } from './types';
 
 export const MARKS_KEY = 'crev_pt_marks:';
 export const COPY_KEY = 'crev_pt_copy:';
@@ -71,6 +71,18 @@ function ink(v: unknown): PtInk | undefined {
   return strokes.length ? { strokes, place: grid(v.place), ...(anchor ? { anchor } : {}) } : undefined;
 }
 
+const posInt = (v: unknown): v is number => finite(v) && Number.isInteger(v) && v >= 1;
+const sketchRef = (v: unknown): PtSketchRef | null => (isObj(v) && posInt(v.sketch) && finite(v.at)
+  ? { sketch: v.sketch, at: v.at, ...(typeof v.id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(v.id) ? { id: v.id } : {}) } : null);
+
+function sentOf(v: unknown): PtSent | undefined {
+  const ref = sketchRef(v);
+  if (!ref || !isObj(v) || !posInt(v.k) || !str(v.sig)) return undefined;
+  const a = v.answer, ar = sketchRef(a);
+  const answer = ar && isObj(a) && str(a.text) ? { ...ar, text: a.text, ...(posInt(a.asks) ? { asks: a.asks } : {}) } : undefined;
+  return { ...ref, k: v.k, sig: v.sig, ...(answer ? { answer } : {}) };
+}
+
 /** One stored mark, or null when it is not one. Unknown fields are dropped. */
 export function decodeMark(v: unknown): PtMark | null {
   if (!isObj(v) || !finite(v.n) || !Number.isInteger(v.n) || v.n < 1) return null;
@@ -84,6 +96,7 @@ export function decodeMark(v: unknown): PtMark | null {
   if (str(v.reading) && v.reading) m.reading = v.reading;
   const i = ink(v.ink); if (i) m.ink = i;
   if (v.staged === true) m.staged = true;
+  const sent = sentOf(v.sent); if (sent) m.sent = sent;
   return m;
 }
 
@@ -176,6 +189,7 @@ export function saveCopy(pageRid: string, snap: PtCopySnapshot): boolean { retur
 export function clearCopy(pageRid: string): void { write(COPY_KEY + pageRid, null); }
 
 // ── The stage stash ─────────────────────────────────────────────────────────────────────────────
+// Not used by the interface at present (down to the end of this file): Point and tell is one way. Kept for a later two-way channel.
 // "Stage in Blueprint" leaves the page's mode and enters Blueprint's, which reads the answer from here once.
 
 export interface StageStash { answer: string; snapshot: PtCopySnapshot; /** How many changes Point and tell judged ready: Blueprint says so when fewer survive its own load. */ ready: number }

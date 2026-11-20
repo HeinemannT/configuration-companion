@@ -55,6 +55,23 @@ export interface PtAnchor { id: string; box: { left: number; top: number; width:
 /** Raw ink of a mark. The strokes are kept as drawn; the payload sends a simplified copy. */
 export interface PtInk { strokes: PtStroke[]; place: PtGridPlace; anchor?: PtAnchor }
 
+/** A sketch the listener kept: its number there and when it was sent (ms since epoch), to tell it from a sketch of
+ *  the same number in a later working session. */
+export interface PtSketchRef {
+  sketch: number;
+  at: number;
+  /** The id the desktop extension gave the sketch (0.3.0 on): it finds the row again in any working session. */
+  id?: string;
+}
+
+/** Where a mark went: the sketch, its number in that sketch, and what it said then (a change since makes it new again). */
+export interface PtSent extends PtSketchRef {
+  k: number;
+  sig: string;
+  /** The user answered Claude's question in place: the answer went out as its own sketch. */
+  answer?: PtSketchRef & { text: string; /** The sketch whose question it answers. */ asks?: number };
+}
+
 export interface PtMark {
   n: number;
   /** The user's words; may be empty (an arrow or a circle can stand alone). */
@@ -69,6 +86,8 @@ export interface PtMark {
   ink?: PtInk;
   /** Set after the mark's operations were staged in Blueprint and not yet applied. */
   staged?: boolean;
+  /** The mark went to Claude in a sketch (see sent-marks.ts). */
+  sent?: PtSent;
   /** When it was made (ms since epoch). */
   at: number;
 }
@@ -106,7 +125,7 @@ export interface PtCopySnapshot {
   marks: Array<PtCopiedMark>;
   /** Tabs the user drew (new): the answer must not add them again. */
   drafts?: PtDraft[];
-  /** What can be staged without an AI: the operations the marks say on their own (see direct.ts). */
+  /** Operations the marks say on their own, when a later channel provides them (nothing sets this now). */
   direct?: PtOp[];
 }
 

@@ -136,7 +136,7 @@ describe('a drawn page, a paper page, a templated page, as copied', () => {
     const { payload } = buildPayload({ model: fixtureModel(), marks: [tab1, table, sentence], colors: null, liveTabId: 'tab_overview', scope: 'instance', now: 1 });
     expect(payload.marks).toEqual([
       { n: 1, drew: 'tab shape after t2 on the tab row', guess: 'add a tab after t2, as n1', says: 'Contracts', handled: true },
-      { n: 2, drew: 'square on n1 at row 1, columns 1-3, lines inside', guess: 'add a table, 3 columns wide, into n1', says: 'Open contracts', handled: true },
+      { n: 2, drew: 'square on n1 at row 1, columns 1-3, lines inside', guess: 'add a table, 3 columns wide, into n1', says: 'Open contracts' },
       { n: 3, drew: 'square on n1 at row 2, columns 1-6, lines inside', guess: 'add a table, 6 columns wide, into n1', says: 'A table of all contracts by status, please.' },
     ]);
   });

@@ -7,7 +7,7 @@
 
 import type { InspectorMessage } from '../lib/types';
 
-export type UtilityId = 'code-search' | 'transport' | 'numeric-ids' | 'access' | 'colors' | 'images';
+export type UtilityId = 'code-search' | 'transport' | 'numeric-ids' | 'access' | 'colors' | 'images' | 'claude-desktop';
 
 export interface UtilityEntry {
   id: UtilityId;
@@ -40,11 +40,12 @@ export const UTILITIES: readonly UtilityEntry[] = [
   { id: 'access', name: 'Access', line: 'Roles, policies and access tests', icon: 'i-shield', message: { type: 'OPEN_ACCESS_WORKSPACE' }, needsServer: true },
   { id: 'colors', name: 'Colors', line: 'Add and change colors', icon: 's-palette', message: { type: 'OPEN_COLORS_IMAGES', tab: 'colors' }, needsServer: true },
   { id: 'images', name: 'Images', line: 'Add and change image files', icon: 'i-image', message: { type: 'OPEN_COLORS_IMAGES', tab: 'images' }, needsServer: true },
+  { id: 'claude-desktop', name: 'Claude Desktop', line: 'Send sketches from Point and tell', icon: 's-pointtell', message: { type: 'OPEN_CLAUDE_SETUP' }, needsServer: false },
 ];
 
 export const UTILITY_GROUPS: readonly UtilityGroup[] = [
   { id: 'page', label: 'Over the BMP page', opens: 'Opens over the BMP page', ids: ['code-search', 'transport', 'numeric-ids'] },
-  { id: 'tab', label: 'In a browser tab', opens: 'Opens in a browser tab', ids: ['access', 'colors', 'images'] },
+  { id: 'tab', label: 'In a browser tab', opens: 'Opens in a browser tab', ids: ['access', 'colors', 'images', 'claude-desktop'] },
 ];
 
 export const CHOOSE_SERVER_FIRST = 'Choose a server first';

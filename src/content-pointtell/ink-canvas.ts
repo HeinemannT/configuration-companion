@@ -18,13 +18,17 @@ import { Z, placed } from './view';
 export const INK_COLOR = '#8a3ffc';
 
 /** A finished stroke in page coordinates, ready to paint. */
-export interface InkStrokeIn { key: string; points: ReadonlyArray<[number, number]>; r?: readonly number[] }
+export interface InkStrokeIn { key: string; points: ReadonlyArray<[number, number]>; r?: readonly number[]; /** Sent to Claude: painted lighter. */ quiet?: boolean }
+
+/** How strong ink that was sent is painted: still readable, clearly behind what is new. */
+export const QUIET_ALPHA = 0.36;
 
 interface Item {
   key: string;
   /** Page-coordinate bounds, grown by the pen's widest point. */
   x0: number; y0: number; x1: number; y1: number;
   core: Path2D;
+  quiet: boolean;
   /** Sub-sampled centre line for the eraser. */
   poly: Array<{ x: number; y: number; r: number }>;
 }
@@ -129,7 +133,7 @@ export class InkCanvas {
     if (this.dead) return;
     const next = new Map<string, { sig: string; item: Item }>();
     this.items = strokes.map(s => {
-      const sig = `${s.points.length}:${s.points[0]?.[0]}:${s.points[0]?.[1]}:${s.points[s.points.length - 1]?.[0]}:${s.points[s.points.length - 1]?.[1]}`;
+      const sig = `${s.quiet ? 'q' : ''}${s.points.length}:${s.points[0]?.[0]}:${s.points[0]?.[1]}:${s.points[s.points.length - 1]?.[0]}:${s.points[s.points.length - 1]?.[1]}`;
       const hit = this.cache.get(s.key);
       const item = hit && hit.sig === sig ? hit.item : this.build(s);
       next.set(s.key, { sig, item });
@@ -147,12 +151,14 @@ export class InkCanvas {
     const poly: Item['poly'] = [];
     let ax = 1e9, ay = 1e9;
     for (let i = 0; i < d.n; i++) if (i === 0 || i === d.n - 1 || Math.hypot(d.x[i] - ax, d.y[i] - ay) >= 5) { poly.push({ x: d.x[i], y: d.y[i], r: d.r[i] }); ax = d.x[i]; ay = d.y[i]; }
-    return { key: s.key, x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1, core: tube(d, 0), poly };
+    return { key: s.key, x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1, core: tube(d, 0), quiet: !!s.quiet, poly };
   }
 
   private paintItem(g: CanvasRenderingContext2D, it: Item): void {
     g.fillStyle = INK_COLOR;
+    g.globalAlpha = it.quiet ? QUIET_ALPHA : 1;
     g.fill(it.core);
+    g.globalAlpha = 1;
   }
 
   private redrawBase(): void {

@@ -3,8 +3,8 @@
  * here") is a mark whose words are the page's name. Saving the name opens the PAPER PAGE: the real page is covered, not
  * changed; the breadcrumb gets a muted "/ New page", the title is the name, editable in place, and below it an empty
  * tab rule and six faint columns. Tabs and widgets are drawn there like on a drawn tab's paper, in a mark set of their
- * own (stored under `new:<viewed page>`). Closing it (a click on a crumb) keeps it; Clear discards it. Nothing is created
- * in BMP until the card says so (create-card.ts).
+ * own (stored under `new:<viewed page>`). Closing it (a click on a crumb) keeps it; Clear discards it. It is a place to
+ * sketch: nothing is created in BMP, and the copied brief describes the page as one the user sketched.
  */
 import type { LModel } from '../lib/layout/types';
 import { isPageMark } from '../lib/point-tell/drafts';
@@ -16,7 +16,7 @@ import { pt } from './state';
 
 export const NEW_PAGE_NAME = 'New page';
 
-/** The model of a page with nothing on it yet: what BMP will hold right after the page is created. */
+/** The model of a page with nothing on it yet: what a page with nothing on it would hold. */
 export function paperModel(name: string): LModel {
   return {
     pageId: 'draft:page', pageName: name, pageClass: 'Scorecard', tabsetId: 'draft:tabset', tabs: [], resultOnly: true,
@@ -49,7 +49,6 @@ export function leavePage(): void {
   if (!p) return;
   saveMarks(newPageKey(pt.rid), { marks: pt.marks, next: pt.next });
   pt.editor = null; pt.fieldEl?.remove(); pt.fieldEl = null;
-  pt.card = null; pt.cardEl?.remove(); pt.cardEl = null;
   pt.model = p.shelf.model; pt.ctx = p.shelf.ctx; pt.scope = p.shelf.scope; pt.links = p.shelf.links; pt.paper = p.shelf.paper;
   pt.marks = p.shelf.marks; pt.next = p.shelf.next;
   pt.page = null; pt.hover = null;
@@ -77,12 +76,4 @@ export function discardPage(): void {
   const keep = p.shelf.marks.filter(m => m.n !== p.n);
   leavePage();
   setMarks(keep, pt.next);
-}
-
-/** The page was created and the sketch moved to the new page: the real page's mark and the paper page's marks are gone from here. */
-export function forgetPage(): void {
-  const p = pt.page;
-  if (!p) return;
-  saveMarks(newPageKey(pt.rid), { marks: [], next: 1 });
-  saveMarks(pt.rid, { marks: p.shelf.marks.filter(m => m.n !== p.n), next: p.shelf.next });
 }

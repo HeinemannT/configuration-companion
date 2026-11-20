@@ -1,9 +1,10 @@
 /**
  * Point and tell: the dock's mark, alive. One small state machine drives it: a reaction has a priority, a
  * stronger one replaces a weaker one (an equal one replaces too), never two play at once, and each ends back at
- * rest. Nothing runs while it is idle: no frame loop (the eyes follow the pen only when the pointer moves, at
- * most once per frame), no looping animation (dozing is a still pose with a small z). A reaction is a handful of
- * Web Animations on transform and opacity that exist only while it plays.
+ * rest. At rest the eyes follow the pointer wherever it is on the page: a pointer move schedules one frame, the
+ * frame sets one transform, and a short CSS ease carries the eyes there. Nothing runs while the pointer is still:
+ * no frame loop, no looping animation (dozing is a still pose with a small z). A reaction is a handful of
+ * Web Animations on transform and opacity that exist only while it plays; the eyes go back to the pointer after it.
  *
  *   event                         reaction   priority
  *   a stroke ends                 blink      1
@@ -20,7 +21,6 @@
  * The markup is `richMarkSvg()` and the look is styles/mark-moods.css; under prefers-reduced-motion the
  * reactions show still poses and nothing moves.
  */
-import { setMarkLook } from '../lib/companion-mark';
 import { EASE, animate, reducedMotion } from './motion';
 import { pt } from './state';
 
@@ -36,8 +36,19 @@ const READ_MIN_MS = 700;
 const TAU = Math.PI * 2;
 /** The eyes move this much (px of the 28 unit mark) per unit of a pupil offset. */
 const GAIN = 1.3;
+/**
+ * How far the eyes travel toward the pointer, in units of the 28 unit mark (the dock shows it 40 px wide, so 1.43 px a
+ * unit). The opening of the face is a ring of inner radius 6.5 around (15, 14); the pupils are 2 units wide at
+ * x = 13 and 18. Sideways 2.5 puts the left pupil on the ring's inner edge; up and down 3 keeps both inside it.
+ */
+const REACH_X = 2.5;
+const REACH_Y = 3;
+/** The pointer this far from the face (px) or further: the eyes are all the way there. Nearer, they go part of the way. */
+const FULL_AT = 90;
+/** The pointer rested this long (ms): the eyes settle with one small movement. */
+const REST_MS = 220;
 
-interface Parts { host: HTMLElement; body: Element; face: HTMLElement; eyes: HTMLElement[]; opens: Element[]; dizzies: Element[] }
+interface Parts { host: HTMLElement; body: Element; face: HTMLElement; look: HTMLElement | null; eyes: HTMLElement[]; opens: Element[]; dizzies: Element[] }
 
 let parts: Parts | null = null;
 let current: Name | null = null;
@@ -54,6 +65,8 @@ let readTimer = 0;
 let busy: () => boolean = () => false;
 /** Where the microphone's field is (window coordinates), while it listens. */
 let listenAt: { cx: number; cy: number } | null = null;
+/** The small listener is out beside the field: the dock's mark only looks that way and stays calm. */
+let listenCalm = false;
 
 function bind(): Parts | null {
   const host = pt.dock?.querySelector<HTMLElement>('[data-role="mascot"]');
@@ -62,7 +75,7 @@ function bind(): Parts | null {
   if (parts?.host !== host) {
     cancelAll();
     parts = {
-      host, body, face,
+      host, body, face, look: host.querySelector<HTMLElement>('.mark-look'),
       eyes: [...host.querySelectorAll<HTMLElement>('.mk-eye')], opens: [...host.querySelectorAll('.mk-open')], dizzies: [...host.querySelectorAll('.mk-dizzy')],
     };
     current = null; dozing = false;
@@ -100,6 +113,7 @@ function reset(p: Parts): void {
   p.body.removeAttribute('data-pose');
   current = null;
   dozing = false;
+  requestFollow();
 }
 
 /** Play out `ms`, then rest (and go back to reading when the wait is still on). */
@@ -115,6 +129,7 @@ function start(name: Name): void {
   if (!dozing && current && PRIORITY[current] > PRIORITY[name]) return;
   reset(p);
   current = name;
+  requestFollow();
   switch (name) {
     case 'look': {
       const n = 12;
@@ -147,6 +162,12 @@ function start(name: Name): void {
       // Its own pose: eyes wide, brows up, leaning toward the field; held until the listening ends.
       const dx = listenAt ? listenAt.cx - (p.host.getBoundingClientRect().left + 14) : 0, dy = listenAt ? listenAt.cy - (p.host.getBoundingClientRect().top + 14) : 0;
       const d = Math.hypot(dx, dy) || 1;
+      if (listenCalm) {
+        // The small listener does the listening: this mark only turns its eyes to the field, a little wider, still.
+        pupil(p, (dx / d) * 1, (dy / d) * 0.7);
+        for (const o of p.opens) run(o, [{ transform: scale(1) }, { transform: scale(1.08) }], { duration: 260, easing: EASE.out, fill: 'forwards' });
+        break;
+      }
       brows(p, 'up'); pupil(p, (dx / d) * 1.2, (dy / d) * 0.8);
       for (const o of p.opens) run(o, [{ transform: scale(1) }, { transform: scale(1.3) }], { duration: 180, easing: EASE.pop, fill: 'forwards' });
       run(p.body, [{ transform: 'none' }, { transform: 'rotate(-7deg) translateY(-.6px)' }], { duration: 220, easing: EASE.out, fill: 'forwards' });
@@ -197,12 +218,12 @@ export function react(name: Reaction): void {
   start(name);
 }
 
-/** The microphone is on (or off): the mark listens, a pose of its own, toward the comment field. */
-export function listenPose(on: boolean, cx = 0, cy = 0): void {
+/** The microphone is on (or off): the mark listens, a pose of its own, toward the comment field (`calm`: the small listener listens, this mark only looks). */
+export function listenPose(on: boolean, cx = 0, cy = 0, calm = false): void {
   const p = bind();
   if (!p) return;
-  if (on) { listenAt = { cx, cy }; noteInput(); start('listen'); return; }
-  listenAt = null;
+  if (on) { listenAt = { cx, cy }; listenCalm = calm; noteInput(); start('listen'); return; }
+  listenAt = null; listenCalm = false;
   if (current === 'listen') { reset(p); if (holds > 0) start('reading'); }
 }
 
@@ -232,6 +253,7 @@ export function holdReading(): () => void {
 function doze(p: Parts): void {
   reset(p);
   dozing = true;
+  requestFollow();
   pupil(p, 0, 0.7);
   if (reducedMotion()) shape(p, 'sh');
   else {
@@ -265,25 +287,58 @@ export function noteInput(): void {
 
 let lookTo: { cx: number; cy: number } | null = null;
 let lookRaf = 0;
+let restTimer = 0;
+/** What the eyes are showing now (mark units): the settle goes back to it. */
+let shown = { x: 0, y: 0 };
 
-/** The eyes look toward a window point (the pen tip), or rest. The pointer moving is the only thing that schedules work, once per frame at most. */
+/** Where the eyes want to be: toward the pointer when the mark is at rest, the middle during a reaction, a doze or when motion is off. */
+function wanted(p: Parts): { x: number; y: number } {
+  if (current || dozing || !lookTo || reducedMotion()) return { x: 0, y: 0 };
+  const r = p.host.getBoundingClientRect();
+  const dx = lookTo.cx - (r.left + r.width / 2), dy = lookTo.cy - (r.top + r.height / 2);
+  const d = Math.hypot(dx, dy) || 1;
+  // Quick to rise: a pointer a short way off already turns the eyes most of the way.
+  const k = 1 - (1 - Math.min(1, d / FULL_AT)) ** 2;
+  return { x: +((dx / d) * k * REACH_X).toFixed(2), y: +((dy / d) * k * REACH_Y).toFixed(2) };
+}
+
+/** One frame: put the eyes where they want to be. The ease is the stylesheet's (a short transition on the eyes' group). */
+function follow(): void {
+  lookRaf = 0;
+  const p = bind();
+  if (!p?.look) return;
+  const w = wanted(p);
+  if (w.x === shown.x && w.y === shown.y) return;
+  shown = w;
+  p.look.style.transform = `translate(${w.x}px,${w.y}px)`;
+  armRest();
+}
+
+function requestFollow(): void {
+  if (!lookRaf) lookRaf = requestAnimationFrame(follow);
+}
+
+/** The pointer stopped: after a moment the eyes settle with one small movement past the spot and back. Nothing else runs. */
+function armRest(): void {
+  if (restTimer) clearTimeout(restTimer);
+  restTimer = window.setTimeout(() => {
+    restTimer = 0;
+    const p = parts;
+    if (!p || current || dozing || reducedMotion() || (!shown.x && !shown.y)) return;
+    const d = Math.hypot(shown.x, shown.y) || 1;
+    const over = 0.4;
+    run(p.face, [{ transform: t(0, 0) }, { transform: t(+(shown.x / d * over).toFixed(2), +(shown.y / d * over).toFixed(2)), offset: 0.4 }, { transform: t(0, 0) }], { duration: 360, easing: EASE.out, composite: 'add' });
+  }, REST_MS);
+}
+
+/** The eyes look toward a window point (the pointer), or rest. */
 export function look(cx: number | null, cy = 0): void {
   lookTo = cx === null ? null : { cx, cy };
   if (cx !== null) noteInput();
-  if (lookRaf) return;
-  lookRaf = requestAnimationFrame(() => {
-    lookRaf = 0;
-    const p = bind();
-    // A reaction or a doze has the eyes; the next move after it takes them back.
-    if (!p || current || dozing) return;
-    if (!lookTo) { setMarkLook(p.host, null); return; }
-    const r = p.host.getBoundingClientRect();
-    const dx = lookTo.cx - (r.left + r.width / 2), dy = lookTo.cy - (r.top + r.height / 2);
-    const d = Math.hypot(dx, dy) || 1;
-    const k = Math.min(1, d / 160) * 1.7;
-    setMarkLook(p.host, (dx / d) * k, (dy / d) * k);
-  });
+  requestFollow();
 }
+
+let onMove: ((e: PointerEvent) => void) | null = null;
 
 // ── Life cycle ──────────────────────────────────────────────────────────────────────────────────
 
@@ -299,6 +354,8 @@ function armBlink(): void {
 /** The mode is on and the dock is there: the countdown to dozing and the now-and-then blink begin. */
 export function startMascot(isBusy: () => boolean): void {
   busy = isBusy;
+  // The eyes follow the pointer anywhere on the page, not only over the drawing surface.
+  if (!onMove) { onMove = (e) => look(e.clientX, e.clientY); window.addEventListener('pointermove', onMove, { capture: true, passive: true }); }
   lastInput = performance.now();
   if (!dozeTimer) armDoze();
   if (!idleTimer) armBlink();
@@ -307,9 +364,10 @@ export function startMascot(isBusy: () => boolean): void {
 /** Leaving: nothing may fire after the layer is gone. */
 export function stopMascot(): void {
   cancelAll();
-  for (const id of [dozeTimer, idleTimer, readTimer]) if (id) clearTimeout(id);
-  dozeTimer = idleTimer = readTimer = 0;
+  for (const id of [dozeTimer, idleTimer, readTimer, restTimer]) if (id) clearTimeout(id);
+  dozeTimer = idleTimer = readTimer = restTimer = 0;
   if (lookRaf) cancelAnimationFrame(lookRaf);
-  lookRaf = 0; lookTo = null;
+  if (onMove) { window.removeEventListener('pointermove', onMove, true); onMove = null; }
+  lookRaf = 0; lookTo = null; shown = { x: 0, y: 0 };
   parts = null; current = null; dozing = false; holds = 0;
 }

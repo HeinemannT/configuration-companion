@@ -21,6 +21,19 @@ Configuration Companion includes the components below. Each licence text follows
 | Inter (font) | Copyright 2016 The Inter Project Authors (https://github.com/rsms/inter) | SIL OFL 1.1 |
 | JetBrains Mono (font) | Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono) | SIL OFL 1.1 |
 
+The extension for Claude Desktop that Configuration Companion ships (`configuration-companion-<version>.mcpb`) includes these:
+
+| Component | Copyright | Licence |
+|---|---|---|
+| MCP TypeScript SDK (`@modelcontextprotocol/sdk`) | Copyright (c) 2024 Anthropic, PBC | MIT |
+| ws | Copyright (c) 2011 Einar Otto Stangvik, (c) 2013 Arnout Kazemier and contributors, (c) 2016 Luigi Pinca and contributors | MIT |
+| zod | Copyright (c) 2025 Colin McDonnell | MIT |
+| zod-to-json-schema | Copyright (c) 2020, Stefan Terdell | ISC |
+| ajv | Copyright (c) 2015-2021 Evgeny Poberezkin | MIT |
+| ajv-formats | Copyright (c) 2020 Evgeny Poberezkin | MIT |
+| fast-deep-equal, json-schema-traverse | Copyright (c) 2017 Evgeny Poberezkin | MIT |
+| fast-uri | Copyright (c) 2011-2021, Gary Court; Copyright (c) 2021-present The Fastify team | BSD-3-Clause, with the wording below |
+
 ## MIT License
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -69,6 +82,8 @@ Redistribution and use in source and binary forms, with or without modification,
 3. Neither the name of Salesforce.com nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
 
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+fast-uri states the same terms with a different third condition: "The names of any contributors may not be used to endorse or promote products derived from this software without specific prior written permission."
 
 ## SIL Open Font License 1.1
 

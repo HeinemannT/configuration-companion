@@ -157,12 +157,11 @@ describe('the paper', () => {
     pt.disablePointTell();
   });
 
-  it('a drawn page: the sheet, the rule, the title field and the card set position and stacking inline', async () => {
+  it('a drawn page: the sheet, the rule, the title field set position and stacking inline', async () => {
     const pt = await ready();
     const { pt: st } = await import('../state');
     const { addMark } = await import('../marks');
     const { enterPage } = await import('../page-draft');
-    const { openCard } = await import('../create-card');
     const m = addMark({ text: 'Supplier contracts', targets: [], reading: 'New page under X', meaning: { kind: 'add', page: true, place: { into: 'draft:page' } } });
     enterPage(m!.n);
     expect(st.page?.name).toBe('Supplier contracts');
@@ -174,11 +173,10 @@ describe('the paper', () => {
     expect(title!.value).toBe('Supplier contracts');
     // The title is above the pointer surface, so a click lands in it.
     expect(Number(title!.style.zIndex)).toBeGreaterThan(2147483604);
-    openCard({ text: '{}', snapshot: { at: 1, sig: 's', scope: 'instance', refs: [], colors: {}, now: {}, marks: [] }, result: { steps: [], reports: [], origins: {}, final: st.model!, ready: 0, review: 0, notPossible: 0 } });
-    const card = layer.querySelector<HTMLElement>('.pt-card');
-    inlineFloor(card, 'fixed');
-    expect(card!.textContent).toContain('Create page');
-    expect(card!.querySelector<HTMLButtonElement>('.pt-primary')!.disabled).toBe(true);
+    // Point and tell is one way: nothing on the paper page, and nothing in the dock, creates or stages anything.
+    expect(layer.querySelector('.pt-card')).toBeNull();
+    expect(layer.querySelector('[data-role="stage"]')).toBeNull();
+    expect(layer.textContent).not.toMatch(/Create page|Stage \d|in Blueprint/);
     notATab(layer);
     pt.disablePointTell();
   });

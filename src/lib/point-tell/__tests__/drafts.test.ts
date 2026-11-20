@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { directOps, answerText, isName } from '../direct';
 import { draftTabs, withDrafts } from '../drafts';
 import { buildPayload } from '../payload';
-import { assignRefs } from '../refs';
 import { parseAnswer } from '../parse-answer';
 import { stageAnswer } from '../stage';
 import { fixtureModel } from './fixture';
@@ -38,47 +36,20 @@ describe('drawn tabs', () => {
     const { payload } = build(fixtureModel(), [tab1, table]);
     expect(payload.outline.map(o => [o.ref, o.name, o.new ?? null])).toEqual([['t1', 'Overview', null], ['t2', 'Details', null], ['n1', 'Contracts', true]]);
     expect(payload.marks[0]).toEqual({ n: 1, drew: 'tab shape after t2 on the tab row', guess: 'add a tab after t2, as n1', says: 'Contracts', handled: true });
-    expect(payload.marks[1]).toEqual({ n: 2, drew: 'square on n1 at row 1, columns 1-6, lines inside', guess: 'add a table, 6 columns wide, into n1', says: 'Open contracts', handled: true });
+    expect(payload.marks[1]).toEqual({ n: 2, drew: 'square on n1 at row 1, columns 1-6, lines inside', guess: 'add a table, 6 columns wide, into n1', says: 'Open contracts' });
   });
 
-  it('the snapshot keeps the drafts out of the page refs and holds what the marks say on their own', () => {
+  it('the snapshot keeps the drafts out of the page refs', () => {
     const { snapshot } = build(fixtureModel(), [tab1, table]);
     expect(snapshot.refs.some(r => r.id.startsWith('draft:'))).toBe(false);
     expect(snapshot.drafts).toEqual([{ ref: 'n1', id: 'draft:1', name: 'Contracts', anchor: 'tab_details' }]);
-    expect(snapshot.direct?.map(o => [o.notes[0], o.op, o.type, o.name])).toEqual([[1, 'add', 'Tab', 'Contracts'], [2, 'add', 'ExtendedTable', 'Open contracts']]);
-  });
-});
-
-describe('direct operations', () => {
-  it('a named tab, a named sketched widget and a move with no words', () => {
-    const refs = assignRefs(withDrafts(fixtureModel(), draftTabs([tab1])));
-    const move: PtMark = { n: 3, text: '', targets: ['btn_export'], at: 3, meaning: { kind: 'move', to: { before: 'btn_new_risk' } } };
-    expect(directOps([tab1, table, move], refs)).toEqual([
-      { notes: [1], op: 'add', type: 'Tab', name: 'Contracts', place: { after: 't2' }, as: 'n1' },
-      { notes: [2], op: 'add', type: 'ExtendedTable', name: 'Open contracts', place: { into: 'n1' }, properties: { columns: 6 } },
-      { notes: [3], op: 'move', ref: 'o5', to: { before: 'o4' } },
-    ]);
-  });
-
-  it('never a crossed-out object, a move with words, an unnamed tab or a sentence for a widget', () => {
-    const unnamed: PtMark = { ...tab1, text: '' };
-    const refs = assignRefs(withDrafts(fixtureModel(), draftTabs([unnamed])));
-    const crossed: PtMark = { n: 3, text: '', targets: ['btn_export'], at: 3, meaning: { kind: 'crossed' } };
-    const move: PtMark = { n: 4, text: 'left please', targets: ['btn_export'], at: 4, meaning: { kind: 'move', to: { before: 'btn_new_risk' } } };
-    const sentence: PtMark = { ...table, n: 5, text: 'A table of all contracts.' };
-    expect(directOps([unnamed, crossed, move, sentence], refs)).toEqual([]);
-    expect(isName('Open contracts')).toBe(true);
-    expect(isName('Is this right?')).toBe(false);
-    expect(isName('Chart of controls by test result for the last 12 months')).toBe(false);
-    expect(isName('Show open risks by owner, with the number of controls')).toBe(false);
-    expect(isName('Controls by test result')).toBe(true);
   });
 });
 
 describe('staging a drawn tab', () => {
-  it('stages the tab after its anchor and the widget drawn on it into it, from the answer text of the direct operations', () => {
+  it('stages the tab after its anchor and the widget an answer adds into it', () => {
     const { snapshot } = build(fixtureModel(), [tab1, table]);
-    const parsed = parseAnswer(answerText(snapshot.direct ?? []));
+    const parsed = parseAnswer(JSON.stringify({ operations: [{ note: 2, op: 'add', type: 'ExtendedTable', name: 'Open contracts', place: { into: 'n1' }, properties: { columns: 6 } }] }));
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     const r = stageAnswer(fixtureModel(), snapshot, parsed.answer);

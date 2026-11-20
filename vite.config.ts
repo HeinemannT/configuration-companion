@@ -141,6 +141,7 @@ function extensionPlugin(): Plugin {
         { dir: 'codesearch', file: 'codesearch' },
         { dir: 'colors-images', file: 'colors-images' },
         { dir: 'transport', file: 'transport' },
+        { dir: 'claude-setup', file: 'claude-setup' },
         { dir: 'studio', file: 'studio' },
         { dir: 'studio', file: 'sandbox' },
       ];
@@ -163,6 +164,19 @@ function extensionPlugin(): Plugin {
       if (existsSync(resolve(dist, 'src'))) {
         rmSync(resolve(dist, 'src'), { recursive: true, force: true });
       }
+
+      // --- The Claude Desktop extension ships inside this one ---
+      //
+      // claude-desktop/'s own pack (esbuild, then Anthropic's packer, a pinned dev dependency of claude-desktop that
+      // the root npm ci installs) makes the .mcpb; the Claude Desktop page offers it as a download. Same file name
+      // in every build, so the page needs no version in its path.
+      execFileSync(process.execPath, [resolve(root, 'claude-desktop/scripts/build.mjs'), '--pack', '--quiet'], { stdio: 'inherit' });
+      const desktopVersion = JSON.parse(readFileSync(resolve(root, 'claude-desktop/manifest.json'), 'utf-8')).version as string;
+      mkdirSync(resolve(dist, 'claude-setup'), { recursive: true });
+      copyFileSync(
+        resolve(root, `claude-desktop/build/configuration-companion-${desktopVersion}.mcpb`),
+        resolve(dist, 'claude-setup/configuration-companion.mcpb'),
+      );
 
       // --- Copy built artifacts from dist/ to project root ---
 
@@ -230,6 +244,7 @@ export default defineConfig({
         'codesearch/codesearch': resolve(import.meta.dirname, 'src/codesearch/codesearch.html'),
         'colors-images/colors-images': resolve(import.meta.dirname, 'src/colors-images/colors-images.html'),
         'transport/transport': resolve(import.meta.dirname, 'src/transport/transport.html'),
+        'claude-setup/claude-setup': resolve(import.meta.dirname, 'src/claude-setup/claude-setup.html'),
         'studio/studio': resolve(import.meta.dirname, 'src/studio/studio.html'),
         // Sandboxed page (manifest sandbox.pages) — runs arbitrary CVO code.
         'studio/sandbox': resolve(import.meta.dirname, 'src/studio/sandbox.html'),

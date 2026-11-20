@@ -64,7 +64,7 @@ function anchorBox(n: number): Box | null {
 /** Everything a tag must stay clear of, in page coordinates. */
 function obstacles(): Box[] {
   const out: Box[] = [];
-  for (const el of [pt.fieldEl, pt.dock, pt.panelEl, pt.sheetEl]) if (el?.isConnected) out.push(inflate(pageBox(el.getBoundingClientRect()), GAP));
+  for (const el of [pt.fieldEl, pt.dock, pt.panelEl]) if (el?.isConnected) out.push(inflate(pageBox(el.getBoundingClientRect()), GAP));
   pt.pinLayer?.querySelectorAll('.pt-drop').forEach(d => out.push(pageBox(d.getBoundingClientRect())));
   for (const l of live.values()) out.push(inflate(l.box, GAP));
   return out;

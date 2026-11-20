@@ -122,62 +122,45 @@ describe('POINT_TELL_STATE', () => {
   });
 });
 
-describe('POINT_TELL_STAGE', () => {
-  it('opens Blueprint on the sender tab, with Inspect off', async () => {
-    setupChrome([{ id: 3, windowId: 9, url: BMP }]);
-    const ctx = makeCtx({ inspect: true });
-    await (await handler('POINT_TELL_STAGE'))({ type: 'POINT_TELL_STAGE' } as never, () => {}, { isOneShot: true, senderTabId: 3, ctx } as never);
-    expect(toggleInspect).toHaveBeenCalledWith(9);
-    expect(setBlueprintActive).toHaveBeenCalledWith(9, true, 3);
-  });
-
-  it('is ignored without a sender tab, and may be sent by a content script', async () => {
+describe('POINT_TELL_SERVER', () => {
+  it('names the server profile the page belongs to, and may be sent by a content script', async () => {
     setupChrome([{ id: 3, windowId: 9, url: BMP }]);
     const ctx = makeCtx();
-    await (await handler('POINT_TELL_STAGE'))({ type: 'POINT_TELL_STAGE' } as never, () => {}, { isOneShot: true, ctx } as never);
-    expect(setBlueprintActive).not.toHaveBeenCalled();
-    expect(MESSAGE_ACCESS.POINT_TELL_STAGE).toEqual(['content']);
+    ctx.settings.profiles[0].label = 'Steadfast DEV';
+    const respond = vi.fn();
+    await (await handler('POINT_TELL_SERVER'))({ type: 'POINT_TELL_SERVER' } as never, respond, { isOneShot: true, senderTabId: 3, ctx } as never);
+    expect(respond).toHaveBeenCalledWith({ type: 'POINT_TELL_SERVER_DATA', name: 'Steadfast DEV' });
+    expect(MESSAGE_ACCESS.POINT_TELL_SERVER).toEqual(['content']);
   });
 });
 
-describe('POINT_TELL_READ_NOW', () => {
-  const RID = '4000000000000000001';
-  const run = async (items: unknown, client: unknown) => {
+describe('POINT_TELL_VOICE', () => {
+  const run = async (stored: unknown, msg: Record<string, unknown>) => {
     setupChrome([{ id: 3, windowId: 9, url: BMP }]);
-    const ctx = makeCtx();
-    ctx.client = client;
+    const set = vi.fn(async () => {});
+    (globalThis as any).chrome.storage = { local: { get: vi.fn(async () => ({ crev_pt_voice: stored })), set } };
     const respond = vi.fn();
-    await (await handler('POINT_TELL_READ_NOW'))({ type: 'POINT_TELL_READ_NOW', items } as never, respond, { isOneShot: true, senderTabId: 3, ctx } as never);
-    return { respond, ctx };
+    await (await handler('POINT_TELL_VOICE'))({ type: 'POINT_TELL_VOICE', ...msg } as never, respond, { isOneShot: true, senderTabId: 3, ctx: makeCtx() } as never);
+    return { respond, set };
   };
-  const prop = (text: string, kind = 'text') => ({ kind, text });
 
-  it('reads the text properties and code of the noted objects in one batch, and says which code is too long', async () => {
-    const readFullObjects = vi.fn(async () => ({
-      objects: { [RID]: { props: { expression: prop('_t := 1', 'code'), html: prop('x'.repeat(9000), 'code'), javascript: prop('') } } },
-      errors: {},
-    }));
-    const { respond } = await run([{ rid: RID, className: 'ExtendedTable' }], { readFullObjects });
-    expect(readFullObjects).toHaveBeenCalledTimes(1);
-    expect(readFullObjects).toHaveBeenCalledWith([RID]);
-    expect(respond).toHaveBeenCalledWith({ type: 'POINT_TELL_NOW_DATA', ok: true, objects: { [RID]: { text: {}, code: { expression: '_t := 1' }, omitted: ['html'] } } });
+  it('answers with the stored setting, off by default, and stores nothing for a plain ask', async () => {
+    const { respond, set } = await run(undefined, {});
+    expect(respond).toHaveBeenCalledWith({ type: 'POINT_TELL_VOICE_DATA', prefs: { on: false, lang: 'auto', noticed: false } });
+    expect(set).not.toHaveBeenCalled();
   });
 
-  it('reads nothing for objects with no text or code property, or an item that is not a rid', async () => {
-    const readFullObjects = vi.fn();
-    const { respond } = await run([{ rid: RID, className: 'PieChart' }, { rid: 'abc', className: 'ExtendedTable' }, null], { readFullObjects });
-    expect(readFullObjects).not.toHaveBeenCalled();
-    expect(respond).toHaveBeenCalledWith({ type: 'POINT_TELL_NOW_DATA', ok: true, objects: {} });
+  it('"Turn on" sets the same setting as Preferences and counts the confirm as the notice', async () => {
+    const { respond, set } = await run({ on: false, lang: 'de-DE', noticed: false }, { on: true });
+    expect(set).toHaveBeenCalledWith({ crev_pt_voice: { on: true, lang: 'de-DE', noticed: true } });
+    expect(respond).toHaveBeenCalledWith({ type: 'POINT_TELL_VOICE_DATA', prefs: { on: true, lang: 'de-DE', noticed: true } });
   });
 
-  it('says so when the server is not connected, and when the read fails', async () => {
-    expect((await run([{ rid: RID, className: 'ExtendedTable' }], null)).respond).toHaveBeenCalledWith({ type: 'POINT_TELL_NOW_DATA', ok: false, error: 'Not connected' });
-    const failing = { readFullObjects: vi.fn(async () => { throw new Error('boom'); }) };
-    expect((await run([{ rid: RID, className: 'ExtendedTable' }], failing)).respond).toHaveBeenCalledWith({ type: 'POINT_TELL_NOW_DATA', ok: false, error: 'boom' });
-  });
-
-  it('may be sent by a content script', () => {
-    expect(MESSAGE_ACCESS.POINT_TELL_READ_NOW).toEqual(['content']);
+  it('keeps what is stored when it is on already, and records that the notice was shown', async () => {
+    const on = await run({ on: true, lang: 'auto', noticed: true }, { on: true });
+    expect(on.set).not.toHaveBeenCalled();
+    const seen = await run({ on: true, lang: 'auto', noticed: false }, { noticed: true });
+    expect(seen.set).toHaveBeenCalledWith({ crev_pt_voice: { on: true, lang: 'auto', noticed: true } });
   });
 });
 
@@ -205,46 +188,52 @@ describe('the Point and tell command and menu entry', () => {
   });
 });
 
-describe('POINT_TELL_CREATE_PAGE', () => {
-  const plan = { parentRid: '4797501244326270080', kind: 'Scorecard' as const, id: 'sc_new', name: 'New page' };
-  const ok = (log: string, extra: object = {}) => ({ ok: true, log, outputEntries: [], hasWarning: false, hasError: false, ...extra });
-  function client(execute: (code: string, tx: unknown) => unknown) {
-    return { commandUser: 'admin', serverUrl: BMP, executeEc: vi.fn(async (code: string, _rid: unknown, tx: unknown) => execute(code, tx)) };
-  }
-  async function run(ctx: any, msg: object) {
-    const out: any[] = [];
-    await (await handler('POINT_TELL_CREATE_PAGE'))({ type: 'POINT_TELL_CREATE_PAGE', environment: 'env', plan, ...msg } as never, (r: unknown) => out.push(r), { isOneShot: true, ctx } as never);
-    return out[0];
-  }
-  const withClient = (c: unknown) => { const ctx = makeCtx(); ctx.client = c; ctx.logActivity = vi.fn(); return ctx; };
+describe('Point and tell is one way', () => {
+  it('has no message that stages in Blueprint, asks for a place or writes a page', async () => {
+    await handler('TOGGLE_POINT_TELL');
+    const { getHandler } = await import('../../handler-registry');
+    for (const type of ['POINT_TELL_STAGE', 'POINT_TELL_PARENTS', 'POINT_TELL_CREATE_PAGE']) {
+      expect(getHandler(type as never)).toBeUndefined();
+      expect(MESSAGE_ACCESS).not.toHaveProperty(type);
+    }
+  });
+});
 
-  it('a preview that BMP answers with a warning (a duplicate ID) is refused with its sentence and writes nothing', async () => {
-    const c = client(() => ok('x', { hasWarning: true, outputEntries: [{ logType: 'WARNING', message: "Id sc_new is already used and can't be assigned. A new id was assigned instead at line 2, column 28" }] }));
-    const res = await run(withClient(c), { phase: 'preview' });
-    expect(res).toMatchObject({ ok: false, error: "Id sc_new is already used and can't be assigned." });
-    expect(c.executeEc).toHaveBeenCalledTimes(1);
-    expect(c.executeEc.mock.calls[0][2]).toBe(false);
+describe('the Claude Desktop link', () => {
+  it('tries one test port alone when the worker was given one, else the range with the remembered port first', async () => {
+    const { linkDeps, LINK_TEST_PORT_KEY } = await import('../point-tell');
+    const held: Record<string, unknown> = { crev_claude_link_port: 47616 };
+    (globalThis as any).chrome = { storage: { session: { get: vi.fn(async () => ({ ...held })) } } };
+    expect(await linkDeps()).toEqual({ preferred: 47616 });
+    held[LINK_TEST_PORT_KEY] = 47650;
+    expect(await linkDeps()).toEqual({ basePort: 47650, count: 1, preferred: 47616 });
+    held.crev_claude_link_test_port_count = 3;
+    expect(await linkDeps()).toEqual({ basePort: 47650, count: 3, preferred: 47616 });
+    held.crev_claude_link_test_port_count = 9;
+    expect(await linkDeps()).toMatchObject({ basePort: 47650, count: 1 });
+    delete held.crev_claude_link_test_port_count;
+    for (const odd of [80, 70000, '47650', 47650.5]) {
+      held[LINK_TEST_PORT_KEY] = odd;
+      expect(await linkDeps(), String(odd)).toEqual({ preferred: 47616 });
+    }
   });
 
-  it('commit needs the receipt of a preview of the same plan, uses it once, writes, and reads back', async () => {
-    const made = '<<<CREV_NEWPAGE>>>5065626956881177284|Scorecard|sc_new|4797501244326270080';
-    const c = client((_code, tx) => ok(tx ? made : made));
-    const ctx = withClient(c);
-    expect(await run(ctx, { phase: 'commit' })).toMatchObject({ ok: false });
-    const pre = await run(ctx, { phase: 'preview' });
-    expect(pre.ok).toBe(true);
-    expect(await run(ctx, { phase: 'commit', plan: { ...plan, name: 'Other' }, previewId: pre.previewId })).toMatchObject({ ok: false });
-    const pre2 = await run(ctx, { phase: 'preview' });
-    const done = await run(ctx, { phase: 'commit', previewId: pre2.previewId });
-    expect(done).toMatchObject({ ok: true, rid: '5065626956881177284', id: 'sc_new' });
-    expect(c.executeEc.mock.calls.filter(x => x[2] === true)).toHaveLength(1);
-    expect(await run(ctx, { phase: 'commit', previewId: pre2.previewId })).toMatchObject({ ok: false });
-  });
-
-  it('a plan that could carry code never reaches the server, and a content script may send it', async () => {
-    const c = client(() => ok(''));
-    expect(await run(withClient(c), { phase: 'preview', plan: { ...plan, name: 'a\nb' } })).toMatchObject({ ok: false });
-    expect(c.executeEc).not.toHaveBeenCalled();
-    expect(MESSAGE_ACCESS.POINT_TELL_CREATE_PAGE).toEqual(['content']);
+  it('opens the Claude Desktop page next to the asking tab, or brings its open tab forward', async () => {
+    const page = 'chrome-extension://abc/claude-setup/claude-setup.html';
+    const tabs: Array<{ id: number; windowId: number; index: number; url: string }> = [{ id: 3, windowId: PANEL_WINDOW, index: 2, url: BMP }];
+    const create = vi.fn(async (p: { url: string }) => { tabs.push({ id: 9, windowId: PANEL_WINDOW, index: 3, url: p.url }); });
+    const update = vi.fn(async () => undefined);
+    (globalThis as any).chrome = {
+      runtime: { getURL: (p: string) => `chrome-extension://abc/${p}` },
+      tabs: { query: vi.fn(async () => tabs), get: vi.fn(async (id: number) => tabs.find(t => t.id === id)), create, update },
+      windows: { update: vi.fn(async () => undefined) },
+    };
+    const open = await handler('OPEN_CLAUDE_SETUP');
+    await open({ type: 'OPEN_CLAUDE_SETUP' } as never, () => {}, { isOneShot: true, senderTabId: 3, ctx: makeCtx() } as never);
+    expect(create).toHaveBeenCalledWith({ url: page, windowId: PANEL_WINDOW, index: 3, openerTabId: 3 });
+    await open({ type: 'OPEN_CLAUDE_SETUP' } as never, () => {}, { isOneShot: true, senderTabId: 3, ctx: makeCtx() } as never);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(update).toHaveBeenCalledWith(9, { active: true });
+    expect(MESSAGE_ACCESS.OPEN_CLAUDE_SETUP).toEqual(['content']);
   });
 });

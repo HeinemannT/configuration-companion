@@ -225,6 +225,14 @@ export class ConnectTab implements Tab {
         const panel = getTabPanel('connect');
         if (panel && !this.editing) this.render(panel);
       }).catch(() => {});
+      // Voice comments can also be turned on from the comment field on a page: the setting shown here follows.
+      chrome.storage.onChanged.addListener((changes, area) => {
+        const change = changes[VOICE_KEY];
+        if (area !== 'local' || !change) return;
+        this.voice = readVoicePrefs(change.newValue);
+        const panel = getTabPanel('connect');
+        if (panel && !this.editing) this.render(panel);
+      });
     } catch { /* no extension storage here */ }
   }
 

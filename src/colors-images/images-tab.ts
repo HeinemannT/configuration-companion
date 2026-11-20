@@ -1,38 +1,61 @@
 /**
  * The Images tab: the folders of the workspace that hold image files (nested
  * as they are in BMP, with counts) on the left, the images as tiles, an
- * Adjust panel on the right (color, size, padding, format, with a preview).
- * Drop files or a folder, or use "Add files": new files appear under New with
- * IDs proposed from their names. One confirm bar lists what a save adds or
- * changes; the write is previewed on the server, and a fresh read checks it.
- * File content is read only for the thumbnails in view and for the images
- * the person selects to adjust.
+ * Adjust panel on the right with a preview. In view: color (original, one
+ * color, or swap single colors of an SVG), size, padding, format. Behind
+ * More: turn, a shape behind the icon, line width (line icons), trim. A
+ * selected image's file can be replaced; it keeps its ID. Drop files or a
+ * folder, or use "Add files": new files appear under New with IDs proposed
+ * from their names. One confirm bar lists what a save adds or changes; the
+ * write is previewed on the server, and a fresh read checks it. File
+ * content is read only for the thumbnails in view and for the images the
+ * person selects.
  */
 import { attrs, btn, el, icon } from '../lib/dom';
 import { normalizeHex } from '../lib/colors-images/color-math';
 import {
-  buildImageTree, EXTENSION_OF_MIME, folderPath, imagesIn, totalImages, type FolderNode, type ImageFile, type ImageIndex,
+  buildImageTree, EXTENSION_OF_MIME, folderPath, imageMime, imagesIn, totalImages, type FolderNode, type ImageFile, type ImageIndex,
 } from '../lib/colors-images/image-files';
 import {
   buildFileOps, idProblem, isOverLimit, newImagesFor, outputName, overLimitText, verifyFiles, type NewImage,
 } from '../lib/colors-images/images-draft';
 import {
-  bytesToBase64, DEFAULT_ADJUST, processImage, SIZES, type AdjustSettings, type ImageOutput,
+  bytesToBase64, changesDrawing, DEFAULT_ADJUST, processImage, SIZES, type AdjustSettings, type ImageOutput, type ShapeKind,
 } from '../lib/colors-images/image-process';
+import { CURRENT_COLOR, hasStrokes, LINE_WIDTHS, svgColors } from '../lib/colors-images/svg-colors';
+import { flip, isTurned, NO_TURN, rotateBy, type Turn } from '../lib/colors-images/svg-geometry';
 import { encodeContent } from '../lib/colors-images/content-encoding';
 import { tooLargeText } from '../lib/colors-images/write-ops';
 import { ThumbCache, type ThumbState } from '../lib/colors-images/thumb-cache';
-import { readImageBytes, readImages, writeChanges } from './api';
+import type { ColorSetData } from '../lib/types';
+import { readColors, readImageBytes, readImages, writeChanges } from './api';
+import { closeColorPop, openColorPop } from './color-pop';
 import { drawConfirmBar, readFoot, statusBlock, type ConfirmRow, type PageCtx } from './common';
 import { filesFromDrop, filesFromInput, type PickedFile } from './dropped-files';
+import { pageIcon } from './icons';
 import type { Tab } from './colors-tab';
 
 type Format = 'auto' | 'svg' | 'png';
-interface Settings { color: AdjustSettings['color']; size: AdjustSettings['size']; padding: number; format: Format }
+interface Settings {
+  color: { mode: 'original' | 'one' | 'swap'; hex: string; map: Record<string, string> };
+  size: AdjustSettings['size']; padding: number; format: Format;
+  turn: Turn; trim: boolean; shape: { kind: ShapeKind; hex: string }; line: number | 'keep';
+}
 
-const DEFAULTS: Settings = { color: { mode: 'original', hex: DEFAULT_ADJUST.color.hex }, size: 'keep', padding: 0, format: 'auto' };
+const defaults = (): Settings => ({
+  color: { mode: 'original', hex: DEFAULT_ADJUST.color.hex, map: {} }, size: 'keep', padding: 0, format: 'auto',
+  turn: NO_TURN, trim: false, shape: { kind: 'none', hex: '#E8E8E8' }, line: 'keep',
+});
+
+/** At most this many colors are offered to swap (across the selected SVGs). */
+const SWAP_LIMIT = 8;
 
 interface Made { sig: string; promise: Promise<ImageOutput>; out?: ImageOutput; url?: string; error?: string }
+interface Source { bytes: Uint8Array; mime: string }
+interface SvgInfo { colors: string[]; strokes: boolean }
+
+const isSvgMime = (mime: string) => mime === 'image/svg+xml';
+const kb = (n: number) => `${(n / 1024).toFixed(n < 10_240 ? 1 : 0)} KB`;
 
 export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string | null): void } {
   let index: ImageIndex | null = null;
@@ -44,7 +67,8 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
   let query = '';
   let news: NewImage[] = [];
   let selection = new Set<string>();
-  let settings: Settings = { ...DEFAULTS, color: { ...DEFAULTS.color } };
+  let settings: Settings = defaults();
+  let moreOpen = false;
   let counter = 0;
   let saving = false;
   let saveError = '';
@@ -52,8 +76,16 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
   let resultBad = false;
   let note = '';
   let preparing = 0;
+  let holding = false;
+  let colorSets: ColorSetData[] | null = null;
+  let colorSetsLoading: Promise<void> | null = null;
   const made = new Map<string, Made>();
   const objectUrls = new Map<string, string>();
+  /** Files chosen to replace an existing image's file, by RID. */
+  const replaced = new Map<string, Source & { fileName: string }>();
+  /** The bytes of selected existing images, once read. */
+  const sources = new Map<string, Source>();
+  const svgInfo = new Map<string, SvgInfo>();
 
   const thumbs = new ThumbCache(async rids => readImageBytes(rids));
   const side = el('div', 'ci-side');
@@ -64,7 +96,8 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
   const root = el('div', 'ci-view ci-images', side, main, panel, bar);
   root.hidden = true;
   const fileInput = attrs(el('input') as HTMLInputElement, { type: 'file', multiple: '', accept: 'image/*', hidden: '' });
-  root.append(fileInput);
+  const replaceInput = attrs(el('input') as HTMLInputElement, { type: 'file', accept: 'image/*', hidden: '' });
+  root.append(fileInput, replaceInput);
 
   const existing = (rid: string): ImageFile | undefined => index?.files.find(f => f.rid === rid);
   const newItem = (key: string): NewImage | undefined => news.find(n => n.key === key);
@@ -82,7 +115,7 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
       tree = buildImageTree(index);
       fetchedAt = r.fetchedAt;
       if (r.error) loadError = `Showing the list read earlier. ${r.error}`;
-      if (force) thumbs.clear();
+      if (force) { thumbs.clear(); sources.clear(); svgInfo.clear(); }
       if (selFolder !== null && !folderPath(index, selFolder)) selFolder = null;
     } catch (e) {
       loadError = e instanceof Error ? e.message : String(e);
@@ -92,9 +125,23 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
     }
   }
 
+  /** The workspace's colors, for the swatches of the color popover (the copy read for the Colors tab). */
+  function needColorSets(onReady: () => void): void {
+    if (colorSets) return;
+    colorSetsLoading ??= ctx.work(readColors(false)).then(r => { colorSets = r.sets; }, () => { colorSets = []; });
+    void colorSetsLoading.then(onReady);
+  }
+
   // ── what the settings do to a file ────────────────────────────────
 
-  const isSvgMime = (mime: string) => mime === 'image/svg+xml';
+  const mimeOfName = (name: string): string => imageMime(name) ?? 'image/png';
+
+  /** The type an image is read as: a replaced file's, or its own. */
+  function sourceMime(key: string): string {
+    const n = newItem(key);
+    if (n) return n.mime;
+    return replaced.get(key)?.mime ?? mimeOfName(existing(key)?.name ?? '');
+  }
 
   /** The format written for a file of this type: an SVG stays an SVG (BMP draws it on a button) unless PNG is chosen; a picture is PNG when adjusted. */
   function formatFor(mime: string): 'svg' | 'png' {
@@ -103,24 +150,33 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
     return 'svg';
   }
 
-  function adjustFor(mime: string, isNew: boolean): AdjustSettings {
-    return { color: settings.color, size: settings.size, padding: settings.padding, format: formatFor(mime) };
+  function adjustFor(mime: string): AdjustSettings {
+    const s = settings;
+    return {
+      color: { mode: s.color.mode, hex: s.color.hex, map: s.color.map }, size: s.size, padding: s.padding, format: formatFor(mime),
+      turn: s.turn, trim: s.trim, shape: s.shape, line: s.line,
+    };
   }
 
-  /** Does the person's choice change this existing file at all? */
-  function touches(file: ImageFile, mime: string): boolean {
-    if (settings.color.mode === 'one' || settings.size !== 'keep' || settings.padding > 0) return true;
-    return isSvgMime(mime) && settings.format === 'png';
+  /** Does the person's choice change this existing file at all? Trim alone does not when it left the drawing as it was. */
+  function touches(file: ImageFile): boolean {
+    if (replaced.has(file.rid)) return true;
+    const mime = sourceMime(file.rid);
+    if (isSvgMime(mime) && settings.format === 'png') return true;
+    const adjust = adjustFor(mime);
+    if (!changesDrawing(adjust)) return false;
+    const trimOnly = adjust.trim && !changesDrawing({ ...adjust, trim: false });
+    return !(trimOnly && made.get(file.rid)?.out?.trimSkipped);
   }
 
-  function sigOf(a: AdjustSettings): string {
-    return JSON.stringify([a.color.mode === 'one' ? a.color.hex : '', a.size, a.padding, a.format]);
+  function sigOf(a: AdjustSettings, key: string): string {
+    return JSON.stringify([a, replaced.has(key) ? replaced.get(key)!.fileName : '']);
   }
 
   /** Start (or reuse) the processing of one source under the current settings. */
-  function make(key: string, source: { bytes: Uint8Array; mime: string }, isNew: boolean): Made {
-    const adjust = adjustFor(source.mime, isNew);
-    const sig = sigOf(adjust);
+  function make(key: string, source: Source): Made {
+    const adjust = adjustFor(source.mime);
+    const sig = sigOf(adjust, key);
     const old = made.get(key);
     if (old && old.sig === sig) return old;
     if (old?.url) URL.revokeObjectURL(old.url);
@@ -145,7 +201,7 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
   /** Redraw what depends on processed results, once they settle. */
   function schedule(): void {
     clearTimeout(timer);
-    timer = setTimeout(() => { drawGrid(); drawPreview(); drawBar(); }, 40);
+    timer = setTimeout(() => { drawSide(); drawGrid(); drawPreview(); drawBar(); }, 40);
   }
 
   /** Why the file as it would be written does not fit one write (its size and the limit), or null.
@@ -158,23 +214,52 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
     const n = newItem(key);
     if (n) return isOverLimit({ item: n }, out, bytesToBase64) ? overLimitText(outputName(n.fileName, out.mime), base64) : null;
     const f = existing(key);
-    if (!f || !selection.has(key) || !touches(f, mimeOfName(f.name))) return null;
+    if (!f || !selection.has(key) || !touches(f)) return null;
     return isOverLimit({ file: f }, out, bytesToBase64) ? overLimitText(outputName(f.name, out.mime), base64) : null;
   }
 
-  /** Existing files the current settings change, with their bytes once read. */
+  /** Existing files the current settings change. */
   function changedExisting(): ImageFile[] {
     if (!index) return [];
-    return [...selection].map(existing).filter((f): f is ImageFile => !!f && touches(f, mimeOfName(f.name)));
+    return [...selection].map(existing).filter((f): f is ImageFile => !!f && touches(f));
   }
 
-  const mimeOfName = (name: string): string => (/\.svg$/i.test(name) ? 'image/svg+xml' : /\.png$/i.test(name) ? 'image/png' : /\.jpe?g$/i.test(name) ? 'image/jpeg' : 'image/' + (name.split('.').pop() ?? 'png').toLowerCase());
+  /** The bytes of a selected image as it is now (or as replaced). */
+  function sourceOf(key: string): Source | undefined {
+    const n = newItem(key);
+    if (n) return { bytes: n.bytes, mime: n.mime };
+    return replaced.get(key) ?? sources.get(key);
+  }
 
-  /** Produce outputs for every new image and every changed file (reading the bytes of the latter). */
+  function learn(key: string, src: Source): void {
+    if (svgInfo.has(key) || !isSvgMime(src.mime)) return;
+    try {
+      const doc = new DOMParser().parseFromString(new TextDecoder().decode(src.bytes), 'image/svg+xml');
+      const svg = doc.documentElement;
+      if (doc.querySelector('parsererror') || svg.localName !== 'svg') return;
+      svgInfo.set(key, { colors: svgColors(svg).map(c => c.key), strokes: hasStrokes(svg) });
+    } catch { /* not an SVG after all: no colors to offer */ }
+  }
+
+  /** Read what the selection needs (bytes of selected images), then produce outputs for new and changed ones. */
   function prepare(): void {
-    for (const n of news) make(n.key, { bytes: n.bytes, mime: n.mime }, true);
-    for (const f of changedExisting()) {
-      void thumbs.bytes(f.rid, f.name).then(t => { make(f.rid, { bytes: t.bytes, mime: t.mime }, false); schedule(); }, () => schedule());
+    for (const n of news) { learn(n.key, { bytes: n.bytes, mime: n.mime }); make(n.key, { bytes: n.bytes, mime: n.mime }); }
+    for (const key of selection) {
+      const f = existing(key);
+      if (!f) continue;
+      const known = sourceOf(key);
+      if (known) {
+        learn(key, known);
+        if (touches(f)) make(key, known);
+        continue;
+      }
+      void thumbs.bytes(f.rid, f.name).then(t => {
+        const src = { bytes: t.bytes, mime: t.mime };
+        sources.set(f.rid, src);
+        learn(f.rid, src);
+        if (selection.has(f.rid) && touches(f)) make(f.rid, sourceOf(f.rid)!);
+        drawPanel(); schedule();
+      }, () => schedule());
     }
   }
 
@@ -196,8 +281,10 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
         for (const n of nodes) { list.append(row(n.id, n.name, n.count, depth, folderPath(index!, n.id))); walk(n.children, depth + 1); }
       };
       walk(tree, 0);
+    } else if (loading) {
+      list.append(...[72, 56, 64, 48, 60].map(w => attrs(el('div', 'ci-skel-row'), { style: `width:${w}%` })));
     }
-    side.replaceChildren(head, list, readFoot(fetchedAt, () => { void load(true); }, unsaved() ? 'Save or cancel the changes first' : undefined));
+    side.replaceChildren(head, list, readFoot(fetchedAt, () => { void load(true); }, unsaved() ? 'Save or cancel the changes first' : undefined, loading));
   }
 
   // ── the images ────────────────────────────────────────────────────
@@ -231,19 +318,24 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
     return box;
   }
 
-  function tile(key: string, name: string, id: string, thumb: HTMLElement, opts: { selected: boolean; badge?: string; idInput?: NewImage; over?: string | null }): HTMLElement {
+  function toggle(key: string): void {
+    if (selection.has(key)) selection.delete(key); else selection.add(key);
+    result = '';
+    closeColorPop();
+    resetForSelection();
+    prepare();
+    drawAll();
+  }
+
+  function tile(key: string, name: string, id: string, thumb: HTMLElement, opts: { selected: boolean; badge?: string; idInput?: NewImage; over?: string | null; changed?: boolean }): HTMLElement {
     const t = el('div', `ci-itile${opts.selected ? ' on' : ''}`);
     const check = opts.selected ? el('span', 'ci-ck', icon('i-check', 'ic-sm')) : null;
-    thumb.append(...[check, opts.over ? attrs(el('span', 'ci-over', 'Too large'), { title: opts.over }) : null, opts.badge ? el('span', 'ci-fmt', opts.badge) : null].filter((x): x is HTMLElement => !!x));
-    const pick = btn('ci-itile-pick', `${name}, ${id}`, () => {
-      if (selection.has(key)) selection.delete(key); else selection.add(key);
-      result = '';
-      resetFormatForSelection();
-      prepare();
-      drawAll();
-    }, thumb);
+    thumb.append(...[check, opts.over ? attrs(el('span', 'ci-over', 'Too large'), { title: opts.over }) : null,
+      opts.changed ? attrs(el('span', 'ci-dot'), { title: 'Changed' }) : null,
+      opts.badge ? el('span', 'ci-fmt', opts.badge) : null].filter((x): x is HTMLElement => !!x));
+    const pick = btn('ci-itile-pick', `${name}, ${id}`, () => toggle(key), thumb);
     pick.setAttribute('aria-pressed', String(opts.selected));
-    t.append(pick, el('div', 'ci-nm', name));
+    t.append(pick, attrs(el('div', 'ci-nm', name), { title: name }));
     const item = opts.idInput;
     if (item && index) {
       const input = attrs(el('input', 'ci-idin') as HTMLInputElement, { 'aria-label': `ID of ${name}`, spellcheck: 'false' });
@@ -257,9 +349,11 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
         drawBar();
       });
       t.append(input);
-    } else t.append(el('div', 'ci-id', id));
+    } else t.append(attrs(el('div', 'ci-id', id), { title: id }));
     return t;
   }
+
+  const badgeOf = (mime: string) => (EXTENSION_OF_MIME[mime] ?? 'png').toUpperCase();
 
   function newTile(n: NewImage): HTMLElement {
     const m = made.get(n.key);
@@ -268,25 +362,31 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
     thumb.append(attrs(el('img'), { src: url, alt: '', draggable: 'false' }));
     const out = m?.out;
     return tile(n.key, outputName(n.fileName, out?.mime ?? n.mime), n.id, thumb, {
-      selected: selection.has(n.key), badge: (EXTENSION_OF_MIME[out?.mime ?? n.mime] ?? 'png').toUpperCase(), idInput: n, over: overText(n.key),
+      selected: selection.has(n.key), badge: badgeOf(out?.mime ?? n.mime), idInput: n, over: overText(n.key),
     });
   }
 
   function fileTile(f: ImageFile): HTMLElement {
     const thumb = thumbBox(f.rid, f.name);
     const m = made.get(f.rid);
-    if (m?.url && selection.has(f.rid) && touches(f, mimeOfName(f.name))) {
-      thumb.replaceChildren(attrs(el('img'), { src: m.url, alt: '', draggable: 'false' }));
-    }
-    return tile(f.rid, f.name, f.id, thumb, { over: overText(f.rid), selected: selection.has(f.rid), badge: /\.svg$/i.test(f.name) ? 'SVG' : /\.png$/i.test(f.name) ? 'PNG' : (f.name.split('.').pop() ?? '').toUpperCase() });
+    const changed = selection.has(f.rid) && touches(f);
+    if (m?.url && changed) thumb.replaceChildren(attrs(el('img'), { src: m.url, alt: '', draggable: 'false' }));
+    const ext = (f.name.split('.').pop() ?? '').toUpperCase();
+    return tile(f.rid, f.name, f.id, thumb, { over: overText(f.rid), selected: selection.has(f.rid), badge: changed && m?.out ? badgeOf(m.out.mime) : ext, changed });
   }
 
   function dropTile(): HTMLElement {
-    return btn('ci-itile drop', 'Add files', () => fileInput.click(), el('div', 'ci-thumb', icon('i-plus')), el('div', 'ci-nm muted', 'Drop files or a folder'));
+    return btn('ci-itile drop', 'Add files', () => fileInput.click(), el('div', 'ci-thumb', icon('i-plus')), el('div', 'ci-nm muted', 'Drop files here'));
   }
 
   function group(title: string, count: number, tiles: HTMLElement[]): HTMLElement {
     return el('section', 'ci-group', el('div', 'ci-ghead', title, el('span', 'ci-gn', String(count))), el('div', 'ci-igrid', ...tiles));
+  }
+
+  function emptyBlock(title: string, withAdd: boolean): HTMLElement {
+    return el('div', 'ci-empty', el('div', 'ci-empty-t', title),
+      withAdd ? el('div', 'ci-empty-s', 'Drop files or a folder here') : null,
+      withAdd ? btn('ui-btn', undefined, () => fileInput.click(), icon('i-plus', 'ic-sm'), 'Add files') : null);
   }
 
   function drawGrid(): void {
@@ -294,7 +394,9 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
     const top = scroll?.scrollTop ?? 0;
     const body = el('div', 'ci-scroll');
     if (!index) {
-      main.replaceChildren(loading ? statusBlock('Reading the images…') : statusBlock(loadError || 'The images were not read.', () => { void load(true); }));
+      if (loading) {
+        main.replaceChildren(el('div', 'ci-mhead', el('div', 'ci-skel-bar')), el('div', 'ci-scroll', el('div', 'ci-igrid', ...Array.from({ length: 10 }, () => el('div', 'ci-itile skel', el('div', 'ci-thumb'), el('div', 'ci-skel-row'), attrs(el('div', 'ci-skel-row'), { style: 'width:60%' }))))));
+      } else main.replaceChildren(statusBlock(loadError || 'The images were not read.', () => { void load(true); }));
       return;
     }
     const groups: HTMLElement[] = [];
@@ -302,7 +404,7 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
     const q = query.trim().toLowerCase();
     if (q) {
       const hits = index.files.filter(f => f.name.toLowerCase().includes(q) || f.id.toLowerCase().includes(q));
-      groups.push(group('Matches', hits.length, hits.map(fileTile)));
+      groups.push(hits.length ? group('Matches', hits.length, hits.map(fileTile)) : el('div', 'ci-empty', el('div', 'ci-empty-t', 'No matches'), el('div', 'ci-empty-s', `Nothing named “${query.trim()}”`)));
     } else {
       const shown = imagesIn(index, tree, selFolder);
       const byFolder = new Map<string, ImageFile[]>();
@@ -313,8 +415,8 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
         const leaf = index.folders.find(f => f.id === id)?.name ?? id;
         groups.push(group(leaf, files.length, files.map(fileTile)));
       }
-      if (!groups.length) groups.push(el('div', 'ci-state', 'No images here.'));
-      if (!news.length) groups[0].querySelector('.ci-igrid')?.append(dropTile());
+      if (!groups.length) groups.push(emptyBlock(index.files.length ? 'No images in this folder' : 'No images yet', true));
+      else if (!news.length) groups[0].querySelector('.ci-igrid')?.append(dropTile());
     }
     body.append(...groups);
     const head = el('div', 'ci-mhead', (() => {
@@ -322,11 +424,10 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
       input.value = query;
       input.addEventListener('input', () => { query = input.value; result = ''; drawGrid(); main.querySelector<HTMLInputElement>('.ci-search input')?.focus(); });
       return el('div', 'ci-search ui-search', icon('i-search', 'ic-sm'), input);
-    })(), btn('ui-btn ci-add', undefined, () => fileInput.click(), icon('i-plus', 'ic-sm'), 'Add files'),
-    loadError ? el('span', 'ci-warn', loadError) : null,
-    note ? el('span', 'ci-warn', note) : null,
-    result ? el('span', `ci-result${resultBad ? ' bad' : ''}`, result) : null);
-    main.replaceChildren(head, body);
+    })(), btn('ui-btn ci-add', undefined, () => fileInput.click(), icon('i-plus', 'ic-sm'), 'Add files'));
+    const notes = [loadError ? el('span', 'ci-warn', loadError) : null, note ? el('span', 'ci-warn', note) : null,
+      result ? el('span', `ci-result${resultBad ? ' bad' : ''}`, result) : null].filter((x): x is HTMLElement => !!x);
+    main.replaceChildren(head, notes.length ? el('div', 'ci-notes', ...notes) : '', body);
     body.scrollTop = top;
     const q2 = main.querySelector<HTMLInputElement>('.ci-search input');
     if (q2 && document.activeElement === document.body && query) { /* keep the caret where the person was typing */ q2.focus(); q2.setSelectionRange(query.length, query.length); }
@@ -334,27 +435,42 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
 
   // ── Adjust ────────────────────────────────────────────────────────
 
-  function selectedCount(): number { return selection.size; }
+  const selectedKeys = () => [...selection];
+  const allSvg = () => selectedKeys().every(k => isSvgMime(sourceMime(k)));
 
   /** The format segment shows what would be written for the selection. */
-  function shownFormat(): 'svg' | 'png' {
+  function shownFormat(): 'svg' | 'png' | null {
     if (settings.format !== 'auto') return settings.format;
-    if ([...selection].some(k => newItem(k))) return 'png';
-    const first = [...selection].map(existing).find(f => f);
-    return first && /\.svg$/i.test(first.name) ? 'svg' : 'png';
+    const svg = selectedKeys().filter(k => isSvgMime(sourceMime(k))).length;
+    // A mix stays as each file is (an SVG stays an SVG, a picture becomes PNG when changed): neither is pressed.
+    return svg === selection.size ? 'svg' : svg === 0 ? 'png' : null;
   }
 
-  /** A new selection starts from the file's own format: an SVG stays an SVG until PNG is chosen. */
-  function resetFormatForSelection(): void {
-    if (settings.format !== 'auto' && selection.size === 0) settings = { ...settings, format: 'auto' };
+  /** An empty selection starts again from the defaults. */
+  function resetForSelection(): void {
+    if (selection.size === 0) settings = defaults();
   }
 
-  function segment<T extends string | number>(label: string, options: Array<{ value: T; text: string; disabled?: boolean; title?: string }>, current: T, set: (v: T) => void): HTMLElement {
-    const group = attrs(el('span', 'ci-seg'), { role: 'group', 'aria-label': label });
+  /** The colors to swap: of one SVG, or the union of several (at most SWAP_LIMIT); null when not offered. */
+  function swapColors(): { colors: string[]; why?: string } {
+    if (!allSvg()) return { colors: [], why: 'SVG files only' };
+    const all: string[] = [];
+    for (const k of selectedKeys()) {
+      const info = svgInfo.get(k);
+      if (!info) continue;
+      for (const c of info.colors) if (!all.includes(c)) all.push(c);
+    }
+    if (all.length > SWAP_LIMIT) return { colors: [], why: `More than ${SWAP_LIMIT} colors` };
+    return { colors: all };
+  }
+
+  function segment<T extends string | number>(label: string, options: Array<{ value: T; text?: string; icon?: Node; disabled?: boolean; title?: string }>, current: T | null, set: (v: T) => void, cls = ''): HTMLElement {
+    const group = attrs(el('span', `ci-seg${cls ? ` ${cls}` : ''}`), { role: 'group', 'aria-label': label });
     for (const o of options) {
-      const b = btn(o.value === current ? 'on' : '', undefined, () => { if (!o.disabled) set(o.value); }, o.text);
+      const b = btn(o.value === current ? 'on' : '', o.icon ? (o.title ?? o.text) : undefined, () => { if (!o.disabled) set(o.value); }, o.icon ?? o.text ?? '');
       b.setAttribute('aria-pressed', String(o.value === current));
-      if (o.disabled) { b.disabled = true; if (o.title) b.title = o.title; }
+      if (o.title) b.title = o.title;
+      if (o.disabled) b.disabled = true;
       group.append(b);
     }
     return group;
@@ -362,79 +478,167 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
 
   const previewBox = el('div', 'ci-preview');
   const overBox = el('div', 'ci-over-note');
+
+  /** The images as they were: the thumbnail, the new file, or the file before it was replaced. */
+  function beforeUrl(key: string): string | undefined {
+    const n = newItem(key);
+    if (n) return objectUrls.get(key) ?? (() => { const u = URL.createObjectURL(new Blob([n.bytes as BlobPart], { type: n.mime })); objectUrls.set(key, u); return u; })();
+    const t = thumbs.peek(key);
+    return t?.state === 'ready' ? t.url : undefined;
+  }
+
   function drawPreview(): void {
-    overBox.replaceChildren(...[...selection].map(overText).filter((t): t is string => !!t).map(t => el('p', 'ci-warn', t)));
-    const keys = [...selection].slice(0, 4);
+    overBox.replaceChildren(...selectedKeys().map(overText).filter((t): t is string => !!t).map(t => el('p', 'ci-warn', t)));
+    const keys = selectedKeys().slice(0, 4);
     const imgs: Node[] = [];
+    let before = 0, after = 0, anyChange = false, ready = true, trimSkipped = false;
+    for (const k of selectedKeys()) {
+      const file = existing(k);
+      const changed = !file || touches(file);
+      const m = made.get(k);
+      const src = sourceOf(k);
+      if (m?.out?.trimSkipped && settings.trim) trimSkipped = true;
+      if (!changed) continue;
+      anyChange = true;
+      if (m?.out && src) { before += (file ? (sources.get(k)?.bytes.length ?? src.bytes.length) : src.bytes.length); after += m.out.bytes.length; } else ready = false;
+    }
     for (const k of keys) {
       const m = made.get(k);
       const file = existing(k);
-      const orig = file && !(file && touches(file, mimeOfName(file.name))) ? thumbs.peek(file.rid) : undefined;
-      if (m?.url && (!file || touches(file, mimeOfName(file.name)))) imgs.push(attrs(el('img'), { src: m.url, alt: '' }));
-      else if (orig?.state === 'ready') imgs.push(attrs(el('img'), { src: orig.url, alt: '' }));
+      const changed = !file || touches(file);
+      const shownUrl = holding || !changed ? beforeUrl(k) : m?.url;
+      if (shownUrl) imgs.push(attrs(el('img'), { src: shownUrl, alt: '' }));
       else if (m?.error) imgs.push(el('span', 'ci-warn', 'Cannot adjust'));
       else imgs.push(el('span', 'ci-spin'));
     }
-    previewBox.replaceChildren(...imgs);
-    previewBox.classList.toggle('empty', !imgs.length);
+    const holdBtn = anyChange ? btn('ci-before', undefined, () => undefined, 'Hold to see before') : null;
+    if (holdBtn) {
+      const down = (e: PointerEvent) => { e.preventDefault(); holding = true; holdBtn.setPointerCapture(e.pointerId); drawPreview(); };
+      const up = () => { if (!holding) return; holding = false; drawPreview(); };
+      holdBtn.addEventListener('pointerdown', down);
+      holdBtn.addEventListener('pointerup', up);
+      holdBtn.addEventListener('pointercancel', up);
+      holdBtn.classList.toggle('on', holding);
+    }
+    const sizeLine = anyChange && ready && before > 0 ? el('span', 'ci-pv-size', `${kb(before)} → ${kb(after)}`) : null;
+    previewBox.replaceChildren(el('div', 'ci-pv-imgs', ...imgs), sizeLine ?? '', holdBtn ?? '');
+    previewBox.classList.toggle('many', keys.length > 1);
+    previewBox.classList.toggle('before', holding);
+    const trimNote = panel.querySelector<HTMLElement>('.ci-trim-note');
+    if (trimNote) trimNote.hidden = !(settings.trim && trimSkipped);
   }
 
-  function changeSettings(next: Partial<Settings>): void {
+  function changeSettings(next: Partial<Settings>, redrawPanel = true): void {
     settings = { ...settings, ...next };
     result = '';
     prepare();
-    drawPanel();
+    if (redrawPanel) drawPanel(); else drawPreview();
+    drawSide();
     drawGrid();
     drawBar();
   }
 
+  function colorChip(hex: string, label: string, onPick: (hex: string) => void, original?: string, text?: string, cls = ''): HTMLButtonElement {
+    const b = btn(`ci-cchip${cls ? ` ${cls}` : ''}`, label, () => {
+      if (b.getAttribute('aria-expanded') === 'true') { closeColorPop(); return; }
+      const pop = openColorPop({ anchor: b, host: root, value: hex, sets: colorSets, ...(original ? { original } : {}), onPick });
+      needColorSets(() => pop.setSets(colorSets));
+    }, attrs(el('i'), { style: `background:${hex}` }), text ? el('span', '', text) : null);
+    b.setAttribute('aria-haspopup', 'dialog');
+    b.setAttribute('aria-expanded', 'false');
+    return b;
+  }
+
+  function moreCount(): number {
+    const s = settings;
+    return (isTurned(s.turn) ? 1 : 0) + (s.trim ? 1 : 0) + (s.shape.kind !== 'none' ? 1 : 0) + (s.line !== 'keep' ? 1 : 0);
+  }
+
   function drawPanel(): void {
-    const n = selectedCount();
     if (!index) { panel.replaceChildren(); return; }
+    const keys = selectedKeys();
+    const n = keys.length;
     if (!n) {
       panel.replaceChildren(el('div', 'ci-ph', el('span', 'ci-title', 'Adjust')),
-        el('p', 'ci-hint', 'Select images to adjust them. Drop files or a folder to add them.'));
+        el('p', 'ci-hint', 'Select one or more images.'));
       return;
     }
-    const mixedRaster = [...selection].every(k => {
-      const nm = newItem(k)?.fileName ?? existing(k)?.name ?? '';
-      return !/\.svg$/i.test(nm);
-    });
-    const hexInput = attrs(el('input', 'ci-inp mono') as HTMLInputElement, { 'aria-label': 'Color', spellcheck: 'false', maxlength: '7' });
-    hexInput.value = settings.color.hex;
-    const chip = attrs(el('span', 'ci-chip lg'), { style: `background:${settings.color.hex}` });
-    hexInput.addEventListener('input', () => {
-      const v = normalizeHex(hexInput.value);
-      if (!v) { hexInput.setAttribute('aria-invalid', 'true'); return; }
-      hexInput.removeAttribute('aria-invalid');
-      chip.style.background = v;
-      settings = { ...settings, color: { mode: 'one', hex: v } };
-      prepare(); drawGrid(); drawBar();
-    });
+    const one = n === 1 ? keys[0] : null;
+    const oneFile = one ? existing(one) : undefined;
+    const oneNew = one ? newItem(one) : undefined;
+    const svgOnly = allSvg();
+    const info = keys.map(k => svgInfo.get(k));
+    const lineIcons = svgOnly && info.every(i => i?.strokes);
+
+    // The header: the file and its ID, or the count.
+    const head = one
+      ? el('div', 'ci-ph two', attrs(el('span', 'ci-title', oneNew ? outputName(oneNew.fileName, made.get(one)?.out?.mime ?? oneNew.mime) : oneFile?.name ?? ''), { title: oneFile?.name ?? '' }),
+        el('span', 'ci-id', oneNew ? `New in ${folderPath(index, oneNew.folderId) || oneNew.folderId}` : oneFile?.id ?? ''))
+      : el('div', 'ci-ph', el('span', 'ci-title', `Adjust ${n} images`));
+
+    const rows: Array<HTMLElement | null> = [];
+    const swap = swapColors();
+    rows.push(el('div', 'ci-prop', el('span', '', 'Color'),
+      segment('Color', [
+        { value: 'original', text: 'Original' }, { value: 'one', text: 'One color' },
+        { value: 'swap', text: 'Swap colors', disabled: !!swap.why, ...(swap.why ? { title: swap.why } : {}) },
+      ], settings.color.mode, v => changeSettings({ color: { ...settings.color, mode: v } }))));
+    if (settings.color.mode === 'one') {
+      const hexInput = attrs(el('input', 'ci-inp mono') as HTMLInputElement, { 'aria-label': 'Color', spellcheck: 'false', maxlength: '7' });
+      hexInput.value = settings.color.hex;
+      const chip = colorChip(settings.color.hex, 'Choose a color', hex => {
+        hexInput.value = hex; hexInput.removeAttribute('aria-invalid');
+        chip.querySelector('i')!.setAttribute('style', `background:${hex}`);
+        changeSettings({ color: { ...settings.color, mode: 'one', hex } }, false);
+      });
+      hexInput.addEventListener('input', () => {
+        const v = normalizeHex(hexInput.value);
+        if (!v) { hexInput.setAttribute('aria-invalid', 'true'); return; }
+        hexInput.removeAttribute('aria-invalid');
+        chip.querySelector('i')!.setAttribute('style', `background:${v}`);
+        changeSettings({ color: { ...settings.color, mode: 'one', hex: v } }, false);
+      });
+      rows.push(el('div', 'ci-prop', el('span', ''), el('span', 'ci-inl', chip, hexInput)));
+    } else if (settings.color.mode === 'swap') {
+      const known = keys.every(k => svgInfo.has(k));
+      const chips = swap.colors.map(c => {
+        const to = settings.color.map[c];
+        const shown = to ?? (c === CURRENT_COLOR ? '#000000' : c);
+        const label = to ? to.slice(1) : c === CURRENT_COLOR ? 'Text color' : c.slice(1);
+        const chip = colorChip(shown, `Swap ${c === CURRENT_COLOR ? 'the text color' : c}`, hex => {
+          const map = { ...settings.color.map };
+          const was = c === CURRENT_COLOR ? null : c;
+          if (hex === was) delete map[c]; else map[c] = hex;
+          changeSettings({ color: { ...settings.color, map } }, false);
+          chip.querySelector('i')!.setAttribute('style', `background:${hex}`);
+          chip.querySelector('span')!.textContent = hex === was ? c.slice(1) : hex.slice(1);
+          chip.classList.toggle('chg', hex !== was);
+        }, c === CURRENT_COLOR ? undefined : c, label);
+        if (to) { chip.classList.add('chg'); chip.title = `${c === CURRENT_COLOR ? 'Text color' : c} → ${to}`; }
+        return chip;
+      });
+      rows.push(el('div', 'ci-prop top', el('span', ''), known
+        ? (chips.length ? el('div', 'ci-swaps', ...chips) : el('span', 'ci-hint', 'No colors to swap'))
+        : el('span', 'ci-spin')));
+    }
     const padding = attrs(el('input', 'ci-inp mono narrow') as HTMLInputElement, { 'aria-label': 'Padding in px', inputmode: 'numeric', maxlength: '2' });
     padding.value = String(settings.padding);
     padding.addEventListener('input', () => {
       const v = Math.min(12, Math.max(0, Math.round(Number(padding.value) || 0)));
-      settings = { ...settings, padding: v };
-      prepare(); drawGrid(); drawBar();
+      changeSettings({ padding: v }, false);
     });
-    const rows: HTMLElement[] = [
-      el('div', 'ci-prop', el('span', '', 'Color'),
-        segment('Color', [{ value: 'original', text: 'Original' }, { value: 'one', text: 'One color' }], settings.color.mode, v => changeSettings({ color: { ...settings.color, mode: v } }))),
-    ];
-    if (settings.color.mode === 'one') rows.push(el('div', 'ci-prop', el('span', ''), el('span', 'ci-inl', chip, hexInput)));
     rows.push(
       el('div', 'ci-prop', el('span', '', 'Size'),
         segment<string>('Size', [{ value: 'keep', text: 'Keep' }, ...SIZES.map(s => ({ value: String(s), text: String(s) }))], String(settings.size), v => changeSettings({ size: v === 'keep' ? 'keep' : Number(v) }))),
       el('div', 'ci-prop', el('span', '', 'Padding'), el('span', 'ci-inl', padding, el('span', 'ci-unit', 'px'))),
       el('div', 'ci-prop', el('span', '', 'Format'),
         segment<'svg' | 'png'>('Format', [
-          { value: 'svg', text: 'SVG', disabled: mixedRaster, title: 'Only an SVG file can stay an SVG' },
+          { value: 'svg', text: 'SVG', disabled: !keys.some(k => isSvgMime(sourceMime(k))), title: 'Only an SVG file can stay an SVG' },
           { value: 'png', text: 'PNG' },
         ], shownFormat(), v => changeSettings({ format: v }))),
     );
-    const newSel = [...selection].map(newItem).filter((x): x is NewImage => !!x);
-    if (newSel.length && index) {
+    const newSel = keys.map(newItem).filter((x): x is NewImage => !!x);
+    if (newSel.length) {
       const sel = attrs(el('select', 'ci-select') as HTMLSelectElement, { 'aria-label': 'Folder for the new files' });
       const current = newSel[0].folderId;
       const options = index.folders.map(f => ({ id: f.id, path: folderPath(index!, f.id) })).sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true }));
@@ -445,12 +649,58 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
       }
       sel.addEventListener('change', () => {
         for (const item of newSel) item.folderId = sel.value;
-        drawBar();
+        drawBar(); drawPanel();
       });
       rows.push(el('div', 'ci-prop', el('span', '', 'Folder'), sel));
     }
-    panel.replaceChildren(el('div', 'ci-ph', el('span', 'ci-title', `Adjust ${n} image${n === 1 ? '' : 's'}`)), previewBox, overBox, ...rows,
-      el('div', 'ci-end', btn('ci-link', undefined, () => { selection = new Set(); settings = { ...DEFAULTS, color: { ...DEFAULTS.color } }; drawAll(); }, 'Clear selection')));
+
+    // More: turn, shape, line width, trim.
+    const count = moreCount();
+    const moreBtn = btn(`ci-more${moreOpen ? ' open' : ''}`, undefined, () => { moreOpen = !moreOpen; drawPanel(); },
+      icon(moreOpen ? 'i-chev' : 'i-right', 'ic-sm'), el('span', '', 'More'), count && !moreOpen ? el('span', 'ci-more-n', String(count)) : null);
+    moreBtn.setAttribute('aria-expanded', String(moreOpen));
+    rows.push(moreBtn);
+    if (moreOpen) {
+      const turnBtn = (name: 'rotl' | 'rotr' | 'fliph' | 'flipv', label: string, next: () => Turn) => {
+        const b = btn('', label, () => changeSettings({ turn: next() }, false), pageIcon(name));
+        b.title = label;
+        return b;
+      };
+      const turns = attrs(el('span', 'ci-seg icons'), { role: 'group', 'aria-label': 'Turn' });
+      turns.append(
+        turnBtn('rotl', 'Rotate left', () => rotateBy(settings.turn, -1)), turnBtn('rotr', 'Rotate right', () => rotateBy(settings.turn, 1)),
+        turnBtn('fliph', 'Flip horizontal', () => flip(settings.turn, 'h')), turnBtn('flipv', 'Flip vertical', () => flip(settings.turn, 'v')));
+      rows.push(el('div', 'ci-prop', el('span', '', 'Turn'), el('span', 'ci-inl', turns,
+        isTurned(settings.turn) ? btn('ci-ib', 'Undo turn', () => changeSettings({ turn: NO_TURN }), icon('i-undo')) : null)));
+      rows.push(el('div', 'ci-prop', el('span', '', 'Shape'), el('span', 'ci-inl',
+        segment<ShapeKind>('Shape', [
+          { value: 'none', icon: pageIcon('none'), title: 'None' }, { value: 'circle', icon: pageIcon('circle'), title: 'Circle' }, { value: 'square', icon: pageIcon('square'), title: 'Rounded square' },
+        ], settings.shape.kind, v => changeSettings({ shape: { ...settings.shape, kind: v } }), 'icons'),
+        settings.shape.kind !== 'none' ? colorChip(settings.shape.hex, 'Shape color', hex => {
+          panel.querySelector('.ci-shape-chip i')?.setAttribute('style', `background:${hex}`);
+          changeSettings({ shape: { ...settings.shape, hex } }, false);
+        }, undefined, undefined, 'ci-shape-chip') : null)));
+      if (lineIcons) {
+        rows.push(el('div', 'ci-prop', el('span', '', 'Line'),
+          segment<string>('Line width', [{ value: 'keep', text: 'Keep' }, ...LINE_WIDTHS.map(w => ({ value: String(w), text: String(w) }))], String(settings.line), v => changeSettings({ line: v === 'keep' ? 'keep' : Number(v) }))));
+      }
+      const trim = attrs(el('input') as HTMLInputElement, { type: 'checkbox' });
+      trim.checked = settings.trim;
+      trim.addEventListener('change', () => changeSettings({ trim: trim.checked }, false));
+      const trimNote = attrs(el('span', 'ci-trim-note', 'Kept as is'), { title: 'A mask, clip path, filter or text decides its outline' });
+      trimNote.hidden = true;
+      rows.push(el('div', 'ci-prop', el('span', ''), el('label', 'ci-trim', trim, el('span', '', 'Trim empty space'), trimNote)));
+    }
+
+    // The end: replace the file of one existing image, clear the selection.
+    const rep = oneFile ? replaced.get(oneFile.rid) : undefined;
+    const end = el('div', 'ci-end',
+      rep ? el('div', 'ci-replaced', el('span', '', `Replaced with ${rep.fileName}`), btn('ci-link', undefined, () => { replaced.delete(oneFile!.rid); svgInfo.delete(oneFile!.rid); made.delete(oneFile!.rid); prepare(); drawAll(); }, 'Undo')) : null,
+      el('div', 'ci-end-row',
+        oneFile ? btn('ci-link', undefined, () => replaceInput.click(), 'Replace file') : null,
+        btn('ci-link quiet', undefined, () => { selection = new Set(); settings = defaults(); closeColorPop(); drawAll(); }, 'Clear selection')));
+    panel.replaceChildren(...[head, previewBox, overBox, ...rows, end].filter((x): x is HTMLElement => !!x));
+
     drawPreview();
   }
 
@@ -471,15 +721,17 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
       const p = idProblem(n, index, news);
       if (p && !problem) problem = p;
       rows.push({
-        lead: thumbImg(m?.url ?? objectUrls.get(n.key)), name: outputName(n.fileName, m?.out?.mime ?? n.mime),
+        lead: el('span', 'ci-pair', el('span', 'ci-plus', icon('i-plus', 'ic-sm')), thumbImg(m?.url ?? objectUrls.get(n.key))), name: outputName(n.fileName, m?.out?.mime ?? n.mime),
         detail: `${n.id}  in ${folderPath(index, n.folderId) || n.folderId}`, ...(p ? { problem: p } : {}),
       });
     }
     for (const f of changed) {
       const m = made.get(f.rid);
+      const name = m?.out ? outputName(f.name, m.out.mime) : f.name;
+      const rep = replaced.get(f.rid);
       rows.push({
         lead: el('span', 'ci-pair', thumbImg(undefined, thumbs.peek(f.rid)), icon('i-arrow', 'ic-sm'), thumbImg(m?.url)),
-        name: m?.out ? outputName(f.name, m.out.mime) : f.name, detail: f.id,
+        name, detail: [f.id, rep ? `file replaced with ${rep.fileName}` : '', name !== f.name ? `was ${f.name}` : ''].filter(Boolean).join('  ·  '),
         ...(m?.error ? { problem: m.error } : {}),
       });
     }
@@ -494,7 +746,7 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
       if (tooLarge.length) { skipped = `Left out: ${tooLargeText(tooLarge)}`; writable -= tooLarge.length; }
     }
     drawConfirmBar(bar, {
-      title: `Save ${writable > 0 ? writable : nChanges} change${(writable > 0 ? writable : nChanges) === 1 ? '' : 's'}`,
+      title: writable > 0 || !skipped ? `Save ${writable} change${writable === 1 ? '' : 's'}` : 'Nothing to save',
       rows,
       ...(skipped ? { skipped } : {}),
       ...(changed.length ? { note: changed.length === 1 ? 'Changes it everywhere it is linked.' : 'Changes them everywhere they are linked.' } : {}),
@@ -506,20 +758,28 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
     });
   }
 
-  function discard(): void {
+  function forgetWork(): void {
     for (const u of objectUrls.values()) URL.revokeObjectURL(u);
     objectUrls.clear();
     for (const m of made.values()) if (m.url) URL.revokeObjectURL(m.url);
     made.clear();
-    news = []; selection = new Set(); settings = { ...DEFAULTS, color: { ...DEFAULTS.color } }; saveError = ''; note = '';
+    replaced.clear();
+    for (const k of [...svgInfo.keys()]) if (!sources.has(k)) svgInfo.delete(k);
+    news = []; selection = new Set(); settings = defaults();
+    closeColorPop();
+  }
+
+  function discard(): void {
+    forgetWork();
+    saveError = ''; note = '';
     drawAll();
   }
 
   async function save(): Promise<void> {
     if (!index || saving) return;
     const changed = changedExisting();
-    const newOut: Array<{ item: NewImage; out: { bytes: Uint8Array; mime: string } }> = [];
-    const changeOut: Array<{ file: ImageFile; out: { bytes: Uint8Array; mime: string } }> = [];
+    const newOut: Array<{ item: NewImage; out: ImageOutput }> = [];
+    const changeOut: Array<{ file: ImageFile; out: ImageOutput }> = [];
     for (const n of news) { const o = made.get(n.key)?.out; if (!o) return; newOut.push({ item: n, out: o }); }
     for (const f of changed) { const o = made.get(f.rid)?.out; if (!o) return; changeOut.push({ file: f, out: o }); }
     const { ops, tooLarge } = buildFileOps(newOut, changeOut, bytesToBase64);
@@ -539,7 +799,7 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
         index = { folders: r.folders, files: r.files }; tree = buildImageTree(index); fetchedAt = r.fetchedAt;
         bad = verifyFiles(ops, index);
         const changedRids = changeOut.map(c => c.file.rid);
-        thumbs.clear();
+        thumbs.clear(); sources.clear(); svgInfo.clear();
         if (changedRids.length && !bad.length) {
           const back = await ctx.work(readImageBytes(changedRids));
           for (const c of changeOut) {
@@ -555,18 +815,14 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
       result = bad.length ? `Saved, but BMP does not hold it as sent: ${bad[0]}`
         : `Saved ${n} change${n === 1 ? '' : 's'}${tooLarge.length ? `. ${tooLargeText(tooLarge)}` : ''}`;
       resultBad = bad.length > 0;
-      for (const u of objectUrls.values()) URL.revokeObjectURL(u);
-      objectUrls.clear();
-      for (const m of made.values()) if (m.url) URL.revokeObjectURL(m.url);
-      made.clear();
-      news = []; selection = new Set(); settings = { ...DEFAULTS, color: { ...DEFAULTS.color } };
+      forgetWork();
     } finally {
       saving = false;
       drawAll();
     }
   }
 
-  // ── adding ────────────────────────────────────────────────────────
+  // ── adding and replacing ──────────────────────────────────────────
 
   async function add(files: PickedFile[]): Promise<void> {
     if (!index) return;
@@ -588,10 +844,31 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
     });
   }
 
+  async function replaceWith(rid: string, picked: PickedFile[]): Promise<void> {
+    const file = picked[0];
+    const f = existing(rid);
+    if (!file || !f) return;
+    const mime = imageMime(file.name);
+    if (!mime) { note = `${file.name} is not an image.`; drawGrid(); return; }
+    replaced.set(rid, { bytes: file.bytes, mime, fileName: file.name });
+    svgInfo.delete(rid);
+    // The new file's own colors decide what can be swapped.
+    if (settings.color.mode === 'swap') settings = { ...settings, color: { ...settings.color, map: {} } };
+    note = ''; result = '';
+    prepare();
+    drawAll();
+  }
+
   fileInput.addEventListener('change', () => {
     const list = fileInput.files;
     if (list?.length) void filesFromInput(list).then(add);
     fileInput.value = '';
+  });
+  replaceInput.addEventListener('change', () => {
+    const list = replaceInput.files;
+    const rid = [...selection][0];
+    if (list?.length && rid) void filesFromInput(list).then(p => replaceWith(rid, p));
+    replaceInput.value = '';
   });
   root.addEventListener('dragover', e => { if (e.dataTransfer?.types.includes('Files')) { e.preventDefault(); root.classList.add('dropping'); } });
   root.addEventListener('dragleave', e => { if (e.target === root || !root.contains(e.relatedTarget as Node | null)) root.classList.remove('dropping'); });

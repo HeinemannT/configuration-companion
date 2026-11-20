@@ -26,6 +26,9 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            claude-desktop/package-lock.json
 
       - name: Install
         run: npm ci

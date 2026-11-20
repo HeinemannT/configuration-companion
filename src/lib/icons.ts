@@ -12,7 +12,8 @@ const ph = (d: string, size = 12) =>
   `<svg width="${size}" height="${size}" viewBox="0 0 256 256" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="${d}"/></svg>`;
 
 export const ICON_PLAY = ph('M234.49,111.07,90.41,22.94A20,20,0,0,0,60,39.87V216.13a20,20,0,0,0,30.41,16.93l144.08-88.13a19.82,19.82,0,0,0,0-33.86ZM84,208.85V47.15L216.16,128Z');
-export const ICON_MIC = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><rect x="9" y="2.5" width="6" height="12" rx="3"/><path d="M5 11.5a7 7 0 0 0 14 0M12 18.5v3"/></svg>';
+/** The microphone: a capsule with a grille (`gcap`, `gr`: the held button fills the capsule), a cradle and a stand. */
+export const ICON_MIC = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect class="gcap" x="8.6" y="2.6" width="6.8" height="12" rx="3.4"/><path class="gr" d="M10.7 6.6h2.6M10.7 9.1h2.6M10.7 11.6h2.6" stroke-width="1.3"/><path d="M5.2 11.4a6.8 6.8 0 0 0 13.6 0"/><path d="M12 18.2v3M8.9 21.2h6.2"/></svg>';
 export const ICON_X = ph('M208.49,191.51a12,12,0,0,1-17,17L128,145,64.49,208.49a12,12,0,0,1-17-17L111,128,47.51,64.49a12,12,0,0,1,17-17L128,111l63.51-63.52a12,12,0,0,1,17,17L145,128Z');
 export const ICON_PLUS = ph('M228,128a12,12,0,0,1-12,12H140v76a12,12,0,0,1-24,0V140H40a12,12,0,0,1,0-24h76V40a12,12,0,0,1,24,0v76h76A12,12,0,0,1,228,128Z');
 export const ICON_MINUS = ph('M228,128a12,12,0,0,1-12,12H40a12,12,0,0,1,0-24H216A12,12,0,0,1,228,128Z');

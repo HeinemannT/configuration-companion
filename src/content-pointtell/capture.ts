@@ -19,15 +19,16 @@ type CaptureResult = Extract<InspectorMessage, { type: 'POINT_TELL_CAPTURE_DATA'
 const nextFrame = (): Promise<void> => new Promise(r => requestAnimationFrame(() => r()));
 const settle = async (): Promise<void> => { await nextFrame(); await nextFrame(); await new Promise(r => setTimeout(r, 80)); };
 
-/** Elements that must not be in the picture. Returns what puts them back. */
-function hideChrome(): () => void {
+/** Elements that must not be in the picture (`sent`: also the badges of marks sent before, for a picture that goes with the next sketch, whose numbers are its own). Returns what puts them back. */
+function hideChrome(sent = false): () => void {
   const hidden: Array<{ el: HTMLElement; visibility: string }> = [];
   const hide = (el: Element | null | undefined): void => {
     if (!(el instanceof HTMLElement)) return;
     hidden.push({ el, visibility: el.style.visibility });
     el.style.visibility = 'hidden';
   };
-  hide(pt.dock); hide(pt.fieldEl); hide(pt.hoverEl); hide(pt.panelEl); hide(pt.sheetEl);
+  hide(pt.dock); hide(pt.fieldEl); hide(pt.hoverEl); hide(pt.panelEl); hide(pt.sentEl); hide(pt.replyEl);
+  if (sent) pt.pinLayer?.querySelectorAll('.pt-badge.pt-sent').forEach(hide);
   pt.layer?.querySelectorAll('.pt-tip-badge').forEach(hide);
   hide(document.getElementById('crev-toast-container'));
   return () => { for (const h of hidden) h.el.style.visibility = h.visibility; };
@@ -184,4 +185,23 @@ export async function takeScreenshot(): Promise<void> {
     saveAsFile(out.blob);
     showToast('Screenshot saved as a file.', 'info', undefined, { key: 'crev-pt-shot' });
   }
+}
+
+let refusedIn = -1;
+
+/**
+ * A picture for Send to Claude, without any prompt: the worker's picture only. Chrome refuses it when the mode was
+ * not started by the shortcut or the right-click menu; the refusal is remembered for this opening so the dock does
+ * not blink on every send. Null means send the text alone.
+ */
+export async function captureForSend(): Promise<Blob | null> {
+  const gen = pt.gen;
+  if (refusedIn === gen) return null;
+  const restore = hideChrome(true);
+  let res: CaptureResult | undefined;
+  try { await settle(); res = await sendRequest<CaptureResult>({ type: 'POINT_TELL_CAPTURE' }); }
+  finally { restore(); }
+  if (res?.ok && res.dataUrl) return blobOf(res.dataUrl);
+  if (isPermissionRefusal(res?.error)) refusedIn = gen;
+  return null;
 }

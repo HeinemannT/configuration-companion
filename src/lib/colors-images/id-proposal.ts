@@ -81,11 +81,25 @@ export function proposeColorId(name: string, setId: string, colorIds: readonly s
   const prefix = (colorIds.length >= 2 ? wordsPrefix(colorIds) : null) ?? setId;
   let part = idPart(name) || 'color';
   if (part === prefix || part.startsWith(`${prefix}_`)) part = part.slice(prefix.length).replace(/^_/, '') || part;
+  part = withoutOverlap(prefix, part);
   let base = `${prefix}_${part}`;
   if (!/^[A-Za-z_]/.test(base)) base = `color_${base}`;
   let id = base, n = 2;
   while (!free(id)) id = `${base}_${n++}`;
   return id;
+}
+
+/**
+ * The words of `part` that the end of `prefix` already says, dropped: a prefix
+ * of `set_brand` and a name `Brand teal` give `set_brand_teal`, not `set_brand_brand_teal`.
+ * The prefix can end in a word of the neighbours' IDs (the neighbours of a scale or a paste).
+ */
+function withoutOverlap(prefix: string, part: string): string {
+  const a = prefix.split('_'), b = part.split('_');
+  for (let k = Math.min(a.length, b.length - 1); k >= 1; k--) {
+    if (a.slice(-k).join('_') === b.slice(0, k).join('_')) return b.slice(k).join('_');
+  }
+  return part;
 }
 
 /** A valid BMP ID: letters, digits and `_`, not empty. */

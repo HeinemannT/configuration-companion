@@ -33,11 +33,11 @@ beforeEach(() => {
 });
 
 describe('Utilities entries', () => {
-  it('are the six, in two groups by where they open', () => {
-    expect(UTILITIES.map(u => u.name)).toEqual(['Code Search', 'Transport', 'Numeric IDs', 'Access', 'Colors', 'Images']);
+  it('are the seven, in two groups by where they open', () => {
+    expect(UTILITIES.map(u => u.name)).toEqual(['Code Search', 'Transport', 'Numeric IDs', 'Access', 'Colors', 'Images', 'Claude Desktop']);
     expect(UTILITY_GROUPS.map(g => [g.label, g.ids])).toEqual([
       ['Over the BMP page', ['code-search', 'transport', 'numeric-ids']],
-      ['In a browser tab', ['access', 'colors', 'images']],
+      ['In a browser tab', ['access', 'colors', 'images', 'claude-desktop']],
     ]);
     // Every entry is in exactly one group.
     expect(UTILITY_GROUPS.flatMap(g => g.ids).sort()).toEqual(UTILITIES.map(u => u.id).sort());
@@ -52,6 +52,7 @@ describe('Utilities entries', () => {
       ['access', { type: 'OPEN_ACCESS_WORKSPACE' }],
       ['colors', { type: 'OPEN_COLORS_IMAGES', tab: 'colors' }],
       ['images', { type: 'OPEN_COLORS_IMAGES', tab: 'images' }],
+      ['claude-desktop', { type: 'OPEN_CLAUDE_SETUP' }],
     ]);
   });
 
@@ -77,7 +78,7 @@ describe('Utilities tab', () => {
     const { container, send } = mount();
     expect([...container.querySelectorAll('.ut-gh')].map(h => h.textContent)).toEqual(['Over the BMP page', 'In a browser tab']);
     expect([...container.querySelectorAll('.ut-row')].map(r => r.querySelector('.ut-nm')!.textContent)).toEqual(
-      ['Code Search', 'Transport', 'Numeric IDs', 'Access', 'Colors', 'Images'],
+      ['Code Search', 'Transport', 'Numeric IDs', 'Access', 'Colors', 'Images', 'Claude Desktop'],
     );
     for (const row of container.querySelectorAll('.ut-row')) {
       expect(row.tagName).toBe('BUTTON');
@@ -125,11 +126,11 @@ describe('Utilities tab', () => {
       row(id).click();
     }
     expect(send).not.toHaveBeenCalled();
-    for (const id of ['code-search', 'transport', 'numeric-ids']) {
+    for (const id of ['code-search', 'transport', 'numeric-ids', 'claude-desktop']) {
       expect(row(id).hasAttribute('aria-disabled'), id).toBe(false);
       row(id).click();
     }
-    expect(send).toHaveBeenCalledTimes(3);
+    expect(send).toHaveBeenCalledTimes(4);
   });
 
   it('names the server and where it opens in the tooltip of a browser-tab entry, as the header button did', () => {

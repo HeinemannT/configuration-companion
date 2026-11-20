@@ -48,6 +48,7 @@ import { clearAbandonedPrivateSessionRules } from './lib/bmp-private-session';
 import { openCompareWindow } from './lib/diff-launcher';
 import { openObjectViewWindow } from './lib/objectview-launcher';
 import { openSidePanelFromCommand } from './lib/side-panel-command';
+import { initCompanionTabs } from './lib/companion-tabs';
 import { logIdForError, takeHeldLogEntry } from './lib/toast-log';
 import { lockExtensionStorage } from './lib/storage-access';
 import { forgetEnrichBudget } from './lib/enrich-budget';
@@ -324,6 +325,8 @@ function persistBlueprintState() {
 }
 
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(e => log.swallow('sw:sidePanel', e));
+// Companion's own pages in a tab (Access, Colors and images) show no side panel.
+initCompanionTabs();
 
 // Per-site access: reconcile the dynamic content-script registrations with the granted origins at
 // boot and on every grant/revoke. Nothing is injected anywhere until the user approves a site.

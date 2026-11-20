@@ -11,6 +11,7 @@ import { findNode } from '../lib/layout/model';
 import { getBlueprintPageRid } from '../content-blueprint';
 import { blueprintFontFaceCss } from '../content-blueprint/font-face';
 import { rememberedTarget } from '../content-blueprint/resume-note';
+import { ensureOverlayStyle } from '../content-overlay-style';
 import POINTTELL_CSS from '../content-pointtell.css';
 import MARK_CSS from '../styles/mark.css';
 import MOODS_CSS from '../styles/mark-moods.css';
@@ -20,20 +21,21 @@ import { renderDock, type DockActions } from './dock';
 import { holdReading, look, react, startMascot, stopMascot } from './mascot';
 import { clearTags, revalidateTags, scheduleTag } from './tags';
 import { renderList, type ListActions } from './list';
+import { noteOpening, renderSent, sentRowHooks } from './sent-view';
+import { lookOnEntry, openedByUser, refreshSent, sent, startWorkingChat, stopSent, userMoved, wireSent } from './sent';
+import { renderReply, type ReplyActions } from './reply-card';
+import { clearUnlisted, sendAgain, sendAnswer } from './send';
+import { pingSentButton } from './dock';
+import { clearDone, type MarkStatus } from '../lib/point-tell/sent-marks';
+import type { SketchRow } from '../lib/claude-link';
 import { renderField } from './comment';
 import { endVoice, initVoice, listening } from './voice';
-import { renderSheet } from './sheet';
-import { stageInBlueprint, stageInput } from './stage';
-import { directView } from './direct-view';
-import { openRoute } from '../lib/point-tell/open-route';
 import { draftIdOf, isPageMark, isTabMark } from '../lib/point-tell/drafts';
-import { closeSheet, openSheet } from './answer';
-import { flashPin, markRect, renderPins, resetBadges } from './pins';
-import { fetchLinks, fetchModel } from './service';
+import { badgeEl, flashPin, markRect, pulseBadge, renderPins, resetBadges, sentViews } from './pins';
+import { fetchLinks, fetchModel, fetchServerName } from './service';
 import { measureScene, ridSignature } from './measure';
 import { applyPaper, draftPills, modelWithDrafts, pageScene, renderPaper, showPaper } from './paper';
 import { discardPage, enterPage, leavePage } from './page-draft';
-import { closeCard, openCard, renderCard } from './create-card';
 import { installSurface, pressTabNamed, releasePointer, setSurfaceCursor } from './pointer';
 import { cursorFor, drawTool } from './draw-tool';
 import { clearHover } from './actions';
@@ -41,8 +43,9 @@ import { InkCanvas } from './ink-canvas';
 import { forgetGroup, redo, resetHistory, undo, visibleStrokes } from './ink-marks';
 import { takeScreenshot } from './capture';
 import { copyMarks } from './copy';
-import { colorSets, ensureColors, resetColors } from './service';
-import { addMark, clearMarks, closeEditor, closeEditorKeeping, hooks, markByNumber, openInkMark, openMark, openNew, restoreMarks, tabOfMark, targetsExist } from './marks';
+import { sendToClaude } from './send';
+import { resetColors } from './service';
+import { addMark, clearMarks, closeEditor, closeEditorKeeping, hooks, markByNumber, openInkMark, openMark, openNew, restoreMarks, setMarks, tabOfMark, targetsExist } from './marks';
 
 const ENABLE_RETRY_MAX = 8;
 const ENABLE_RETRY_MS = 180;
@@ -61,6 +64,8 @@ function publish(active: boolean): void {
 }
 
 function ensureStyle(): void {
+  // The toast's own stylesheet: without it a toast (Copied, Sent, a failure) lands unstyled at the foot of the page, where nobody sees it.
+  ensureOverlayStyle();
   if (document.getElementById(STYLE_ID)) return;
   const s = document.createElement('style');
   // The stylesheet first, fonts last: a malformed @font-face can never swallow the layer's rules.
@@ -87,9 +92,10 @@ function disarmClear(): void {
 
 const dockActions: DockActions = {
   close: () => disablePointTell(),
-  openList: () => { pt.listOpen = !pt.listOpen; if (pt.listOpen) { pt.sheet = null; pt.answer = null; } render(); },
+  openList: () => { pt.listOpen = !pt.listOpen; if (pt.listOpen) pt.sentOpen = false; render(); },
+  openSent: () => { pt.sentOpen = !pt.sentOpen; if (pt.sentOpen) { pt.listOpen = false; pt.reply = null; noteOpening(); openedByUser(); } render(); },
   copy: () => { void copyMarks(); },
-  paste: () => { if (pt.sheet) closeSheet(); else openSheet(); },
+  send: () => { void sendToClaude(); },
   undo: () => { undo(); },
   redo: () => { redo(); },
   screenshot: () => { void takeScreenshot(); },
@@ -111,7 +117,6 @@ const dockActions: DockActions = {
     resetHistory(); forgetGroup();
     // Clear discards a drawn page too: the paper page and the mark that drew it.
     if (pt.page) discardPage();
-    closeCard();
   },
 };
 
@@ -119,6 +124,91 @@ const listActions: ListActions = {
   pageNote: () => openNew([]),
   openMark: (n) => openMark(n),
   goTo: (n) => goTo(n),
+  copyAll: () => { pt.listOpen = false; render(); void copyMarks(true); },
+  clearDone: () => clearDoneMarks(),
+};
+
+/** "Clear done": the marks of every done sketch leave the page. */
+function clearDoneMarks(): void {
+  const left = clearDone(pt.marks, sent.rows);
+  if (left.length === pt.marks.length) return;
+  pt.reply = null;
+  clearTags();
+  setMarks(left, pt.next);
+}
+
+const replyActions: ReplyActions = {
+  change: (n) => { pt.reply = null; openMark(n); },
+  clearDone: () => clearDoneMarks(),
+  answer: (group, asks, words) => sendAnswer(group, asks, words),
+  again: (view) => { void sendAgain(view.sketch); },
+  clear: (sketch) => { clearUnlisted(sketch); render(); },
+  startChat: () => { startWorkingChat(); },
+  close: () => { pt.reply = null; render(); },
+};
+
+/** Open the reply of a sent mark beside its badge. */
+function openReplyAt(n: number): void {
+  if (pt.editor) closeEditorKeeping();
+  pt.listOpen = false; pt.sentOpen = false;
+  pt.reply = { n };
+  render();
+  // Looking at a sent mark is a step by the user: a stopped poll starts again.
+  userMoved();
+  void refreshSent();
+}
+
+/** How the page reacts when Claude's answer is a done, a question or a could not: the mark's face, nothing louder. */
+const MOOD: Partial<Record<MarkStatus, 'pleased' | 'curious' | 'wince'>> = { done: 'pleased', question: 'curious', cannot: 'wince' };
+
+/** Replies came back. Where their marks are on this page the badges pulse once; otherwise the sent button nods. */
+function arrived(rows: SketchRow[]): void {
+  const views = sentViews();
+  let away = false, mood: MarkStatus | null = null;
+  for (const r of rows) {
+    const ns = [...views.entries()].filter(([, v]) => v.row === r || (v.row?.number === r.number && v.row.at === r.at)).map(([n]) => n);
+    if (!ns.length) { away = true; continue; }
+    for (const n of ns) if (badgeEl(n)) pulseBadge(n);
+    const st = views.get(ns[0])!.status;
+    if (!mood || st === 'question') mood = st;
+  }
+  const face = mood ? MOOD[mood] : undefined;
+  if (face) react(face);
+  if (away) pingSentButton();
+}
+
+/** Somewhere in BMP: the same tab, in place when BMP follows the address, else by loading it. */
+function goToPage(key: string): void {
+  const before = getBlueprintPageRid();
+  try {
+    history.pushState(history.state, '', key);
+    window.dispatchEvent(new PopStateEvent('popstate', { state: history.state }));
+  } catch { window.location.assign(key); return; }
+  window.setTimeout(() => { if (getBlueprintPageRid() === before) window.location.assign(key); }, 1500);
+}
+
+/** A row of another page was pressed: once that page is read, its reply opens at its marks. */
+let pendingSketch: number | null = null;
+
+/** The reply of sketch `number` (or of the sketch it answers) beside its marks on this page; false when they are not here. */
+function showSketch(number: number, tries = 4): boolean {
+  const views = sentViews();
+  const mine = [...views.entries()].filter(([, v]) => v.row?.number === number || v.sketch === number);
+  const shown = mine.find(([n]) => badgeEl(n));
+  if (shown) { openReplyAt(shown[0]); reveal(shown[0]); return true; }
+  if (!mine.length) return false;
+  // A page just reached may still be drawing its objects: the badges come with the next measurement.
+  const gen = pt.gen;
+  if (tries > 0) { window.setTimeout(() => { if (pt.active && pt.gen === gen && !pt.reply) showSketch(number, tries - 1); }, 500); return true; }
+  pt.reply = { sketch: mine[0][1].sketch };
+  render();
+  return true;
+}
+
+sentRowHooks.open = (r, here) => {
+  pt.sentOpen = false;
+  if (!here) { pendingSketch = r.number; render(); goToPage(r.pageKey); return; }
+  if (!showSketch(r.number)) render();
 };
 
 /** Draw everything from `pt`. The note field is built once per opening, so text being typed survives a redraw. */
@@ -128,24 +218,18 @@ export function render(): void {
   renderHover();
   pt.ink?.setStrokes(visibleStrokes());
   renderPaper();
-  renderCard(disablePointTell);
-  renderPins(openMark);
+  renderPins(openMark, openReplyAt);
   renderList(listActions);
-  renderSheet({
-    // On the paper page of a drawn page the page is created first: the card says so and asks.
-    stage: () => { const a = pt.answer; if (pt.page && a?.result && a.snapshot) { closeSheet(); openCard({ text: a.text, snapshot: a.snapshot, result: a.result }); } else stageInBlueprint(disablePointTell); },
-    stageDirect: () => { const d = directView(); if (!d) return; if (pt.page) { closeSheet(); openCard(d); } else stageInput(d, disablePointTell); },
-    openRoute: (route) => {
-      const rid = pt.model ? findNode(pt.model, route.id)?.node.rid : undefined;
-      if (rid) openRoute(rid, route); else showToast('That object has no ID on the server yet.', 'info');
-    },
-  });
-  if (!pt.editor) { endVoice(false); pt.fieldEl?.remove(); pt.fieldEl = null; }
+  renderSent();
+  renderReply(replyActions);
+  if (!pt.editor && !pt.reply) endVoice(false);
+  if (!pt.editor) { pt.fieldEl?.remove(); pt.fieldEl = null; }
   else if (!pt.fieldEl?.isConnected) renderField();
   revalidateTags();
 }
 
 hooks.render = render;
+wireSent({ render, arrived });
 hooks.saved = (n, isNew) => {
   react('pleased');
   // A tab with a name is the shown tab: its paper opens.
@@ -227,8 +311,8 @@ function handlePageNav(): boolean {
   if (pt.editor) closeEditor(!!typed.trim(), typed);
   pt.surface?.remove(); pt.surface = null;
   pt.model = null; pt.ctx = null; pt.env = null; pt.scene = null; pt.foreign = []; pt.links = {}; pt.hover = null;
-  pt.marks = []; pt.next = 1; pt.listOpen = false;
-  pt.page = null; pt.paper = null; closeCard();
+  pt.marks = []; pt.next = 1; pt.listOpen = false; pt.reply = null;
+  pt.page = null; pt.paper = null;
   resetHistory(); forgetGroup(); resetBadges();
   pt.rid = next;
   pt.gen += 1;
@@ -274,7 +358,7 @@ function watchPage(): void {
   pt.observer.observe(document.body, { childList: true, subtree: true });
 }
 
-/** Escape closes the comment field (the mark stays), then the paste panel, then the list. Ctrl+Z undoes the last mark or stroke
+/** Escape closes the comment field (the mark stays), then the list of marks. Ctrl+Z undoes the last mark or stroke
  *  (Shift+Ctrl+Z or Ctrl+Y redoes); in a text area with text in it the browser's own undo keeps working. */
 function onKey(e: KeyboardEvent): void {
   if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'z' || e.key === 'Z' || e.key === 'y' || e.key === 'Y')) {
@@ -291,7 +375,8 @@ function onKey(e: KeyboardEvent): void {
   // While listening, Escape only cancels the listening (the field handles it).
   if (pt.editor && listening()) return;
   if (pt.editor) { e.stopPropagation(); forgetGroup(); closeEditorKeeping(); }
-  else if (pt.sheet) { e.stopPropagation(); closeSheet(); }
+  else if (pt.reply) { e.stopPropagation(); pt.reply = null; render(); }
+  else if (pt.sentOpen) { e.stopPropagation(); pt.sentOpen = false; render(); }
   else if (pt.listOpen) { e.stopPropagation(); pt.listOpen = false; render(); }
 }
 
@@ -310,9 +395,13 @@ function becomeReady(): void {
   if (!pt.observer) watchPage();
   render();
   react('look');
+  void lookOnEntry().then(() => {
+    if (pendingSketch === null || !pt.active) return;
+    const n = pendingSketch;
+    pendingSketch = null;
+    showSketch(n);
+  });
   if (pt.wantPage) askNewPage();
-  // The colours an answer may name: read once, in the background, so Copy has them.
-  if (!colorSets()) void ensureColors();
 }
 
 async function loadPage(rid: string): Promise<void> {
@@ -364,6 +453,7 @@ function askNewPage(): void {
 export function enablePointTell(): void {
   if (pt.active) return;
   initVoice();
+  void fetchServerName().then(name => { if (pt.active) pt.serverName = name; });
   const rid = getBlueprintPageRid();
   if (!rid) {
     // The page may still be drawing (a landing page's object comes from its React tree): ask again shortly.
@@ -392,6 +482,8 @@ export function enablePointTell(): void {
   layer.style.width = '100%';
   layer.style.zIndex = Z.layer;
   layer.style.pointerEvents = 'none';
+  // Nothing drawn near the right edge (a badge, a tip) may make the page scroll sideways.
+  layer.style.overflowX = 'clip';
   // On the document element, not the body: BMP's own observers watch the body and must not see this layer.
   document.documentElement.appendChild(layer);
   pt.layer = layer;
@@ -414,10 +506,10 @@ export function disablePointTell(): void {
   pt.surface?.remove();
   pt.layer?.remove();
   releasePointer();
-  closeCard();
   look(null);
   stopMascot();
   clearTags();
+  stopSent();
   document.removeEventListener('visibilitychange', onHidden);
   pt.ink?.destroy();
   resetHistory(); forgetGroup(); resetBadges();

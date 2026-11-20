@@ -190,6 +190,22 @@ describe('BrowseTab', () => {
     expect(opened).toEqual([]);
   });
 
+  it('the ID is one column at the end of the label: a long one is cut in two spans with its text whole, a short one is plain, and the current marker sits before it', () => {
+    const { tab, panel, show } = setup();
+    tab.activate();
+    tab.handleMessage({ type: 'BROWSE_TREE_DATA', rid: PAGE, environment: 'p@x', ok: true, tree });
+    show();
+    const id = (rid: string) => panel.querySelector<HTMLElement>(`.bw-row[data-rid="${rid}"] .bw-id`)!;
+    expect(id(VIEW).classList.contains('mid')).toBe(true);
+    expect(id(VIEW).querySelector('.h')?.textContent).toBe('crev_qa_inpu');
+    expect(id(VIEW).querySelector('.t')?.textContent).toBe('tview');
+    expect(id(VIEW).textContent).toBe('crev_qa_inputview');
+    expect(id(VIEW).title).toContain('crev_qa_inputview');
+    const cur = panel.querySelector<HTMLElement>(`.bw-row[data-rid="${PAGE}"] .bw-lbl`)!;
+    expect([...cur.children].map(c => c.className.split(' ')[0])).toEqual(['bw-nm', 'bw-mark', 'bw-id']);
+    expect(panel.querySelector('.bw-row > .bw-mark')).toBeNull();
+  });
+
   it('the auto-selected first result keeps its ID: actions show only for a keyboard selection', () => {
     const { tab, sent, panel, show } = setup();
     tab.activate();

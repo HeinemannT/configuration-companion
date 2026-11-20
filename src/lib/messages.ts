@@ -2,6 +2,7 @@
 // sub-type by domain; each group is a standalone type for narrowing in handlers.
 // Re-exported from './types' for back-compat. Imports domain interfaces from './types'
 // (type-only) — messages depend on types, never the reverse.
+import type { LinkResult, RequeueResult, Seen, SketchFollows, StatusResult } from './claude-link';
 import type { AccessRequest } from './access-workspace/model';
 import type { AccessDestination } from './access-workspace/entry';
 import type { ColorOp, FileOp } from './colors-images/write-ops';
@@ -110,23 +111,28 @@ export type InspectMessage =
   | { type: 'POINT_TELL_QUERY' }
   // Worker -> page: the right-click entry "New page here".
   | { type: 'POINT_TELL_NEW_PAGE' }
-  // Page -> worker: leave Point and tell and open Blueprint on this tab (staged changes wait in the page).
-  | { type: 'POINT_TELL_STAGE' }
-  // Page -> worker: the text properties and code of the objects the notes point at (one batched read).
-  | { type: 'POINT_TELL_READ_NOW'; items: Array<{ rid: string; className: string }> }
-  // Page -> worker: where a new page may go (the viewed page's nearest ancestors, nearest first).
-  | { type: 'POINT_TELL_PARENTS'; rid: string }
-  | { type: 'POINT_TELL_PARENTS_DATA'; ok: boolean; parents?: Array<{ rid: string; type: string; name: string }>; error?: string }
-  // Page -> worker: create the empty page a blank-page sketch stands for. phase 'preview': a dry run on the server, which issues a one-time receipt; 'commit': write it (the receipt, the same plan) and read it back.
-  | { type: 'POINT_TELL_CREATE_PAGE'; phase: 'preview' | 'commit'; plan: { parentRid: string; kind: 'Scorecard' | 'ModelPage'; id: string; name: string }; environment: string; previewId?: string }
-  | { type: 'POINT_TELL_CREATE_PAGE_RESULT'; ok: boolean; previewId?: string; environment?: string; rid?: string; id?: string; error?: string; outcomeUnknown?: boolean }
   // Page -> worker: a picture of the visible part of the sender's tab (the tab must be the one shown).
   | { type: 'POINT_TELL_CAPTURE' }
   // Page -> worker: the voice-comment setting (stored in the extension, which the page cannot read); `noticed` records that the first-use line was shown.
-  | { type: 'POINT_TELL_VOICE'; noticed?: boolean }
+  | { type: 'POINT_TELL_VOICE'; noticed?: boolean; /** Turn the setting on (the confirm in the comment field). */ on?: boolean }
   | { type: 'POINT_TELL_VOICE_DATA'; prefs: { on: boolean; lang: 'auto' | 'en-US' | 'de-DE'; noticed: boolean } }
   | { type: 'POINT_TELL_CAPTURE_DATA'; ok: boolean; dataUrl?: string; error?: string }
-  | { type: 'POINT_TELL_NOW_DATA'; ok: boolean; objects?: Record<string, { text: Record<string, string>; code: Record<string, string>; omitted: string[] }>; error?: string }
+  // Page -> worker: push the brief (and a picture, when there is one) to Claude Desktop on this computer; the worker answers with the outcome.
+  // `key`: one per press of Send, sent again on a retry (`retry`, `since`: the first try started then).
+  // `follows`: what the sketch answers or corrects. The worker adds the hand-over text (lib/point-tell/desktop-policy.ts).
+  | { type: 'POINT_TELL_SEND'; text: string; page?: string; pageKey?: string; picture?: { mime: 'image/png' | 'image/jpeg'; data: string; drawn?: true }; key?: string; follows?: SketchFollows; retry?: boolean; since?: number }
+  | { type: 'POINT_TELL_SEND_DATA'; result: LinkResult }
+  // Page -> worker: put a sketch nobody works on back in line (servers with `requeue`).
+  | { type: 'POINT_TELL_REQUEUE'; id: string }
+  | { type: 'POINT_TELL_REQUEUE_DATA'; result: RequeueResult }
+  // Page -> worker: ask Claude Desktop's listener for the sent sketches, their states and Claude's replies. `seen` stores the newest reply the user has looked at.
+  | { type: 'POINT_TELL_STATUS'; seen?: Seen }
+  | { type: 'POINT_TELL_STATUS_DATA'; result: StatusResult; seen: Seen }
+  // Page -> worker: the server profile's name, for the copied brief.
+  | { type: 'POINT_TELL_SERVER' }
+  | { type: 'POINT_TELL_SERVER_DATA'; name?: string }
+  // Page or panel -> worker: open the Claude Desktop page (claude-setup/), or bring its tab forward.
+  | { type: 'OPEN_CLAUDE_SETUP' }
   // Standalone create/edit routes render native property editors without
   // data-rid attributes. Resolve the owning EditPage's ordered EditFields so
   // the content script can badge those controls like normal page widgets.

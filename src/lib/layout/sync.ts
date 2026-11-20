@@ -68,6 +68,9 @@ export interface BlueprintCtx extends ReconstructCtx {
   /** The tabset's RID, from the context probe: the item of the constant
    *  fetch (its fallback when no direct child names a tabset). */
   tabsetRid?: string;
+  /** The object on screen when the page is an EnterpriseTemplate it is shown through (an Organisation, a
+   *  risk, an issue): its business ID, name and class. The layout is the template's; the values are its own. */
+  viewedObject?: { id?: string; name?: string; className?: string };
 }
 
 export interface LoadResult {
@@ -1140,7 +1143,7 @@ export function buildContextEc(rid: string): string {
     `     _a := _cell`,
     ...buildTabsetWalkEc(),
     `     IF _tsid = "" THEN _tsid := "${DEFAULT_TABSET}" ELSE _tsid := _tsid ENDIF`,
-    `     _out := _out + "enterprise|" + _tmpl.rid + "|" + _tmpl.id.whenMissing("") + "|" + _tmpl.className.whenMissing("") + "|" + _tsid + "|" + _viewedClass + "|" + _tsrid`,
+    `     _out := _out + "enterprise|" + _tmpl.rid + "|" + _tmpl.id.whenMissing("") + "|" + _tmpl.className.whenMissing("") + "|" + _tsid + "|" + _viewedClass + "|" + _tsrid + "|" + _probe.id.whenMissing("") + "|" + _probe.name.whenMissing("")`,
     `ELSE`,
     `     _cellFound := "no"`,
     `     _cell := _probe`,
@@ -1199,6 +1202,8 @@ interface ContextProbe {
   enterpriseObjectType?: string;
   /** The discovered tabset's RID (appended last to both variants). */
   tabsetRid?: string;
+  /** Enterprise branch: the object shown through the template (after the tabset RID; the name is last). */
+  viewed?: { id?: string; name?: string; className?: string };
 }
 
 /** Decode the single `<CTX>` probe line. The two variants deliberately decode separately after their
@@ -1211,11 +1216,17 @@ function parseContextProbe(line: string): ContextProbe | null {
   if (kind === 'enterprise') {
     const enterpriseObjectType = /^Ce[A-Za-z0-9_]+$/.test(fields[5] ?? '') ? fields[5] : undefined;
     const tsRid = /^-?\d{1,20}$/.test(fields[6] ?? '') ? fields[6] : undefined;
+    const vClass = /^[A-Za-z][A-Za-z0-9_]*$/.test(fields[5] ?? '') ? fields[5] : undefined;
+    const vId = (fields[7] ?? '').trim();
+    // The name may hold the separator itself: it is everything after the ID.
+    const vName = fields.slice(8).join('|').trim();
+    const viewed = vClass || vId || vName ? { ...(vId ? { id: vId } : {}), ...(vName ? { name: vName } : {}), ...(vClass ? { className: vClass } : {}) } : undefined;
     return {
       kind, pageRid: pRid, pageId: pId, pageClass: pClass || '', tabsetId: tabsetId || '',
       hasLink: false, widgetCount: 0, isPageHost: false,
       ...(enterpriseObjectType ? { enterpriseObjectType } : {}),
       ...(tsRid ? { tabsetRid: tsRid } : {}),
+      ...(viewed ? { viewed } : {}),
     };
   }
   const [, , , , , hasLink, wcount, tplRid, tplId, pageHost, tsRidRaw] = fields;
@@ -1253,6 +1264,7 @@ export async function resolvePageContext(io: LayoutIO, rid: string): Promise<Blu
       tabsetId: p.tabsetId, target: 'template', hasTemplate: true, tabScope: 'all',
       ...(p.enterpriseObjectType ? { enterpriseObjectType: p.enterpriseObjectType } : {}),
       ...(p.tabsetRid ? { tabsetRid: p.tabsetRid } : {}),
+      ...(p.viewed ? { viewedObject: p.viewed } : {}),
     };
   }
   if (p.pageClass === 'EditPage') {

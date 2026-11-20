@@ -13,6 +13,7 @@ import { log } from '../logger';
 import { isRidShaped } from '../validate-inbound';
 import { clearChanges, readChanges, recordChanges, type ChangeRecord } from '../change-record';
 import { currentCommandActor } from '../command-actor';
+import { openPanelOnTab } from '../companion-tabs';
 
 register('GET_HISTORY', (msg, respond, meta) => {
   respond({ type: 'HISTORY_DATA', entries: ctxOf(meta).history.getAll() });
@@ -123,7 +124,7 @@ register('SHOW_IN_LOG', async (msg, respond, meta) => {
   const ctx = ctxOf(meta);
   const tabId = meta.senderTabId;
   // A side-panel sender needs no opening: its panel is the one to show the entry.
-  const opening = meta.panelWindowId != null ? Promise.resolve() : tabId != null ? chrome.sidePanel.open({ tabId }) : Promise.reject(new Error('no tab'));
+  const opening = meta.panelWindowId != null ? Promise.resolve() : tabId != null ? openPanelOnTab(tabId, meta.senderUrl) : Promise.reject(new Error('no tab'));
   const text = typeof msg.text === 'string' ? msg.text.slice(0, 600) : '';
   const detail = typeof msg.detail === 'string' ? msg.detail.slice(0, 4000) : undefined;
   const known = typeof msg.logId === 'number' && getActivityLog().some(e => e.id === msg.logId);

@@ -1,15 +1,18 @@
 /**
  * Point and tell: the tool under the pointer. A press that moves a few pixels is a stroke (the brush pen
  * draws it, or the eraser takes the strokes it crosses); a press that does not is a click on an object
- * (a note on it). There is no switch between the two.
+ * (a note on it). There is no switch between the two. With voice comments on, a press that stays still for a
+ * moment opens that note and listens until it is let go (see pointer and lib/point-tell/press-hold).
  *
  * Nothing here changes how a stroke looks. When it ends it is handed to ink-marks, which keeps it, reads it
  * quietly and opens the comment field beside where the pen lifted.
  */
 import { Pen, packStroke } from '../lib/point-tell/ink-pen';
 import type { PtMark, PtPoint } from '../lib/point-tell/types';
-import { clearHover, clickAt, hoverAt } from './actions';
-import { look, react } from './mascot';
+import { clearHover, clickAt, hoverAt, noteAt } from './actions';
+import { armCue, dropCue, flipCue } from './hold-cue';
+import { endVoice, listening, startVoice, voiceOn, voiceSupported } from './voice';
+import { react } from './mascot';
 import { SETTLE_MS, markRead } from './response';
 import { INK_COLOR } from './ink-canvas';
 import { commitStroke, eraseStrokes, visibleStrokes } from './ink-marks';
@@ -55,8 +58,33 @@ export function drawTool(openFor: (ids: string[]) => void): PtTool {
   return {
     id: 'draw',
     cursor: cursorFor,
-    hover: (p) => { look(p.cx, p.cy); hoverAt(p); },
-    leave: () => { clearHover(); look(null); },
+    hover: (p) => { hoverAt(p); },
+    leave: () => { clearHover(); },
+
+    // A still press with voice comments on: the cue, then a note at the point that listens until the press ends.
+    holdable: (p) => {
+      if (pt.tool === 'eraser' || pt.phase !== 'ready' || !voiceSupported() || !voiceOn()) return false;
+      armCue(p.cx, p.cy);
+      return true;
+    },
+    holdDisarm: () => { dropCue(); },
+    holdStart: (p) => {
+      if (pt.tool === 'eraser' || !voiceOn()) { dropCue(); return false; }
+      // The field a stroke just before was waiting to open is not opened over this note: the stroke's mark stays.
+      if (fieldTimer) { clearTimeout(fieldTimer); fieldTimer = 0; }
+      clearHover();
+      if (listening()) endVoice(true);
+      closeEditorKeeping();
+      if (!noteAt(p, openFor)) { dropCue(); return false; }
+      const card = pt.fieldEl;
+      const area = card?.querySelector('textarea');
+      if (!card || !area) { dropCue(); return false; }
+      flipCue();
+      void startVoice(card, area);
+      return true;
+    },
+    // Letting go keeps what was heard in the field, as the microphone does; the user saves with Enter.
+    holdEnd: () => { dropCue(); endVoice(true); },
 
     click: (p) => {
       if (pt.tool === 'eraser') { erased = new Set(); eraseSegment(p, p); const k = [...erased]; erased = new Set(); eraseStrokes(k); return; }
@@ -83,21 +111,17 @@ export function drawTool(openFor: (ids: string[]) => void): PtTool {
       pen.down(first.x, first.y, first.t, first.pressure, first.type);
       for (const p of buffered.slice(1)) feed(p);
       pt.ink.begin(pen);
-      look(first.cx, first.cy);
     },
 
     strokeMove: (samples, predicted) => {
       if (pt.tool === 'eraser') {
         for (const p of samples) { if (last) eraseSegment(last, p); last = p; }
-        look(samples[samples.length - 1].cx, samples[samples.length - 1].cy);
         return;
       }
       if (!pen || !pt.ink) return;
       for (const p of samples) feed(p);
       if (predicted.length) pen.setPred(predicted.map(p => ({ x: p.x, y: p.y })));
       pt.ink.invalidate();
-      const tip = samples[samples.length - 1];
-      look(tip.cx, tip.cy);
     },
 
     strokeEnd: (p) => {

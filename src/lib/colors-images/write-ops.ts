@@ -9,7 +9,7 @@
  *   - a new colour in a set: `t.<set>.add(CorpoColor, id := …, name := …, color := …)`
  *   - a new set beside an existing one: its parent's `add(CorpoColorSet, …)`
  *   - a file: `t.<folder>.add(FileResource, id := …, name := …, content := "<name>;<mime>;<base64>")`
- *     and `r.<id>.change(content := …)`
+ *     and `r.<id>.change(content := …)`, with `name := …` when the type changes
  *
  * Pure: no DOM, no chrome.*.
  */
@@ -24,7 +24,8 @@ export type ColorOp =
 
 export type FileOp =
   | { kind: 'add'; folderId: string; id: string; name: string; mime: string; base64: string }
-  | { kind: 'change'; id: string; name: string; mime: string; base64: string };
+  /** `rename`: the type changed (an SVG written as a PNG), so the file's name changes with it. */
+  | { kind: 'change'; id: string; name: string; mime: string; base64: string; rename?: boolean };
 
 /** The characters one write script may hold (Companion's limit for a
  *  user script is 25,000). */
@@ -92,7 +93,7 @@ function fileLine(op: FileOp): string {
   const content = lit(fileContent(op.name.trim(), op.mime, op.base64.replace(/\s+/g, '')));
   if (op.kind === 'change') {
     need(isValidId(op.id), `Not a valid ID: ${op.id}`);
-    return `r.${op.id}.change(content := ${content})`;
+    return `r.${op.id}.change(content := ${content}${op.rename ? `, name := ${lit(op.name.trim())}` : ''})`;
   }
   need(isValidId(op.id) && isValidId(op.folderId), `Not a valid ID: ${op.id}`);
   return `t.${op.folderId}.add(FileResource, id := ${lit(op.id)}, name := ${lit(op.name.trim())}, content := ${content})`;

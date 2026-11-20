@@ -141,6 +141,74 @@ describe('Colors tab', () => {
     expect(tab.root.querySelector('.ci-result')?.textContent).toBe('Saved 2 changes');
   });
 
+  async function openedColors() {
+    api.readColors.mockResolvedValue({ sets: sets(), fetchedAt: 1 });
+    const tab = createColorsTab(ctx);
+    document.body.append(tab.root);
+    tab.show();
+    await until(() => expect(tab.root.querySelector('.ci-addmenu')).not.toBeNull());
+    return tab;
+  }
+  const menuItem = (tab: { root: HTMLElement }, text: string) => {
+    tab.root.querySelector<HTMLButtonElement>('.ci-addmenu')!.click();
+    return [...tab.root.querySelectorAll<HTMLButtonElement>('.ci-menu button')].find(b => b.textContent?.startsWith(text))!;
+  };
+
+  it('adds pasted colors after review: names from the labels, a row left out, a name edited, a close one marked, one confirmed write', async () => {
+    const tab = await openedColors();
+    menuItem(tab, 'Paste colors').click();
+    const area = tab.root.querySelector<HTMLTextAreaElement>('.ci-paste')!;
+    area.value = '--brand-blue: #1F5FA9;\nSignal orange  #E8742A\nSurface rgb(246, 244, 239)';
+    area.dispatchEvent(new Event('input', { bubbles: true }));
+    const rows = () => [...tab.root.querySelectorAll<HTMLElement>('.ci-frow')];
+    expect(rows().map(r => (r.querySelector('input') as HTMLInputElement).value)).toEqual(['Brand blue', 'Signal orange', 'Surface']);
+    // #1F5FA9 is a re-typed Steadfast blue.
+    expect(rows()[0].querySelector('.ci-fwarn')?.getAttribute('title')).toBe('Close to Steadfast blue #1F5FA8');
+    rows()[2].querySelector<HTMLButtonElement>('.ci-ib')!.click();
+    type(rows()[1].querySelector('input') as HTMLInputElement, 'Signal');
+    const add = tab.root.querySelector<HTMLButtonElement>('.ci-panel .ui-btn.primary')!;
+    expect(add.textContent).toBe('Add 2 colors');
+    add.click();
+    expect(tab.root.querySelector('.ci-confirm-h')?.textContent).toBe('Save 2 changes');
+    api.writeChanges.mockResolvedValue({ ok: true, written: 2 });
+    tab.root.querySelector<HTMLButtonElement>('.ci-confirm .ui-btn.primary')!.click();
+    await until(() => expect(api.writeChanges).toHaveBeenCalled());
+    expect(api.writeChanges.mock.calls[0][1]).toEqual([
+      { kind: 'add', setId: 'swi_brand', id: 'swi_brand_blue', name: 'Brand blue', hex: '#1F5FA9' },
+      { kind: 'add', setId: 'swi_brand', id: 'swi_signal', name: 'Signal', hex: '#E8742A' },
+    ]);
+  });
+
+  it('previews a scale of five steps from the chosen color and adds the four new ones named after it', async () => {
+    const tab = await openedColors();
+    menuItem(tab, 'Scale from').click();
+    expect(tab.root.querySelectorAll('.ci-strip i')).toHaveLength(5);
+    expect([...tab.root.querySelectorAll('.ci-scale .ci-sname')].map(e => e.textContent)).toEqual(['Steadfast blue 100', 'Steadfast blue 300', 'Steadfast blue', 'Steadfast blue 700', 'Steadfast blue 900']);
+    tab.root.querySelector<HTMLButtonElement>('.ci-panel .ui-btn.primary')!.click();
+    expect([...tab.root.querySelectorAll('.ci-confirm .ci-pname')].map(e => e.textContent)).toEqual(['Steadfast blue 100', 'Steadfast blue 300', 'Steadfast blue 700', 'Steadfast blue 900']);
+    expect(api.writeChanges).not.toHaveBeenCalled();
+  });
+
+  it('marks a new color close to one in the sets, offers where white text passes, and takes RGB', async () => {
+    const tab = await openedColors();
+    tab.root.querySelector<HTMLButtonElement>('.ci-ctile.add')!.click();
+    type(tab.root.querySelector('.ci-hexrow input') as HTMLInputElement, '#0C2E58');
+    expect(tab.root.querySelector<HTMLElement>('.ci-close')!.hidden).toBe(false);
+    expect(tab.root.querySelector('.ci-close')?.textContent).toContain('Close to Steadfast navy');
+    type(tab.root.querySelector('.ci-hexrow input') as HTMLInputElement, '#0F8A9D');
+    expect(tab.root.querySelector<HTMLElement>('.ci-close')!.hidden).toBe(true);
+    const nudge = tab.root.querySelector<HTMLElement>('.ci-nudge')!;
+    expect(nudge.hidden).toBe(false);
+    nudge.querySelector<HTMLButtonElement>('.ci-link')!.click();
+    const now = (tab.root.querySelector('.ci-hexrow input') as HTMLInputElement).value;
+    expect(now).not.toBe('#0F8A9D');
+    expect(tab.root.querySelector<HTMLElement>('.ci-nudge')!.hidden).toBe(true);
+    const fmt = tab.root.querySelector<HTMLSelectElement>('.ci-fmtsel')!;
+    fmt.value = 'rgb'; fmt.dispatchEvent(new Event('change'));
+    type(tab.root.querySelector('.ci-hexrow input') as HTMLInputElement, '26, 86, 160');
+    expect(tab.root.querySelector('.ci-confirm .ci-prow')?.textContent).toContain('#1A56A0');
+  });
+
   it('turns Refresh off while changes are unsaved, and reads again only when asked', async () => {
     api.readColors.mockResolvedValue({ sets: sets(), fetchedAt: 1 });
     const tab = createColorsTab(ctx);
@@ -263,11 +331,94 @@ describe('Images tab', () => {
     vi.mocked(processImage).mockImplementation(async (source: { bytes: Uint8Array; mime: string }) => ({ bytes: source.bytes, mime: source.mime, width: 24, height: 24 }));
   });
 
+  const LINE_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#14324A" stroke-width="2"><path d="M4 11 12 4l8 7"/><circle cx="12" cy="16" r="2" fill="#E07B24" stroke="none"/></svg>';
+  const SVG_FILE = { rid: '9007199254740997', id: 'icon_flag', name: 'flag.svg', folderId: 'nav' };
+
+  async function withSvg() {
+    api.readImages.mockResolvedValue({ folders: FOLDERS, files: [...FILES, SVG_FILE], fetchedAt: 1 });
+    api.readImageBytes.mockImplementation(async (rids: string[]) => rids.map(rid => ({ rid, base64: rid === SVG_FILE.rid ? btoa(LINE_SVG) : 'iVBORw0KGgo=' })));
+    api.readColors.mockResolvedValue({ sets: sets(), fetchedAt: 1 });
+    const tab = createImagesTab(ctx);
+    document.body.append(tab.root);
+    tab.show();
+    await until(() => expect(tab.root.querySelectorAll('.ci-itile-pick')).toHaveLength(3));
+    return tab;
+  }
+  const pickTile = (tab: { root: HTMLElement }, name: string) => [...tab.root.querySelectorAll<HTMLElement>('.ci-itile')].find(t => t.querySelector('.ci-nm')?.textContent === name)!.querySelector<HTMLButtonElement>('.ci-itile-pick')!.click();
+  const segButton = (tab: { root: HTMLElement }, text: string) => [...tab.root.querySelectorAll<HTMLButtonElement>('.ci-panel .ci-seg button')].find(b => b.textContent === text)!;
+
+  it('offers the colors of a selected SVG to swap one by one, from the workspace colors, and sends the swap', async () => {
+    const tab = await withSvg();
+    pickTile(tab, 'flag.svg');
+    await until(() => expect(segButton(tab, 'Swap colors').disabled).toBe(false));
+    segButton(tab, 'Swap colors').click();
+    await until(() => expect([...tab.root.querySelectorAll('.ci-swaps .ci-cchip span')].map(s => s.textContent)).toEqual(['14324A', 'E07B24']));
+    tab.root.querySelectorAll<HTMLButtonElement>('.ci-swaps .ci-cchip')[1].click();
+    // The workspace's colors are read (the copy read before) only when a color is chosen.
+    await until(() => expect(tab.root.querySelectorAll('.ci-pop .ci-popsw button')).toHaveLength(2));
+    expect(api.readColors).toHaveBeenCalledWith(false);
+    tab.root.querySelectorAll<HTMLButtonElement>('.ci-pop .ci-popsw button')[0].click();
+    await until(() => expect(tab.root.querySelector<HTMLElement>('.ci-confirm')!.hidden).toBe(false));
+    const adjust = vi.mocked(processImage).mock.calls.at(-1)![1];
+    expect(adjust.color).toEqual({ mode: 'swap', hex: expect.any(String), map: { '#E07B24': '#1F5FA8' } });
+    expect(adjust.format).toBe('svg');
+    expect(tab.root.querySelectorAll<HTMLElement>('.ci-swaps .ci-cchip')[1].classList.contains('chg')).toBe(true);
+  });
+
+  it('offers swapping single colors for SVG files only', async () => {
+    const tab = await withSvg();
+    pickTile(tab, 'home.png');
+    await settle();
+    expect(segButton(tab, 'Swap colors').disabled).toBe(true);
+    expect(segButton(tab, 'Swap colors').title).toBe('SVG files only');
+  });
+
+  it('keeps turn, shape, line width and trim behind More, counts what is on while closed, and shows line width for line icons only', async () => {
+    const tab = await withSvg();
+    pickTile(tab, 'flag.svg');
+    await settle();
+    expect(tab.root.querySelector('[aria-label="Rotate right"]')).toBeNull();
+    tab.root.querySelector<HTMLButtonElement>('.ci-more')!.click();
+    await until(() => expect(tab.root.querySelector('[aria-label="Line width"]')).not.toBeNull());
+    tab.root.querySelector<HTMLButtonElement>('[aria-label="Rotate right"]')!.click();
+    tab.root.querySelector<HTMLButtonElement>('[aria-label="Circle"]')!.click();
+    await until(() => expect(vi.mocked(processImage).mock.calls.at(-1)![1]).toMatchObject({ turn: { rotate: 90 }, shape: { kind: 'circle' } }));
+    tab.root.querySelector<HTMLButtonElement>('.ci-more')!.click();
+    expect(tab.root.querySelector('.ci-more-n')?.textContent).toBe('2');
+    // A picture has no line width to set.
+    pickTile(tab, 'flag.svg');
+    pickTile(tab, 'home.png');
+    tab.root.querySelector<HTMLButtonElement>('.ci-more')!.click();
+    await settle();
+    expect(tab.root.querySelector('[aria-label="Line width"]')).toBeNull();
+  });
+
+  it('replaces the file of an existing image, keeps its ID, and renames it in the same write when the type changes', async () => {
+    const tab = await withSvg();
+    pickTile(tab, 'home.png');
+    await settle();
+    const replace = [...tab.root.querySelectorAll<HTMLButtonElement>('.ci-panel .ci-link')].find(b => b.textContent === 'Replace file')!;
+    expect(replace).toBeTruthy();
+    const input = tab.root.querySelectorAll<HTMLInputElement>('input[type=file]')[1];
+    const svgFile = Object.assign(new File([LINE_SVG], 'house.svg'), { arrayBuffer: async () => new TextEncoder().encode(LINE_SVG).buffer });
+    Object.defineProperty(input, 'files', { value: [svgFile], configurable: true });
+    input.dispatchEvent(new Event('change'));
+    await until(() => expect(tab.root.querySelector('.ci-confirm .ci-prow')?.textContent).toContain('file replaced with house.svg'));
+    expect(tab.root.querySelector('.ci-replaced')?.textContent).toContain('Replaced with house.svg');
+    api.writeChanges.mockResolvedValue({ ok: true, written: 1 });
+    await until(() => expect(tab.root.querySelector<HTMLButtonElement>('.ci-confirm .ui-btn.primary')!.disabled).toBe(false));
+    tab.root.querySelector<HTMLButtonElement>('.ci-confirm .ui-btn.primary')!.click();
+    await until(() => expect(api.writeChanges).toHaveBeenCalled());
+    expect(api.writeChanges.mock.calls[0][2]).toEqual([{ kind: 'change', id: 'icon_home', name: 'home.svg', mime: 'image/svg+xml', base64: expect.any(String), rename: true }]);
+  });
+
   it('changes a selected existing image only when the Adjust panel asks for it', async () => {
     const tab = await opened();
     tab.root.querySelector<HTMLButtonElement>('.ci-itile-pick')!.click();
     await settle();
-    expect(tab.root.querySelector('.ci-panel .ci-title')?.textContent).toBe('Adjust 1 image');
+    // One image: the panel names it and its ID.
+    expect(tab.root.querySelector('.ci-panel .ci-title')?.textContent).toBe('home.png');
+    expect(tab.root.querySelector('.ci-panel .ci-ph .ci-id')?.textContent).toBe('icon_home');
     expect(tab.root.querySelector<HTMLElement>('.ci-confirm')!.hidden).toBe(true);
     const size24 = [...tab.root.querySelectorAll<HTMLButtonElement>('.ci-panel .ci-seg button')].find(b => b.textContent === '24')!;
     size24.click();

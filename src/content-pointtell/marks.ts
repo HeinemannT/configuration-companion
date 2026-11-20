@@ -6,7 +6,7 @@
  */
 import { showToast } from '../lib/toast';
 import { findNode, findTabOf } from '../lib/layout/model';
-import { clearStaged, loadMarks, newPageKey, saveMarks } from '../lib/point-tell/store';
+import { loadMarks, newPageKey, saveMarks } from '../lib/point-tell/store';
 import type { PtMark } from '../lib/point-tell/types';
 import { pt } from './state';
 
@@ -25,8 +25,6 @@ function persist(): void {
 
 /** Read this page's marks from the tab's storage (on entering, and on arriving at another page). */
 export function restoreMarks(): void {
-  // Changes staged in Blueprint live in its memory: coming back here, they are gone, and the notes are plain notes.
-  clearStaged(pt.rid);
   const set = loadMarks(marksKey());
   pt.marks = set.marks;
   pt.next = set.next;
@@ -83,7 +81,7 @@ export function clearMarks(): void {
 
 /** A new note on one object, or (no ids) on the page. */
 export function openNew(targets: string[]): void {
-  pt.listOpen = false; pt.sheet = null; pt.answer = null;
+  pt.listOpen = false;
   pt.panelEl?.remove(); pt.panelEl = null;
   pt.editor = { n: null, targets, text: '', page: targets.length === 0 };
   pt.fieldEl?.remove(); pt.fieldEl = null;
@@ -93,7 +91,7 @@ export function openNew(targets: string[]): void {
 export function openMark(n: number): void {
   const m = markByNumber(n);
   if (!m) return;
-  pt.listOpen = false; pt.sheet = null; pt.answer = null;
+  pt.listOpen = false;
   pt.editor = { n, targets: m.targets, text: m.text, page: m.targets.length === 0 && !m.ink };
   pt.fieldEl?.remove(); pt.fieldEl = null;
   hooks.render();
@@ -103,7 +101,7 @@ export function openMark(n: number): void {
 export function openInkMark(n: number, lift: [number, number]): void {
   const m = markByNumber(n);
   if (!m) return;
-  pt.listOpen = false; pt.sheet = null; pt.answer = null;
+  pt.listOpen = false;
   pt.panelEl?.remove(); pt.panelEl = null;
   pt.editor = { n, targets: m.targets, text: m.text, page: false, lift };
   pt.fieldEl?.remove(); pt.fieldEl = null; // a field for the earlier mark is rebuilt for this one
@@ -112,6 +110,8 @@ export function openInkMark(n: number, lift: [number, number]): void {
 
 /** Close the field the way the next stroke does: what was typed and the mark stay. */
 export function closeEditorKeeping(): void {
+  // Whatever the next action is, an open reply gives way to it.
+  if (pt.reply) { pt.reply = null; hooks.render(); }
   const ed = pt.editor;
   if (!ed) return;
   const typed = pt.fieldEl?.querySelector('textarea')?.value ?? ed.text;

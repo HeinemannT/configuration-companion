@@ -4,11 +4,14 @@
  *
  * One press is either a CLICK (it did not move more than a few pixels: a note on the object under it) or
  * a STROKE (it did). There is no switch between the two. A stroke hands the tool every sample the browser
- * has (coalesced events) and the browser's prediction of where the pen goes next.
+ * has (coalesced events) and the browser's prediction of where the pen goes next. When the tool says a press
+ * may HOLD (voice comments are on), a press that stays still long enough starts voice instead
+ * (lib/point-tell/press-hold): it listens until the pointer goes up, is cancelled, or the window loses focus.
  *
  * The wheel scrolls the page (or the scroller under the pointer) as usual. With touch, one finger draws and
  * two fingers scroll the page: a second finger cancels the stroke the first one began.
  */
+import { Press, STILL_PX } from '../lib/point-tell/press-hold';
 import { TAB_PILL } from './measure';
 import { pt } from './state';
 import { placed, Z } from './view';
@@ -49,13 +52,22 @@ export interface PtTool {
   click?(p: PtPointer): void;
   /** The pointer left the window, or the tool was switched off. */
   leave?(): void;
+  /** A press went down: whether staying still may start voice. True: the tool shows its quiet cue. */
+  holdable?(p: PtPointer): boolean;
+  /** The press moved, went up or was lost before the hold: the cue goes. */
+  holdDisarm?(): void;
+  /** The press stayed still: start voice there. False when it did not (the press then goes on as a click or a stroke). */
+  holdStart?(p: PtPointer): boolean;
+  /** A hold ended (up, cancelled, the window lost focus): voice stops and keeps what was heard. */
+  holdEnd?(): void;
 }
 
-/** Pixels of movement before a press is a stroke and not a click. */
-export const STROKE_THRESHOLD = 4;
+/** Pixels of movement before a press is a stroke and not a click (and no longer still enough to start voice). */
+export const STROKE_THRESHOLD = STILL_PX;
 
 let active: PtTool | null = null;
-let press: { id: number; x: number; y: number; stroke: boolean; buffer: PtPointer[] } | null = null;
+let press: { id: number; g: Press; buffer: PtPointer[] } | null = null;
+let onBlur: (() => void) | null = null;
 let surfaceEl: HTMLElement | null = null;
 const touches = new Map<number, { x: number; y: number }>();
 let touchScroll = false;
@@ -68,7 +80,7 @@ const toPointer = (e: PointerEvent | MouseEvent): PtPointer => ({
 });
 
 /** Whether a stroke is being drawn (the wheel waits for it to end). */
-export const isStroking = (): boolean => !!press?.stroke;
+export const isStroking = (): boolean => press?.g.phase === 'stroke';
 
 /** The wheel goes to the page's own scroller under the surface when it can move that way, else the window. */
 function forwardWheel(e: WheelEvent, surface: HTMLElement): void {
@@ -98,10 +110,16 @@ export function installSurface(layer: HTMLElement, tool: PtTool): HTMLElement {
   active = tool;
   surfaceEl = s;
 
-  const cancelStroke = (): void => {
+  /** The press is lost: a stroke is dropped, a hold ends (keeping what was heard), a charging cue goes. */
+  const cancelPress = (): void => {
     const was = press;
     press = null;
-    if (was?.stroke) active?.strokeCancel?.();
+    if (!was) return;
+    const charging = was.g.charging;
+    const phase = was.g.cancel();
+    if (phase === 'stroke') active?.strokeCancel?.();
+    else if (phase === 'held') active?.holdEnd?.();
+    else if (charging) active?.holdDisarm?.();
   };
 
   s.addEventListener('pointermove', (e) => {
@@ -119,10 +137,13 @@ export function installSurface(layer: HTMLElement, tool: PtTool): HTMLElement {
     }
     if (press && e.pointerId === press.id) {
       const p = toPointer(e);
-      if (!press.stroke) {
+      // A hold listens: the pointer may wander, nothing is drawn.
+      if (press.g.phase === 'held') return;
+      if (press.g.phase === 'press') {
         press.buffer.push(p);
-        if (Math.hypot(e.clientX - press.x, e.clientY - press.y) >= STROKE_THRESHOLD) {
-          press.stroke = true;
+        const charging = press.g.charging;
+        if (press.g.move(e.clientX, e.clientY) === 'stroke') {
+          if (charging) active.holdDisarm?.();
           active.strokeStart?.(press.buffer.slice());
           press.buffer = [];
         }
@@ -141,37 +162,61 @@ export function installSurface(layer: HTMLElement, tool: PtTool): HTMLElement {
       touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (touches.size >= 2) {
         // A second finger: the stroke the first one began is dropped and the two fingers scroll.
-        cancelStroke();
+        cancelPress();
         touchScroll = true;
         e.preventDefault();
         return;
       }
     } else if (e.button !== 0) return;
     e.preventDefault(); // no focus change, no text selection under the surface
-    press = { id: e.pointerId, x: e.clientX, y: e.clientY, stroke: false, buffer: [toPointer(e)] };
+    if (press) cancelPress(); // a press whose up was lost is not left behind
+    const down = toPointer(e);
+    const holdable = !!active.holdable?.(down);
+    const g: Press = new Press(e.clientX, e.clientY, {
+      holdable,
+      // Voice starts where the press went down (the pointer is still within a few pixels of it).
+      onHold: () => (press?.g === g && active?.holdStart ? active.holdStart(down) : false),
+    });
+    press = { id: e.pointerId, g, buffer: [down] };
     try { s.setPointerCapture(e.pointerId); } catch { /* the pointer is gone */ }
   });
 
   const finish = (e: PointerEvent, cancelled: boolean): void => {
-    try { s.releasePointerCapture(e.pointerId); } catch { /* released already */ }
     if (e.pointerType === 'touch') {
       touches.delete(e.pointerId);
       const scrolling = touchScroll;
       if (!touches.size) touchScroll = false;
-      if (scrolling) return;
+      if (scrolling) { try { s.releasePointerCapture(e.pointerId); } catch { /* released already */ } return; }
     }
-    if (!active || !press || press.id !== e.pointerId) return;
-    const was = press;
-    press = null;
-    if (cancelled) { if (was.stroke) active.strokeCancel?.(); return; }
+    const mine = !!active && !!press && press.id === e.pointerId;
+    if (mine && cancelled) cancelPress();
+    // Taken before the capture is released: releasing may report the lost capture at once.
+    const was = mine && !cancelled ? press : null;
+    if (was) press = null;
+    try { s.releasePointerCapture(e.pointerId); } catch { /* released already */ }
+    if (!was || !active) return;
+    const charging = was.g.charging;
+    const kind = was.g.up();
+    if (kind === 'held') { active.holdEnd?.(); return; }
+    if (charging) active.holdDisarm?.();
     if (e.pointerType !== 'touch' && e.button !== 0) return;
     const p = toPointer(e);
-    if (was.stroke) active.strokeEnd?.(p); else active.click?.(p);
+    if (kind === 'stroke') active.strokeEnd?.(p); else active.click?.(p);
   };
   s.addEventListener('pointerup', (e) => finish(e, false));
   s.addEventListener('pointercancel', (e) => finish(e, true));
-  s.addEventListener('pointerleave', () => { if (!press) active?.leave?.(); });
-  s.addEventListener('wheel', (e) => { if (press?.stroke) { e.preventDefault(); return; } forwardWheel(e, s); }, { passive: false });
+  // A hold whose pointer capture is taken away (the browser took the pointer) ends like a cancel.
+  s.addEventListener('lostpointercapture', (e) => { if (press?.id === e.pointerId && press.g.phase === 'held') finish(e, true); });
+  s.addEventListener('pointerleave', (e) => {
+    if (!press) { active?.leave?.(); return; }
+    // Without capture, a hold that leaves the surface ends (with capture the surface keeps the pointer).
+    if (press.id === e.pointerId && press.g.phase === 'held' && !s.hasPointerCapture(e.pointerId)) finish(e, true);
+  });
+  // The window lost focus (another window, a dialog): a hold ends and keeps its words, a charging press is dropped.
+  if (onBlur) window.removeEventListener('blur', onBlur);
+  onBlur = () => { if (press && press.g.phase !== 'stroke') cancelPress(); };
+  window.addEventListener('blur', onBlur);
+  s.addEventListener('wheel', (e) => { if (press && press.g.phase !== 'press') { e.preventDefault(); return; } forwardWheel(e, s); }, { passive: false });
   // The page's own click, double click and context menu must not reach what is under the surface.
   for (const type of ['click', 'dblclick', 'contextmenu', 'auxclick'] as const) s.addEventListener(type, (e) => e.stopPropagation());
   layer.appendChild(s);
@@ -183,6 +228,10 @@ export function setSurfaceCursor(cursor: string): void { if (surfaceEl) surfaceE
 
 /** Take the pointer away from the active tool (the mode is closing or the surface is rebuilt). */
 export function releasePointer(): void {
+  if (press?.g.phase === 'held') active?.holdEnd?.();
+  else if (press?.g.charging) active?.holdDisarm?.();
+  press?.g.cancel();
+  if (onBlur) { window.removeEventListener('blur', onBlur); onBlur = null; }
   active?.leave?.();
   active = null;
   press = null;
