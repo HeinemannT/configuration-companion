@@ -29,11 +29,11 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/chrome": "^0.1.43",
+    "@types/chrome": "^0.3.7",
     "@types/js-beautify": "^1.14.3",
     "@types/node": "^25.9.9",
     "esbuild": "^0.28.2",
-    "eslint": "^10.14.0",
+    "eslint": "^10.15.0",
     "happy-dom": "^21.0.4",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.72.2",
@@ -56,6 +56,6 @@
     "@lezer/highlight": "^1.2.5",
     "@lezer/json": "^1.0.3",
     "js-beautify": "^2.0.3",
-    "tough-cookie": "6.0.2"
+    "tough-cookie": "6.1.0"
   }
 }
