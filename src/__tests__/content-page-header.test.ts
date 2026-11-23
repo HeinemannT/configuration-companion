@@ -54,6 +54,26 @@ describe('page header identity lifecycle', () => {
     });
   });
 
+  it('puts the badge after a heading that is an item of a title-bar row (BMP 5.6.20 cuts the heading off)', () => {
+    const row = title.parentElement!;
+    row.style.display = 'flex';
+    syncPageHeaderIdentity(state, '4461927418075734575');
+
+    expect(title.querySelector('.crev-page-label')).toBeNull();
+    const label = row.querySelector<HTMLElement>('.crev-page-label')!;
+    expect(title.nextSibling).toBe(label);
+    expect(label.style.getPropertyValue('align-self')).toBe('center');
+
+    // BMP resizes the heading: the badge stays where it is, still one badge.
+    title.style.width = '115px';
+    syncPageHeaderIdentity(state, '4461927418075734575');
+    expect(row.querySelectorAll('.crev-page-label')).toHaveLength(1);
+    expect(title.nextSibling).toBe(label);
+
+    removePageHeaderIdentity(state);
+    expect(row.querySelector('.crev-page-label')).toBeNull();
+  });
+
   it('replaces the identity when the resolved page changes', () => {
     syncPageHeaderIdentity(state, '111');
     state.enrichments.set('222', { name: 'Process Register', businessId: 'PR', type: 'Scorecard' });

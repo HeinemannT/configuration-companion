@@ -191,6 +191,7 @@ export const MESSAGE_ACCESS: Readonly<Record<string, Allowed>> = {
   GET_CACHE: [],
   GET_CACHE_BYTES: [],
   GET_CONTEXT_RID: [],
+  CLEAR_CONTEXT_RID: [],
   GET_DETECTION: [],
   GET_PAGE_INFO: [],
   GET_SERVER_LOAD: [], // diagnostics hook: the test rig reads the load governor through it

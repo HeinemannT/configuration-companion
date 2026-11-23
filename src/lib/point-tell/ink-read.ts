@@ -3,13 +3,14 @@
  * a scene (the layout model plus the rectangles the page measured) and strokes in page coordinates.
  * Nothing here changes how a stroke looks: a stroke stays exactly as drawn, this only reads it.
  *
- *   loop around objects          the objects are the targets
- *   line from an object to a place   move (the place from `resolveArrow`)
+ *   loop around objects          the objects are the targets (one stroke, or two arcs; overshoot, a gap and hooks are fine)
+ *   line or arrow from an object to a place   move (the place from `resolveArrow`); the head is a hook, a V, a W, a triangle
+ *                                or one or two barbs, drawn with the line or apart from it, before or after (see `arrowParts`)
  *   rough box on empty space      add (the place from `resolveBox`)
  *   a sketch of a widget on empty space   add, with a widget kind (table, chart, button, text; see widget-read)
  *   an arrow from an object into a square you drew   move (the place and width of the square)
  *   an arrow from empty space onto an object   about that object (a select, like a loop)
- *   scratch-out, cross or a line struck through an object   crossed out (not a delete: the words and the context say what it means)
+ *   scratch-out, X (two strokes or one) or a line struck through an object   crossed out (not a delete: the words and the context say what it means)
  *   underline or squiggle under an object  change
  *   anything else                 plain ink, with the objects it touches
  *
@@ -21,8 +22,8 @@ import { findNode } from '../layout/model';
 import { area, centre, contains, intersection, type Rect } from './hit';
 import { contentBounds, inkBounds, inkPlace, objectsIn, resolveArrow, resolveBox, type PtScene } from './resolve';
 import { readSketch } from './widget-read';
-import { analyze, pip, type Features } from './ink-features';
-import { objectAt, pairMove, pointerTarget, splitArrow, struckThrough } from './gestures';
+import { analyze, joinedLoop, pip, type Features } from './ink-features';
+import { arrowParts, crossOf, objectAt, pairMove, pointerTarget, splitArrow, struckThrough } from './gestures';
 import { dist } from './ink-geom';
 import { tabReading } from './tab-read';
 import { crumbReading } from './crumb-read';
@@ -141,18 +142,39 @@ function crossedTarget(scene: PtScene, bb: Rect): string | null {
   return best;
 }
 
+/**
+ * What an X is on. The classic reading first (the X covers much of one object); then an X that is small on a
+ * big widget or tab (it sits wholly inside it and is no tiny scribble), and an X bigger than the object it was
+ * drawn on (its crossing is on that object and it covers most of it).
+ */
+function crossedMark(scene: PtScene, bb: Rect, at: PtPoint, plus = false): string | null {
+  const id = crossedTarget(scene, bb);
+  if (id || plus) return id;
+  const a = Math.max(1, area(bb));
+  const pad = 3;
+  const mid = centre(bb);
+  const on = (r: Rect): boolean => [at, mid].some(p => contains({ left: r.left - pad, top: r.top - pad, width: r.width + 2 * pad, height: r.height + 2 * pad }, p[0], p[1]));
+  const pool = [...scene.pills, ...scene.targets.filter(t => t.kind === 'widget')].filter(t => on(t.rect));
+  const fits = pool.filter(t => {
+    const ia = intersection(bb, t.rect), small = Math.min(bb.width, bb.height) >= Math.min(26, 0.45 * Math.min(t.rect.width, t.rect.height)) && Math.max(bb.width, bb.height) >= 28;
+    return (small && ia / a >= 0.85) || (ia / Math.max(1, area(t.rect)) >= 0.6 && ia / a >= 0.12);
+  }).sort((x, y) => area(x.rect) - area(y.rect));
+  return fits[0]?.id ?? null;
+}
+
 const withKind = (scene: PtScene, strokes: ReadonlyArray<InkStroke>, kind: InkKind, targets: string[], extra: Partial<InkReading>): InkReading => ({
   kind, targets, place: inkPlace(scene, strokes), ...extra,
 });
 
-function segX(a: PtPoint, b: PtPoint, c: PtPoint, d: PtPoint): boolean {
-  const o = (p: PtPoint, q: PtPoint, r: PtPoint): number => Math.sign((q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]));
-  return o(a, b, c) !== o(a, b, d) && o(c, d, a) !== o(c, d, b);
-}
-
 /** One stroke. */
 function readOne(scene: PtScene, strokes: ReadonlyArray<InkStroke>, F: Features): InkReading {
   if (F.tap || F.L < 40) return plain(scene, strokes, F);
+
+  // An X drawn in one stroke.
+  if (F.xmark && F.cross) {
+    const id = crossedMark(scene, F.bbox, F.cross);
+    return id ? withKind(scene, strokes, 'crossed', [id], { meaning: { kind: 'crossed' }, reading: `Crossed out ${nameOf(scene, id)}` }) : plain(scene, strokes, F);
+  }
 
   if (F.closed) {
     const poly = F.S;
@@ -232,15 +254,19 @@ export function readInk(scene: PtScene, strokes: ReadonlyArray<InkStroke>): InkR
     if (tab) return tab;
     if (list.length === 1) return readOne(scene, list, analyze(list[0].points));
     const fs = list.map(s => analyze(s.points));
-    // A cross: two straight strokes that cross each other.
     if (list.length === 2) {
-      const [a, b] = fs;
-      const straight = (f: Features): boolean => !f.tap && f.chord / f.L >= 0.8 && f.chord >= 24;
-      if (straight(a) && straight(b) && segX(a.start, a.end, b.start, b.end)) {
-        const bb = inkBounds(list)!;
-        const id = crossedTarget(scene, bb);
+      // A cross: two straight strokes that cross each other.
+      const x = crossOf(fs[0], fs[1]);
+      if (x) {
+        const id = crossedMark(scene, inkBounds(list)!, x.at, x.plus);
         if (id) return withKind(scene, list, 'crossed', [id], { meaning: { kind: 'crossed' }, reading: `Crossed out ${nameOf(scene, id)}` });
         return plain(scene, list);
+      }
+      // A loop drawn in two arcs.
+      const lp = joinedLoop(fs[0], fs[1]);
+      if (lp) {
+        const one = readOne(scene, list, lp);
+        if (one.kind === 'select') return one;
       }
     }
     // An arrow from an object that ends inside a square drawn with it: that object goes there, at that width.
@@ -249,14 +275,12 @@ export function readInk(scene: PtScene, strokes: ReadonlyArray<InkStroke>): InkR
       const paired = pairMove(scene, sp.ends, readInk(scene, sp.rest), sp.rest);
       if (paired) return paired;
     }
-    // An arrow drawn with separate head strokes: one long stroke, and one or two short ones at its ends.
-    if (list.length <= 3) {
-      const order = fs.map((f, i) => ({ f, i })).sort((x, y) => y.f.L - x.f.L);
-      const long = order[0], shorts = order.slice(1);
-      const near = (p: PtPoint): number => Math.min(dist(p, long.f.end), dist(p, long.f.start));
-      if (long.f.L >= 60 && shorts.every(s => s.f.L <= 70 && s.f.L <= 0.6 * long.f.L && (near(s.f.start) <= 28 || near(s.f.end) <= 28))) {
-        const one = readOne(scene, [list[long.i]], long.f);
-        if (long.f.arrowish && (one.kind === 'move' || one.kind === 'select')) return { ...one, place: inkPlace(scene, list) };
+    // An arrow drawn with separate head strokes: one long stroke, and a V or one or two barbs at one of its ends.
+    if (list.length <= 4) {
+      const ap = arrowParts(fs);
+      if (ap && ap.heads.length > 0 && ap.heads.length + 1 === list.length) {
+        const one = readOne(scene, [list[ap.shaft]], ap.F);
+        if (one.kind === 'move' || one.kind === 'select') return { ...one, place: inkPlace(scene, list) };
       }
     }
     // A sketch of a widget on empty grid (a box with lines across, bars, a few wavy lines).
@@ -283,11 +307,19 @@ export function joinsGroup(group: GroupState, strokeBox: Rect, startedAt: number
   const g = group.box;
   const cx = strokeBox.left + strokeBox.width / 2, cy = strokeBox.top + strokeBox.height / 2;
   const inside = g.width >= 60 && g.height >= 40 && cx >= g.left && cx <= g.left + g.width && cy >= g.top && cy <= g.top + g.height;
-  if (startedAt - group.endedAt > (inside ? GROUP_INSIDE_MS : GROUP_MS)) return false;
   const dx = Math.max(g.left - (strokeBox.left + strokeBox.width), strokeBox.left - (g.left + g.width), 0);
   const dy = Math.max(g.top - (strokeBox.top + strokeBox.height), strokeBox.top - (g.top + g.height), 0);
+  const gap = Math.hypot(dx, dy);
+  // The second stroke of an X: each stroke's middle lies within the other's box (also on a flat object, where the box is thin).
+  const gcx = g.left + g.width / 2, gcy = g.top + g.height / 2;
+  const across = Math.max(g.width, g.height) >= 20 && Math.max(strokeBox.width, strokeBox.height) >= 20
+    && cx >= g.left && cx <= g.left + g.width && cy >= g.top && cy <= g.top + g.height
+    && gcx >= strokeBox.left && gcx <= strokeBox.left + strokeBox.width && gcy >= strokeBox.top && gcy <= strokeBox.top + strokeBox.height;
+  // The head of an arrow: a small stroke that touches the line, drawn after the line is done and the hand has gone back.
+  const head = Math.max(strokeBox.width, strokeBox.height) <= 70 && gap <= 8 && Math.max(g.width, g.height) >= 50;
+  if (startedAt - group.endedAt > (inside || across || head ? GROUP_INSIDE_MS : GROUP_MS)) return false;
   // Crossing or touching the group's box always joins; otherwise the stroke must start close by.
   // The margin grows with the size of what is drawn: handwriting spaces its letters by about their size.
   const size = Math.max(g.width, g.height, strokeBox.width, strokeBox.height);
-  return Math.hypot(dx, dy) <= Math.min(90, Math.max(GROUP_GAP, 0.8 * size));
+  return gap <= Math.min(90, Math.max(GROUP_GAP, 0.8 * size));
 }

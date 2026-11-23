@@ -101,16 +101,18 @@ describe('page badge senders (no side panel)', () => {
     await vi.waitFor(() => expect(toasts()).toEqual(['Copied Referencet.iv_main']));
   });
 
-  it('the flow arrow opens the object itself in the object window', () => {
-    const btn = label('InputView').querySelector<HTMLElement>('.crev-sub--flow')!;
-    expect(btn.getAttribute('aria-label')).toBe('Open the flow in the object window');
-    btn.click();
-    expect(sendFireForget).toHaveBeenCalledWith({ type: 'OPEN_OBJECT_VIEW', rid: '700', name: 'Main view', objectType: 'InputView', businessId: 'iv_main' });
+  it('has no separate arrow square: the double-click already opens the object', () => {
+    expect(label('InputView').querySelector('.crev-sub--flow')).toBeNull();
   });
 
   it('the cascade chip opens the linked object', () => {
     const chip = label('InputView', { rid: '800', businessId: 'set_main', type: 'InputSet' }).querySelector<HTMLElement>('.crev-cascade')!;
     expect(chip.title).toContain('object window');
+    // The end cap: the linked type's icon, the ID inside for hover, welded to the badge.
+    expect(chip.querySelector('svg')).not.toBeNull();
+    expect(chip.querySelector('.crev-cascade-id')?.textContent).toBe('set_main');
+    expect(chip.closest('.crev-label')?.classList.contains('crev-label--linked')).toBe(true);
+    expect(chip.parentElement?.firstElementChild).toBe(chip);
     chip.click();
     expect(sendFireForget).toHaveBeenCalledWith({ type: 'OPEN_OBJECT_VIEW', rid: '800', objectType: 'InputSet', businessId: 'set_main' });
     expect(sent().some(m => m.type === 'SELECT_OBJECT')).toBe(false);

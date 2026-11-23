@@ -6,7 +6,7 @@ import { register } from '../handler-registry';
 import { ctxOf } from '../sw-context';
 import { getTabDetection, setTabDetection, updateBadge } from '../detection';
 import { sendPageInfoToPanel, handleGetDetection } from '../tab-awareness';
-import { clearContextRid, getPageContext, setPageContext, deleteContextRid, markPageContextStale } from '../context-rid';
+import { clearContextRid, getContextRid, getPageContext, setPageContext, deleteContextRid, markPageContextStale } from '../context-rid';
 import type { SwContext } from '../sw-context';
 import { resolvePanelContextForTab, sendPanelContextForTab } from '../panel-context-sync';
 import { setCurrentPosition } from '../current-position';
@@ -174,10 +174,20 @@ register('GET_CONTEXT_RID', async (_msg, respond, meta) => {
     name: entry?.name,
     objectType: entry?.type,
     businessId: entry?.businessId,
+    ...(entry && tabId != null && getContextRid(tabId)?.rid === entry.rid ? { pointed: true as const } : {}),
   };
   respond(payload);
   if (meta.panelWindowId != null) ctx.sendToPanelByWindow(meta.panelWindowId, payload);
   else ctx.sendToPanel(payload);
+});
+
+// The panel's bar clears the pointed-at object: the position is the page's object again.
+register('CLEAR_CONTEXT_RID', async (_msg, _respond, meta) => {
+  if (meta.panelWindowId == null) return;
+  const tabId = (await chrome.tabs.query({ active: true, windowId: meta.panelWindowId }))[0]?.id;
+  if (tabId == null) return;
+  clearContextRid(tabId);
+  await sendPanelContextForTab(tabId);
 });
 
 // Current position (lib/current-position.ts). Senders: content (badge click,

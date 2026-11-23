@@ -21,13 +21,32 @@ function parseTabButton(tab: HTMLElement): { element: HTMLAnchorElement; rid: st
     const u = new URL(anchor.href, window.location.origin);
     const tabrid = u.searchParams.get('tabrid') ?? u.searchParams.get('tabRid');
     if (!tabrid || !/^-?\d+$/.test(tabrid)) return null;
-    const name = tab.getAttribute('data-title') ?? tab.getAttribute('aria-label') ?? undefined;
+    const name = tab.getAttribute('data-title') ?? tab.getAttribute('aria-label') ?? tabDisplayName(tab);
     return { element: anchor, rid: tabrid, name };
   } catch { return null; }
 }
 
-const SELECTED_TAB_SELECTOR = '.corpo-tabSet__tab--selected, [role="tab"][aria-selected="true"]';
-const ANY_TAB_SELECTOR = '.corpo-tabSet__tab, [role="tab"]';
+/** BMP's page tabs. Older builds: `.corpo-tabSet__tab` (selected: `--selected`) around an anchor.
+ *  5.6.20: the anchor itself is the tab (`a.corpo-tabs__tab[role=tab]`, selected: aria-selected).
+ *  Every surface that reads or clicks a page tab uses these two, so a new build is added once. */
+export const SELECTED_TAB_SELECTOR = '.corpo-tabSet__tab--selected, [role="tab"][aria-selected="true"]';
+export const ANY_TAB_SELECTOR = '.corpo-tabSet__tab, [role="tab"]';
+
+/** The name a tab shows: BMP's own attribute where it has one (5.6.20: `data-text`), else its
+ *  text without anything Companion added to it (Inspect badges sit inside the tab). */
+export function tabDisplayName(tab: Element): string | undefined {
+  const attr = tab.getAttribute('data-text');
+  if (attr?.trim()) return attr.trim();
+  let text = '';
+  const walk = (node: Node): void => {
+    for (const child of node.childNodes) {
+      if (child.nodeType === 3) text += child.textContent ?? '';
+      else if (child.nodeType === 1 && !/(^|\s)crev-/.test((child as Element).getAttribute('class') ?? '')) walk(child);
+    }
+  };
+  walk(tab);
+  return text.replace(/\s+/g, ' ').trim() || undefined;
+}
 
 /** Extract the scorecard RID + (where possible) the active tab RID + the
  *  active tab's display name. BMP only puts `?tabrid=…` in the URL on

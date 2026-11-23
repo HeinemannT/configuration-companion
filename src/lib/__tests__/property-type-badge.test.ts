@@ -6,12 +6,8 @@
  * split capsule + value-kind color + ClockCountdown for Historical*.
  */
 import { describe, expect, it } from 'vitest';
-import {
-  ICON_PROP_HISTORY,
-  ICON_PROP_REFERENCE,
-  ICON_PROP_REVERSE_REFERENCE,
-  ICON_PROP_RICH_TEXT,
-} from '../icons';
+import { ICON_PROP_HISTORY } from '../icons';
+import { glyphSvg } from '../object-glyphs';
 import { typeBadge, typeIcon } from '../type-badge';
 import { getTypeAbbr, getTypeColor } from '../types';
 
@@ -55,11 +51,12 @@ describe('property object type badges', () => {
     expect(badge.querySelector('.bdg-history') !== null).toBe(historical);
   });
 
-  it('uses the approved filled glyphs for rich text and reference direction', () => {
-    expect(typeIcon('RichTextMethodConfig')).toBe(ICON_PROP_RICH_TEXT);
-    expect(typeIcon('ReferenceMethodConfig')).toBe(ICON_PROP_REFERENCE);
-    expect(typeIcon('HistoricalReferenceMethodConfig')).toBe(ICON_PROP_REFERENCE);
-    expect(typeIcon('ReverseReferenceMethodConfig')).toBe(ICON_PROP_REVERSE_REFERENCE);
+  it('uses the shared glyph set: one glyph per value kind, the same for a historical property', () => {
+    expect(typeIcon('RichTextMethodConfig')).toBe(glyphSvg('richtext'));
+    expect(typeIcon('ReferenceMethodConfig')).toBe(glyphSvg('ref'));
+    expect(typeIcon('HistoricalReferenceMethodConfig')).toBe(glyphSvg('ref'));
+    expect(typeIcon('ReverseReferenceMethodConfig')).toBe(glyphSvg('backref'));
+    expect(typeIcon('NumberMethodConfig')).toBe(typeIcon('HistoricalNumberMethodConfig'));
   });
 
   it('puts the filled ClockCountdown only on historical property badges', () => {

@@ -33,6 +33,7 @@
 
 import { readOutlineLook, writeOutlineLook, type OutlineLook } from './content-outline';
 import type { BackgroundSample } from './lib/badge-look';
+import { ANY_TAB_SELECTOR } from './lib/dom-scanner';
 
 /** Badges that float in their host's corner. Page-header and inline-start
  *  labels sit in the text flow and are never moved. */
@@ -415,7 +416,7 @@ function controlBoxes(host: Element, near: Box): Box[] {
 }
 
 /** A BMP tab (tab set) or an ARIA tab (dom-scanner's ANY_TAB_SELECTOR). */
-const TAB = '.corpo-tabSet__tab, [role="tab"]';
+const TAB = ANY_TAB_SELECTOR;
 /** Levels above a tab searched for the strip that holds its siblings. */
 const STRIP_DEPTH = 4;
 

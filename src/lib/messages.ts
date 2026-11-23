@@ -92,10 +92,13 @@ export type PageMessage =
   // information, but preserve the user's explicit object selection.
   | { type: 'BMP_PAGE_RENDER_CHANGED' }
   | { type: 'GET_CONTEXT_RID' }
+  // The panel's bar: drop the object the user pointed at; the position follows the page again.
+  | { type: 'CLEAR_CONTEXT_RID' }
   // The tab's current position: the object the user last pointed at (badge
   // click, right-click, object window), else the page's bound object.
   // `source` is absent for the page fallback (see lib/current-position.ts).
-  | { type: 'CONTEXT_RID_DATA'; rid?: string; name?: string; objectType?: string; businessId?: string; source?: PositionSource }
+  // `pointed` is set while the object is one the user pointed at (it can be cleared).
+  | { type: 'CONTEXT_RID_DATA'; rid?: string; name?: string; objectType?: string; businessId?: string; source?: PositionSource; pointed?: true }
   | { type: 'COPY_TO_CLIPBOARD'; text: string };
 
 // ── Inspect Toggle ───────────────────────────────────────────────

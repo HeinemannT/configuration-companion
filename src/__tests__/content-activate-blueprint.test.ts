@@ -46,6 +46,8 @@ vi.mock('../lib/dom-scanner', () => ({
   detectBmpPage: () => detectBmpPage(),
   findTabButton: vi.fn(() => null),
   isTabActive: vi.fn(() => false),
+  ANY_TAB_SELECTOR: '.corpo-tabSet__tab, [role="tab"]',
+  SELECTED_TAB_SELECTOR: '.corpo-tabSet__tab--selected, [role="tab"][aria-selected="true"]',
 }));
 vi.mock('../content-overlays', () => ({
   syncOverlays: vi.fn(),

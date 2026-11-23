@@ -34,6 +34,7 @@ export function setCurrentPosition(tabId: number | undefined, entry: ContextRidE
     name: entry.name,
     objectType: entry.type,
     businessId: entry.businessId,
+    ...(tabId != null ? { pointed: true as const } : {}),
     ...(source ? { source } : {}),
   };
   if (tabId != null) ctx.sendToPanelByTab(tabId, msg);

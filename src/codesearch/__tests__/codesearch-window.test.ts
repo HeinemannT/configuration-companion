@@ -35,6 +35,8 @@ const settle = async () => { for (let i = 0; i < 3; i++) { await Promise.resolve
 beforeAll(async () => {
   document.body.innerHTML = '<div id="search-root"></div>';
   (globalThis as unknown as { chrome: unknown }).chrome = {
+    // The note before a broad server read is turned off (heavy-search.ts has its own tests).
+    storage: { local: { get: async (k: string) => ({ [k]: true }), set: async () => undefined } },
     runtime: {
       id: 'test',
       getURL: (p: string) => `chrome-extension://test/${p}`,

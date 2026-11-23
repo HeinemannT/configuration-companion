@@ -20,14 +20,13 @@
  * falls back to all visible widgets). Cells are selectable + draggable (they carry data-bpid/data-bpkind,
  * so the gesture machinery treats them as honest, final-position drop targets).
  */
+import { hasGlyph, typeGlyphSvg } from '../lib/object-glyphs';
 import { STYLE_NODE_FIELDS, type LModel, type LNode, type NodeStyle } from '../lib/layout/types';
 import { orderChildren, isTempId, isChart, walk, fieldsChanged, isFullGhost } from '../lib/layout/model';
 import { computeRows, trackSpan, TRACKS } from '../lib/layout/rows';
 import { COMPOSITE_TYPES } from '../lib/layout/constraints';
 import {
-  ICON_PLUS, ICON_CHART, ICON_TABLE, ICON_LIST, ICON_CHECK_CIRCLE, ICON_CODE,
-  ICON_LINK, ICON_PLAY, ICON_PENCIL, ICON_BOOK, ICON_LAYOUT, ICON_REVERT,
-  ICON_EYE_SLASH,
+  ICON_PLUS, ICON_REVERT, ICON_EYE_SLASH,
 } from '../lib/icons';
 import { getTypeAbbr, getTypeColor } from '../lib/types';
 import { flowPanel, compositeFlowRows, hasFlowPanel } from './result-flow';
@@ -78,22 +77,16 @@ function deleteStrips(grid: HTMLElement, base: BaselineIndex, parentId: string, 
   }
 }
 
-/** Widget-type → Phosphor glyph, so each result cell carries a scannable icon instead of only a mono
- *  type string (and the big empty chart/table cells aren't pure void). First match wins. */
-const TYPE_ICONS: [RegExp, string][] = [
-  [/Chart$/, ICON_CHART], [/Table$/, ICON_TABLE], [/List$/, ICON_LIST], [/Status/, ICON_CHECK_CIRCLE],
-  [/CustomVisualization/, ICON_CODE], [/URLView/, ICON_LINK], [/Button/, ICON_PLAY],
-  [/(Input|Create|ObjectView)/, ICON_PENCIL], [/(Description|Text)/, ICON_BOOK], [/Container/, ICON_LAYOUT],
-];
 /** A composite widget (ButtonContainer/ButtonGroup/InputSet/…) that holds nested children. We render
  *  these READ-ONLY — show the children inside the box so a ButtonContainer's buttons are visible — but
  *  with no add slot and no drag arming, since editing INTO a composite needs `<composite>.add(child)`
  *  EC the compiler doesn't emit yet. */
 const isCompositeWithKids = (n: LNode): boolean => COMPOSITE_TYPES.has(n.className) && n.children.length > 0;
 
+/** The cell's icon: the type's shared glyph (lib/object-glyphs.ts), so a Blueprint cell shows the
+ *  same icon as the widget's badge and its row in Browse. Null for a type without one. */
 export function typeIcon(className: string): string | null {
-  for (const [re, ic] of TYPE_ICONS) if (re.test(className)) return ic;
-  return null;
+  return hasGlyph(className) ? typeGlyphSvg(className) : null;
 }
 
 /** A small "+" add button for a result container/tab cell. armBox already ignores mousedowns that
@@ -298,6 +291,9 @@ function buildLabel(node: LNode, state: CellState): HTMLElement {
   const wd = document.createElement('span'); wd.className = 'bp-rwd'; wd.textContent = (node.cols.L >= 6 ? '6 col' : `${node.cols.L} col`)
     // A width of its own on a smaller screen is said too: the canvas draws the large screen only.
     + (node.cols.M != null ? ` · M ${node.cols.M}` : '') + (node.cols.S != null ? ` · S ${node.cols.S}` : ''); lab.appendChild(wd);
+  // The header's room belongs to the name: a widget's width is said on hover here and by the
+  // dimension lines when it is selected; a container shows it over the header's end on hover.
+  nm.title = `${node.name} · ${wd.textContent}`;
   if (over.includes('columnsLargeScreen')) lab.appendChild(revertArrow(node, 'columnsLargeScreen', 'width'));
   if (over.includes('chartHeight')) lab.appendChild(revertArrow(node, 'chartHeight', 'height'));
   if (state !== 'same') {

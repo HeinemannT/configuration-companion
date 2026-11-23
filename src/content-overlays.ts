@@ -12,7 +12,7 @@ import { typeIcon } from './lib/type-badge';
 import { isHistoricalPropertyConfigClass, isPropertyConfigClass } from './lib/property-config';
 import { getAllRidElements } from './lib/dom-scanner';
 import { log } from './lib/logger';
-import { ICON_CODE, ICON_ARROW_FAT_LINE, ICON_VARIABLE, ICON_PROP_HISTORY } from './lib/icons';
+import { ICON_CODE, ICON_VARIABLE, ICON_PROP_HISTORY } from './lib/icons';
 import { svg } from './lib/dom';
 import { DISCOVERED_RIDS_CAP } from './lib/constants';
 import { BADGE_DESCRIPTION, COPY_KIND_FOR_MODIFIER, getModifier, type CopyKind } from './lib/namespace';
@@ -82,20 +82,30 @@ function hasRoomAbove(el: Element, needed = 11): boolean {
   return true;
 }
 
-/** The cascade jump chip — lives in the label's meta row. Shows the next link
- *  in the chain (InputView → inputSet, ActionButton → actionObject); clicking
- *  it opens THAT object in the object window. */
-function createCascadeChip(cascade: { rid: string; businessId?: string; type?: string; name?: string }): HTMLSpanElement {
-  const chip = document.createElement('span');
+/** The linked object's end cap, welded to the right end of the badge: an input view's input set, a
+ *  create object view's edit page, an action button's action object. It shows the linked type's
+ *  icon on its colour; its ID slides out while the cap is hovered or focused. Clicking it opens
+ *  THAT object in the object window. (It replaced a separate arrow square, which only repeated the
+ *  badge's double-click, and a chip that always showed the ID.) */
+function createCascadeChip(cascade: { rid: string; businessId?: string; type?: string; name?: string }): HTMLButtonElement {
+  const chip = document.createElement('button');
+  chip.type = 'button';
   chip.className = 'crev-cascade';
   chip.setAttribute('data-crev-cascade-rid', cascade.rid);
   chip.style.background = getTypeColor(cascade.type);
-  chip.textContent = cascade.businessId ?? cascade.name ?? getTypeAbbr(cascade.type);
-  // The chip carries no `data-crev-label`, so the hover info card never fires
-  // for it — a native `title` is safe here and is the only thing explaining
-  // that this small secondary chip is a clickable link.
-  const cascadeId = cascade.name ?? cascade.businessId ?? cascade.type ?? 'object';
-  chip.title = `Linked ${cascade.type ?? 'object'}: ${cascadeId}. Click to open it in the object window`;
+  const id = cascade.businessId ?? cascade.name ?? getTypeAbbr(cascade.type);
+  chip.appendChild(svg(typeIcon(cascade.type)));
+  const text = document.createElement('span');
+  text.className = 'crev-cascade-id';
+  text.textContent = id;
+  chip.appendChild(text);
+  // The cap carries no `data-crev-label`, so the hover info card never fires for it: a native
+  // `title` is safe here and says what the cap is before the ID has slid out.
+  // "InputSet" reads as "Input set" (the type table that knows the curated names is not in the page bundle).
+  const words = (cascade.type ?? '').replace(/^Ce(?=[A-Z])/, '').replace(/([a-z])([A-Z])/g, (_m, a: string, b: string) => `${a} ${b.toLowerCase()}`);
+  const what = words || 'Linked object';
+  chip.title = `${what}: ${cascade.name ?? id}. Click to open it in the object window`;
+  chip.setAttribute('aria-label', `Open ${what.toLowerCase()} ${id} in the object window`);
   chip.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -109,10 +119,9 @@ function createCascadeChip(cascade: { rid: string; businessId?: string; type?: s
  *
  *   .crev-stub  — full-bleed type stub: colour tile (role glyph) welded to a
  *                 light identity chip (businessId / name)
- *   .crev-meta  — the squares BESIDE it on one rail: violet `</>`
- *                 (opens the editor / CVO studio — folds the old dark action
- *                 strip into the design), teal link (references indicator),
- *                 and the cascade jump chip when the widget has a chain.
+ *   .crev-meta  — beside it on one rail: the linked object's end cap (welded to
+ *                 the stub) when the widget points at one, then the violet
+ *                 `</>` (opens the editor / CVO studio) and the linked property.
  *
  * Idempotent: the create path and the late-enrichment path in updateLabels()
  * share this ONE implementation. The text element persists across re-renders
@@ -171,25 +180,14 @@ function renderLabelContent(
   const aff = typeAffordances(type);
   const cascade = enrichment?.cascade;
   const property = labelPropertyTargets.get(label);
-  if (!aff.code && !aff.flow && !cascade && !property) return;
+  if (!aff.code && !cascade && !property) { label.classList.remove('crev-label--linked'); return; }
 
   const meta = document.createElement('span');
   meta.className = 'crev-meta';
 
-  if (aff.flow) {
-    // Teal fat-arrow square: "this widget has a chain to walk" (replaces the
-    // ⇢ that was welded onto the stub). The object window shows the chain as
-    // its structure tree, so the arrow opens the object there.
-    const sub = document.createElement('button');
-    sub.className = 'crev-sub crev-sub--flow';
-    sub.setAttribute('aria-label', 'Open the flow in the object window');
-    sub.appendChild(svg(ICON_ARROW_FAT_LINE));
-    sub.addEventListener('click', (e) => {
-      e.preventDefault(); e.stopPropagation();
-      openObject(rid, enrichment);
-    });
-    meta.appendChild(sub);
-  }
+  // The linked object comes first: its cap is welded to the badge (see createCascadeChip).
+  label.classList.toggle('crev-label--linked', !!cascade);
+  if (cascade) meta.appendChild(createCascadeChip(cascade));
 
   if (aff.code) {
     // The violet code square IS the open-in-editor affordance. No native
@@ -222,8 +220,6 @@ function renderLabelContent(
     });
     meta.appendChild(btn);
   }
-  if (cascade) meta.appendChild(createCascadeChip(cascade));
-
   label.appendChild(meta);
 }
 

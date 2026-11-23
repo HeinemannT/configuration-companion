@@ -73,7 +73,8 @@ export function renderList(actions: ListActions): void {
     row.type = 'button'; row.className = 'pt-row';
     const num = document.createElement('span');
     const was = m.sent && isSent(m) ? m.sent : null;
-    num.className = was ? 'pt-num pt-num-sent' : 'pt-num';
+    const wordless = !m.text.trim();
+    num.className = (was ? 'pt-num pt-num-sent' : 'pt-num') + (wordless ? ' pt-num-wordless' : '');
     num.textContent = was ? String(was.k) : numbers.has(m.n) ? String(numbers.get(m.n)) : '';
     const what = markLabel(m);
     const who = document.createElement('span');
@@ -92,6 +93,7 @@ export function renderList(actions: ListActions): void {
     const words = document.createElement('span');
     words.className = 'pt-row-words';
     words.textContent = m.text || 'No words';
+    if (wordless) words.classList.add('pt-row-empty');
     row.append(num, who, words);
     if (was) {
       const v = groupView(was, sent.rows, linkView());

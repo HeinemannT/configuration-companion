@@ -272,10 +272,10 @@ body {
   flex: none;
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
   min-width: 0;
-  height: 24px;
-  padding: 0 var(--space-4);
+  height: 26px;
+  padding: 0 var(--space-3);
   background: var(--layer-01);
   font-size: var(--ui-fs-xs);
   color: var(--text-helper);
@@ -283,10 +283,46 @@ body {
   overflow: hidden;
 }
 
+/* The current object comes first and gets the room: it shrinks (its label
+ * ends in an ellipsis) only when the bar is full. */
+.status-bar-context {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 0;
+  border: none;
+  background: none;
+  box-shadow: none;
+}
+.status-bar-context--empty { color: var(--text-helper); cursor: default; }
+/* While something is being reported next to it, the object keeps at most 60%. */
+.status-bar--busy .status-bar-context { max-width: 60%; }
+
+.status-bar-clear {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: calc(-1 * var(--space-1));
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-1);
+  background: none;
+  color: var(--text-helper);
+  cursor: pointer;
+}
+.status-bar-clear:hover { background: var(--layer-active); color: var(--text-primary); }
+.status-bar-clear:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.status-bar-clear .ic { width: 10px; height: 10px; }
+
+/* What is happening now; empty at rest. Takes what the object leaves. */
 .status-bar-activity {
-  flex: 1 1 96px;
-  min-width: 48px;
-  text-align: left;
+  flex: 1 1 0;
+  min-width: 0;
+  text-align: right;
   color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -294,39 +330,6 @@ body {
 }
 .status-bar-activity.is-idle { color: var(--text-helper); }
 .status-bar-activity.is-working { color: var(--text-primary); }
-
-.status-bar-count {
-  flex-shrink: 0;
-  color: var(--text-helper);
-  font-family: var(--font-mono);
-}
-
-/* Active object context — the shared chip contract, constrained so it
- * cannot crowd the activity line. */
-.status-bar-context {
-  max-width: 140px;
-  min-width: 0;
-  flex: 1 1 140px;
-  overflow: hidden;
-  padding: 0;
-  border: none;
-  background: none;
-  box-shadow: none;
-}
-.status-bar-context--empty {
-  padding: 0 var(--space-1);
-  border: 1px dashed var(--border-subtle);
-  border-radius: var(--radius-1);
-  color: var(--text-helper);
-  font-style: italic;
-  cursor: default;
-}
-.status-bar-context--empty:hover { background: transparent; border-color: var(--border-subtle); color: var(--text-helper); }
-
-@media (max-width: 390px) {
-  .status-bar-count { display: none; }
-  .status-bar-context { max-width: 108px; }
-}
 
 /* Latency traffic light — 6-step ramp plus a grey mark for "no data". */
 .status-bar-latency {
@@ -350,25 +353,18 @@ body {
 .status-bar-latency--t4 .status-bar-latency-ic,
 .status-bar-latency--t5 .status-bar-latency-ic { color: var(--support-error); }
 
-/* feedback overlay — a confirmation briefly owns the bar */
-.status-bar [hidden] { display: none; }
-
+/* Feedback: a confirmation owns the whole bar for a moment (sidepanel.ts sets and clears it). */
+.status-bar [hidden] { display: none !important; }
 .status-bar-flash {
-  display: none;
-  margin-left: auto;
+  flex: 1 1 auto;
+  min-width: 0;
   font-weight: 600;
   color: var(--text-primary);
-  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.status-bar--flash .status-bar [hidden] { display: none; }
-
-.status-bar-flash { display: inline; }
-.status-bar--flash #status-bar-context,
-.status-bar--flash #status-bar-latency,
-.status-bar--flash .status-bar-count,
-.status-bar--flash .status-bar-activity { display: none !important; }
+.status-bar--flash > :not(.status-bar-flash) { display: none !important; }
 
 /* Loading */
 .pane-loading {

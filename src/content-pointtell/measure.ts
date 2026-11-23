@@ -10,11 +10,12 @@ import type { LModel, LNode } from '../lib/layout/types';
 import type { PtTarget, Rect } from '../lib/point-tell/hit';
 import { unionOf } from '../lib/point-tell/hit';
 import type { PtScene } from '../lib/point-tell/resolve';
+import { ANY_TAB_SELECTOR, SELECTED_TAB_SELECTOR } from '../lib/dom-scanner';
 
 const MIN = 8;
 /** BMP's tab pills: older builds mark them .corpo-tabSet__tab, newer ones role=tab (the page scanner knows both). */
-export const TAB_PILL = '.corpo-tabSet__tab, [role="tab"]';
-const SELECTED_PILL = '.corpo-tabSet__tab--selected, [role="tab"][aria-selected="true"]';
+export const TAB_PILL = ANY_TAB_SELECTOR;
+const SELECTED_PILL = SELECTED_TAB_SELECTOR;
 
 const docRect = (el: Element): Rect | null => {
   const r = el.getBoundingClientRect();

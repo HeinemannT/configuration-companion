@@ -344,6 +344,11 @@ export function getTypeColor(type?: string): string {
   return TYPE_COLORS[type] ?? DEFAULT_TYPE_COLOR;
 }
 
+/** True when the type has a code of its own (not one cut from its class name). */
+export function hasTypeAbbr(type?: string): boolean {
+  return !!type && Object.hasOwn(TYPE_ABBREVIATIONS, type);
+}
+
 export function getTypeAbbr(type?: string): string {
   if (!type) return '?';
   return TYPE_ABBREVIATIONS[type] ?? type.substring(0, 3).toUpperCase();

@@ -48,6 +48,7 @@ import { cancelledText, isQuietEnd, NO_ANSWER_TEXT, startWatchdog, STATUS_TIMEOU
 import { attrs, btn, el, icon, type Kid } from '../lib/dom';
 import { startKeepAlive, type KeepAlive } from '../lib/keep-alive';
 import { createReplaceTab } from './replace-tab';
+import { askHeavySearch, isBroadPlace, loadMuted, needsWarning, placeKey, ReadPlaces, saveMuted } from './heavy-search';
 
 installCloseHandshake();
 
@@ -406,6 +407,9 @@ async function search(quiet = false, fresh = false): Promise<void> {
   }
   if (scope?.loading || scope?.error) { renderAll(); return; }
   if (scope?.rids) req.scopeRids = scope.rids;
+  const turn = ++searchTurn;
+  if (!quiet && !(await confirmServerRead(req))) return;
+  if (turn !== searchTurn) return;
   run?.controller?.abort();
   run?.watchdog?.stop();
   // The worker replaces this window's running search by itself; no stop is sent.
@@ -454,6 +458,36 @@ async function search(quiet = false, fresh = false): Promise<void> {
     cur.error = e instanceof Error ? e.message : String(e);
     renderAll();
   }
+}
+
+/** The places this window read from the server lately (the worker keeps the code). */
+const readPlaces = new ReadPlaces();
+let heavyAsking = false;
+/** The latest search asked for: an older one waiting on the note gives way. */
+let searchTurn = 0;
+
+/** A search that reads the server (no usable copy) over a broad place asks
+ *  first (heavy-search.ts). False: do not search now. */
+async function confirmServerRead(req: CodeSearchRequest): Promise<boolean> {
+  if (indexServes(req)) return true;
+  const key = placeKey(status?.environment ?? ownEnvironment ?? '', req.where ?? []);
+  const broad = isBroadPlace({ scope: !!scope, where: req.where ?? [], defaultWhere: isDefaultWhere() && !scope });
+  const readLately = readPlaces.recent(key);
+  const muted = broad && !readLately && await loadMuted();
+  if (!needsWarning({ readsServer: true, broad, readLately, muted })) { readPlaces.note(key); return true; }
+  if (heavyAsking) return false;
+  heavyAsking = true;
+  try {
+    const { choice, dontAsk } = await askHeavySearch(
+      { parent: () => (document.querySelector('.cs') ?? document.body) as HTMLElement, escape: layer => escLayers.register(layer) },
+      { canCopy: status?.state !== 'unavailable' },
+    );
+    if (dontAsk && choice === 'search') void saveMuted(true);
+    if (choice === 'narrow') { openMenu = 'where'; menuFilter = ''; focusMenu = true; renderQa(); }
+    if (choice !== 'search') { input.focus(); return false; }
+    readPlaces.note(key);
+    return true;
+  } finally { heavyAsking = false; }
 }
 
 /** Names resolved for this window's server, kept while the window is open

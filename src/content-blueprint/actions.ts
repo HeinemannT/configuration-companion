@@ -26,6 +26,7 @@ import { sendToSW } from '../lib/content-port';
 import { openObject } from '../lib/open-object';
 import { showToast } from '../lib/toast';
 import { bp, model } from './state';
+import { findTabButton } from '../lib/dom-scanner';
 import { render } from './view';
 import { applySessionIO, fetchFlowRefs, fetchFlowRefChildren, fetchPropertySchemas, fetchFlowSettings, presentApplyResolution } from './service';
 import { createApplySession, type ApplySession } from './apply-session';
@@ -119,10 +120,11 @@ export function viewTab(id: string): void {
     // Match BMP's native tab by the BASELINE name — the DOM still shows the original text, so a STAGED
     // rename (tab.name in the edited model) wouldn't match and we'd silently fall back to a canvas-only
     // view (the live/canvas divergence liveModelTabId exists to avoid).
-    const domName = findNode(bp.baseline ?? m!, id)?.node.name ?? tab.name;
-    const native = [...document.querySelectorAll('.corpo-tabSet__tab')].find(t => t.textContent?.trim() === domName);
-    if (native) {
-      const el = (native.querySelector('a') as HTMLElement) ?? (native as HTMLElement);
+    const live = findNode(bp.baseline ?? m!, id)?.node ?? tab;
+    // The same lookup Inspect and the panel use (by the tab's rid, then its name): it knows every
+    // BMP build's tab markup, so Blueprint follows a new build without a selector of its own.
+    const el = findTabButton(live.rid, live.name);
+    if (el) {
       for (const ev of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'] as const) {
         el.dispatchEvent(ev.startsWith('pointer')
           ? new PointerEvent(ev, { bubbles: true, cancelable: true, view: window, pointerId: 1 })

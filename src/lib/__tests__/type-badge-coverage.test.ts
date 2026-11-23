@@ -8,7 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import { getTypeAbbr, getTypeColor } from '../types';
 import { typeBadge, typeIcon } from '../type-badge';
-import { ICON_GRID_NINE, ICON_CHART } from '../icons';
+import { glyphSvg } from '../object-glyphs';
 
 // [className, code, colour] — the full set added on top of the original coverage.
 const EXPECTED: [string, string, string][] = [
@@ -120,9 +120,9 @@ describe('addable-widget type-badge coverage', () => {
   });
 
   it('RiskChart now has its own glyph, distinct from the generic chart', () => {
-    expect(typeIcon('RiskChart')).toBe(ICON_GRID_NINE);
-    expect(typeIcon('RiskChart')).not.toBe(ICON_CHART);
-    expect(typeIcon('BarChart')).toBe(ICON_CHART); // real charts still use the generic chart glyph
+    expect(typeIcon('RiskChart')).toBe(glyphSvg('matrix'));
+    expect(typeIcon('RiskChart')).not.toBe(glyphSvg('chart'));
+    expect(typeIcon('BarChart')).toBe(glyphSvg('chart')); // real charts still use the generic chart glyph
   });
 });
 

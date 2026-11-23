@@ -10,7 +10,7 @@ import { setSwContext, type SwContext } from '../sw-context';
 import type { InspectorMessage } from '../types';
 
 vi.mock('../content-port', () => ({ sendToSW: vi.fn() }));
-vi.mock('../dom-scanner', () => ({ getAllRidElements: () => [] }));
+vi.mock('../dom-scanner', () => ({ getAllRidElements: () => [], ANY_TAB_SELECTOR: '.corpo-tabSet__tab, [role="tab"]' }));
 vi.mock('../constants', async importOriginal => ({
   ...await importOriginal<typeof import('../constants')>(), ENRICHMENT_RETRY_DELAY: 0,
 }));

@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ContentState } from '../content-state';
 import { createIdentityLabel, updateLabels } from '../content-overlays';
-import { ICON_BROWSER } from '../lib/icons';
+import { typeGlyphSvg } from '../lib/object-glyphs';
 import { PAGE_NAV_PRESENTATION } from '../lib/overlay-presentation';
 import { getTypeColor } from '../lib/types';
 
@@ -26,9 +26,11 @@ describe('inspect overlay role presentation', () => {
     expect(label.classList.contains('crev-label--inline-start')).toBe(true);
     expect(label.classList.contains('crev-label--compact')).toBe(true);
     expect(label.querySelector('.crev-label-text')?.textContent).toBe('risk_register');
-    expect(label.querySelector('svg')?.outerHTML).toContain(
-      ICON_BROWSER.match(/<path d="([^"]+)"/)?.[1] ?? 'missing-browser-icon',
-    );
+    // The page glyph (the same one a scorecard shows everywhere), not the backing type's.
+    const expected = document.createElement('div');
+    expected.innerHTML = typeGlyphSvg('Page');
+    expect(label.querySelector('svg')?.innerHTML).toBe(expected.querySelector('svg')?.innerHTML);
+    expect(typeGlyphSvg('Page')).toBe(typeGlyphSvg('Scorecard'));
     expect(host.style.getPropertyValue('--crev-color')).toBe(getTypeColor('Page'));
     expect(host.style.getPropertyValue('--crev-color')).not.toBe(getTypeColor('ExtendedTable'));
   });

@@ -256,3 +256,8 @@ html, body { height: 100%; margin: 0; background: var(--bg); }
 .rp-acts { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-4); }
 .rp-acts .ui-btn { font-size: var(--ui-fs-sm); }
 .cs[data-mode="replace"] .cs-status { min-height: 28px; box-sizing: border-box; justify-content: center; }
+
+/* The note before a broad search that reads the server (heavy-search.ts). */
+.hv-dlg { width: 440px; }
+.hv-p { margin: var(--space-3) 0 0; color: var(--text-secondary); }
+.hv-mute { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-4); cursor: pointer; }

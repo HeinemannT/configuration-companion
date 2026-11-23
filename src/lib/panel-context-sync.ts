@@ -75,5 +75,6 @@ export async function sendPanelContextForTab(tabId: number): Promise<void> {
     name: entry?.name,
     objectType: entry?.type,
     businessId: entry?.businessId,
+    ...(entry && getContextRid(tabId)?.rid === entry.rid ? { pointed: true as const } : {}),
   });
 }

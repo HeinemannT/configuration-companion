@@ -16,11 +16,13 @@ import { findNode, hasHeight, isResultTab, descendantWidgets, descendantVisibleW
 import { COMPOSITE_TYPES, COMPOSITE_CHILDREN } from '../lib/layout/constraints';
 import { isAncestorOf } from '../lib/layout/edit';
 import { diff, summarizeChanges } from '../lib/layout/diff';
-import { ICON_PLUS, ICON_MINUS, ICON_PENCIL, ICON_TRASH, ICON_ARROW_RIGHT, ICON_X, ICON_LAYOUT, ICON_LINK, ICON_EYE_OPEN, ICON_EYE_SLASH, ICON_DOTS_THREE_V, ICON_SEARCH, ICON_ARROW_LINE_UP as ICON_ARROW_UP } from '../lib/icons';
+import { ICON_PLUS, ICON_MINUS, ICON_PENCIL, ICON_TRASH, ICON_ARROW_RIGHT, ICON_X, ICON_LAYOUT, ICON_LINK, ICON_EYE_OPEN, ICON_EYE_SLASH, ICON_DOTS_THREE_V, ICON_SEARCH } from '../lib/icons';
 import { colorLinkBid } from '../lib/color-util';
 import { styleOptions } from '../lib/style-props';
 import { renderSwatchGrid } from '../lib/swatch-grid';
 import { bp, model, PALETTE, MOST_USED } from './state';
+import { typeGlyphSvg } from '../lib/object-glyphs';
+import { SELECTED_TAB_SELECTOR, findActiveTabAnchor, tabDisplayName } from '../lib/dom-scanner';
 import { colorRgb, colorInfo, colorSets, colorSetsReadAt, colorSetsStatus, ensureColorSets } from './colors';
 import { colorReadFoot } from '../lib/color-read-foot';
 import { type Rect, ridElementMap, unionRect, anchorRect, setIcon, mkBtn, mkIconBtn, docX, docY } from './geometry';
@@ -159,8 +161,11 @@ function pendingCount(base: LModel, m: LModel): number {
  *  "first model tab with visible widgets" heuristic — the shared Result tab's widgets render on every
  *  tab (a persistent action bar), so once Result leads the list the heuristic would always pick it. */
 function liveModelTabId(base: LModel, byRid: Map<string, Element>): string | null {
-  const sel = document.querySelector('.corpo-tabSet__tab--selected, .corpo-tabSet__tab[aria-selected="true"]');
-  const name = sel?.textContent?.trim();
+  // The selected tab's rid is exact (its link carries it); the name covers a tab without a link.
+  const live = findActiveTabAnchor();
+  if (live) { const t = base.tabs.find((t) => t.rid === live.rid); if (t) return t.id; }
+  const sel = document.querySelector(SELECTED_TAB_SELECTOR);
+  const name = live?.name ?? (sel ? tabDisplayName(sel) : undefined);
   if (name) { const t = base.tabs.find((t) => t.name === name); if (t) return t.id; }
   return base.tabs.find((t) => unionRect(t, byRid))?.id ?? null;
 }
@@ -171,7 +176,7 @@ let pendingFocus: 'toolbar' | null = null;
 /** On opening, keyboard focus lands on the canvas's tab stop once (the layer sits at the end of the
  *  page, so Tab alone would walk the whole portal first). Never steals focus from a page field. */
 let enteredCanvas = false;
-export function resetViewFocus(): void { enteredCanvas = false; pendingFocus = null; }
+export function resetViewFocus(): void { enteredCanvas = false; pendingFocus = null; widthScreen = 'L'; }
 export function requestFocus(target: 'toolbar'): void { pendingFocus = target; }
 
 function captureFocus(layer: HTMLElement): { cell?: string; tool?: number } | null {
@@ -267,6 +272,7 @@ export function render(): void {
   const main = document.createElement('div'); main.className = 'bp-header-main';
   main.append(renderChip(ctx, pending), tabBar(base, m, liveId, viewedId));
   header.append(modeSwitch(), main);
+  if (bp.mode !== 'style') header.appendChild(widthScreenSwitch());
   if (bp.mode === 'style') header.appendChild(paintStation()); // the paintbrush 2×2, right of the bar
   const band = portalBand(); // looked up once for placing and docking
   placeBar(header, band?.getBoundingClientRect().bottom ?? 0); // under the portal's header band, centred, never off the left edge
@@ -310,7 +316,25 @@ export function render(): void {
 
 /** The screen size the width control edits, for one object: another object starts on the large
  *  screen again, the one the canvas draws and dragging changes. */
-let widthScreen: Breakpoint = 'L', widthScreenFor = '';
+/** The screen size the width controls edit, for every box: large unless the header's switch says
+ *  otherwise. One choice for the session, back to large when Blueprint opens. */
+let widthScreen: Breakpoint = 'L';
+/** The header's screen-size switch: which screen the width controls edit, for all boxes. Large is
+ *  the layout the canvas draws and the default; M and S are for the few who set own widths there. */
+function widthScreenSwitch(): HTMLElement {
+  const wrap = document.createElement('div'); wrap.className = 'bp-wscreen' + (widthScreen === 'L' ? '' : ' on');
+  const lbl = document.createElement('span'); lbl.className = 'bp-wscreen-l'; lbl.textContent = 'Width for';
+  const seg = document.createElement('span'); seg.className = 'bp-screens'; seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', 'Screen size the width controls change');
+  for (const [key, title] of SCREENS) {
+    const b = document.createElement('button'); b.className = 'bp-screen' + (widthScreen === key ? ' on' : '');
+    b.textContent = key; b.title = `Width changes apply to: ${title.charAt(0).toLowerCase()}${title.slice(1)}`; b.setAttribute('aria-label', b.title); b.setAttribute('aria-pressed', String(widthScreen === key));
+    b.addEventListener('mousedown', (e) => { e.stopPropagation(); e.preventDefault(); widthScreen = key; render(); });
+    seg.appendChild(b);
+  }
+  wrap.append(lbl, seg);
+  return wrap;
+}
+
 const SCREENS: ReadonlyArray<[Breakpoint, string]> = [
   ['L', 'Large screens (the layout drawn here)'], ['M', 'Medium screens, such as a tablet'], ['S', 'Small screens, such as a phone'],
 ];
@@ -509,23 +533,17 @@ function toolbar(node: LNode, r: Rect): HTMLElement {
   const found = model() ? findNode(model()!, node.id) : null;
   const parent = found?.parent;
   if (parent && parent.kind === 'container') {
-    const up = mkIconBtn(ICON_ARROW_UP, () => select(parent.id), parent.name || 'Container');
+    // An icon only: the parent's name would push the rest of the bar around; it is the tooltip.
+    const up = mkIconBtn(ICON_PARENT, () => select(parent.id));
     up.classList.add('bp-parent'); up.title = `Select the parent: ${parent.name || parent.id}`;
+    up.setAttribute('aria-label', up.title);
     t.appendChild(up); t.appendChild(vdivEl());
   }
   // Width works in columns: − N col +, 1 to 6.
   const col = document.createElement('div'); col.className = 'bp-colstep'; col.setAttribute('role', 'group'); col.setAttribute('aria-label', 'Width in columns');
   const lblW = document.createElement('span'); lblW.className = 'lbl'; lblW.textContent = 'W'; col.appendChild(lblW);
-  if (widthScreenFor !== node.id) { widthScreenFor = node.id; widthScreen = 'L'; }
-  // Which screen size the width is for. A size BMP holds no own width for shows "auto".
-  const seg = document.createElement('span'); seg.className = 'bp-screens'; seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', 'Screen size');
-  for (const [key, title] of SCREENS) {
-    const b = document.createElement('button'); b.className = 'bp-screen' + (widthScreen === key ? ' on' : '') + (key !== 'L' && node.cols[key] != null ? ' set' : '');
-    b.textContent = key; b.title = title; b.setAttribute('aria-label', title); b.setAttribute('aria-pressed', String(widthScreen === key));
-    b.addEventListener('mousedown', (e) => { e.stopPropagation(); e.preventDefault(); widthScreen = key; render(); });
-    seg.appendChild(b);
-  }
-  col.appendChild(seg);
+  // The width is for large screens unless the header's switch names another size (it goes for every box).
+  if (widthScreen !== 'L') { lblW.textContent = `W ${widthScreen}`; lblW.title = widthScreen === 'M' ? 'Width on medium screens' : 'Width on small screens'; }
   const own = node.cols[widthScreen];
   const cur = own ?? node.cols.L;
   const where = widthScreen === 'L' ? '' : widthScreen === 'M' ? ' on medium screens' : ' on small screens';
@@ -534,6 +552,9 @@ function toolbar(node: LNode, r: Rect): HTMLElement {
   minus.addEventListener('mousedown', (e) => { e.stopPropagation(); if (cur > 1) setWidth(node.id, cur - 1, widthScreen); });
   const val = document.createElement('span'); val.className = 'bp-colstep-v'; val.textContent = own == null ? 'auto' : `${own} col`;
   if (own == null) val.title = 'No own width for this screen size: BMP decides. Use + or − to set one.';
+  else if (widthScreen === 'L' && (node.cols.M != null || node.cols.S != null)) {
+    val.title = `Own width on smaller screens: ${[node.cols.M != null ? `medium ${node.cols.M}` : '', node.cols.S != null ? `small ${node.cols.S}` : ''].filter(Boolean).join(', ')}. Switch the screen size in the header to change it.`;
+  }
   const plus = document.createElement('button'); plus.className = 'bp-colstep-plus'; setIcon(plus, ICON_PLUS);
   plus.title = `One column wider${where}`; plus.setAttribute('aria-label', plus.title); plus.disabled = own != null && cur >= 6;
   plus.addEventListener('mousedown', (e) => { e.stopPropagation(); setWidth(node.id, own == null ? cur : Math.min(6, cur + 1), widthScreen); });
@@ -900,7 +921,12 @@ function flowPickerPanel(): HTMLElement {
   return back;
 }
 
-/** Move-destination menu: every container + tab except the widget's current owner. */
+/** Up to the enclosing container: an arrow that turns upward (an arm, then up). */
+const ICON_PARENT = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6.5l3-3 3 3M7 3.5v6a3 3 0 0 0 3 3h2.500"/></svg>';
+
+/** Move-destination menu: the page's tabs and containers as a tree, like the object trees elsewhere
+ *  (type icon, name, ID). The place the widget is in now is shown and marked, not left out, so the
+ *  tree reads as the page's whole structure. */
 function moveMenu(widgetId: string, r: Rect): HTMLElement {
   const m = model()!;
   const cur = findNode(m, widgetId);
@@ -908,37 +934,41 @@ function moveMenu(widgetId: string, r: Rect): HTMLElement {
   const back = document.createElement('div'); back.className = 'bp-pick-back';
   back.addEventListener('mousedown', (e) => { if (e.target === back) closeMovePicker(); });
   const panel = document.createElement('div'); panel.className = 'bp-pick bp-move';
-  panel.style.left = `${Math.min(Math.max(4, r.left), window.innerWidth - 280)}px`;
+  panel.style.left = `${Math.min(Math.max(4, r.left), window.innerWidth - 348)}px`;
   panel.style.top = `${Math.min(Math.max(40, r.top - 8), window.innerHeight - 360)}px`;
-  const head = document.createElement('div'); head.className = 'bp-pick-h'; head.textContent = `Move "${cur?.node.name ?? ''}" to the end of`;
+  const head = document.createElement('div'); head.className = 'bp-pick-h'; head.textContent = `Move "${cur?.node.name ?? ''}" to`;
   const list = document.createElement('div'); list.className = 'bp-pick-list';
   const dragged = cur?.node ?? null;
   for (const tab of m.tabs) {
-    addDest(list, tab, tab.name, widgetId, curParentId, dragged, 0);
+    addDest(list, tab, widgetId, curParentId, dragged, 0);
     const rec = (n: LNode, depth: number): void => {
       for (const c of n.children) {
-        if (c.kind === 'container') { addDest(list, c, c.name, widgetId, curParentId, dragged, depth); rec(c, depth + 1); }
+        if (c.kind === 'container') { addDest(list, c, widgetId, curParentId, dragged, depth); rec(c, depth + 1); }
       }
     };
     rec(tab, 1);
   }
-  if (!list.children.length) { const e = document.createElement('div'); e.className = 'bp-pick-grp'; e.textContent = 'nowhere else to move'; list.appendChild(e); }
+  if (!list.querySelector('.bp-pick-it:not(:disabled)')) { const e = document.createElement('div'); e.className = 'bp-pick-grp'; e.textContent = 'nowhere else to move'; list.appendChild(e); }
   panel.append(head, list);
   back.appendChild(panel);
   return back;
 }
-function addDest(list: HTMLElement, dest: LNode, label: string, widgetId: string, curParentId: string | null, dragged: LNode | null, depth: number): void {
-  if (dest.id === curParentId || dest.id === widgetId) return;
+function addDest(list: HTMLElement, dest: LNode, widgetId: string, curParentId: string | null, dragged: LNode | null, depth: number): void {
+  if (dest.id === widgetId) return;
   // Never offer a destination inside the dragged node's own subtree — moving a node into its own
   // descendant would orphan that subtree. (Latent today since the menu is widget-only and lists
   // containers/tabs, but correct by construction for when containers gain a move menu.)
   if (dragged && isAncestorOf(dragged, dest.id)) return;
   const isTab = dest.kind === 'tab';
-  const row = pickRow(label, isTab ? 'tab' : 'container', () => moveTo(widgetId, dest.id));
-  // Hierarchy: tabs are the headers; nested containers are smaller, lighter, and indented under them.
-  row.title = `Puts it at the end of ${label}; a container goes before the widgets. Drag it afterwards for another place.`;
+  const here = dest.id === curParentId;
+  const label = dest.name || (isTab ? 'Tab' : 'Container');
+  // The ID on the right, as in Browse and the object window; a staged object has none yet.
+  const id = here ? 'here' : /^new:/.test(dest.id) ? 'new' : dest.id;
+  const row = pickRow(label, id, () => moveTo(widgetId, dest.id), typeGlyphSvg(isTab ? 'Tab' : 'Container', 14));
   row.classList.add(isTab ? 'bp-mv-tab' : 'bp-mv-cont');
-  if (!isTab) row.style.paddingLeft = `${10 + depth * 13}px`;
+  row.style.paddingLeft = `${9 + depth * 14}px`;
+  if (here) { row.disabled = true; row.classList.add('bp-mv-here'); row.title = `${label}: it is here now`; }
+  else row.title = `Puts it at the end of ${label}; a container goes before the widgets. Drag it afterwards for another place.`;
   list.appendChild(row);
 }
 

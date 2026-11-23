@@ -164,7 +164,9 @@ export function renderPins(onOpen: (n: number) => void, onReply: (n: number) => 
     const num = view && m.sent ? m.sent.k : numbers.get(m.n);
     // A reply that is open in its card is being read.
     const news = !!view?.row && isNews(view.row, sent.seen) && view.sketch !== openSketch;
-    badge.className = 'pt-badge' + (known.has(m.n) ? '' : ' pt-pop') + (view ? ` pt-sent pt-st-${view.status}` : '');
+    // A mark without words is drawn hollow: at a glance, which marks still say nothing.
+    const wordless = !m.text.trim();
+    badge.className = 'pt-badge' + (known.has(m.n) ? '' : ' pt-pop') + (view ? ` pt-sent pt-st-${view.status}` : '') + (wordless ? ' pt-wordless' : '');
     badge.dataset.n = String(m.n);
     if (view) badge.dataset.sketch = String(view.sketch);
     badge.style.left = `${at.x - C - DIST * Math.cos(at.angle)}px`;
@@ -174,7 +176,7 @@ export function renderPins(onOpen: (n: number) => void, onReply: (n: number) => 
     badge.style.transformOrigin = `${C + DIST * Math.cos(at.angle)}px ${C + DIST * Math.sin(at.angle)}px`;
     const words = m.text || m.reading || '';
     const fix = !view && isCorrection(m) && m.sent ? correctionLead(m.sent) : '';
-    badge.setAttribute('aria-label', view && m.sent ? `Sketch ${view.sketch}, mark ${m.sent.k}: ${viewWord(view)}` : `${num !== undefined ? `Mark ${num}` : 'Page'}${fix ? `, ${fix.toLowerCase()}` : ''}${words ? `: ${words}` : ''}`);
+    badge.setAttribute('aria-label', view && m.sent ? `Sketch ${view.sketch}, mark ${m.sent.k}: ${viewWord(view)}` : `${num !== undefined ? `Mark ${num}` : 'Page'}${fix ? `, ${fix.toLowerCase()}` : ''}${wordless ? ', no words yet' : ''}${words ? `: ${words}` : ''}`);
     badge.innerHTML = `<svg viewBox="0 0 ${BOX} ${BOX}" width="${BOX}" height="${BOX}" aria-hidden="true"><path class="pt-drop" d="${dropPath(at.angle)}"/><text x="${C}" y="${C + 4}" text-anchor="middle">${num ?? ''}</text>${view ? pipSvg(view, at.angle, news) : ''}</svg>`;
     const hit = badge.querySelector('.pt-drop') as SVGElement;
     hit.style.pointerEvents = 'all';

@@ -48,7 +48,7 @@ describe('current position (SET_CONTEXT_RID)', () => {
     await run({ type: 'SET_CONTEXT_RID', rid: RID, name: 'Risk', objectType: 'CeRisk', businessId: 'r1', source: 'badge' }, { senderTabId: 7, isOneShot: true });
     expect(getContextRid(7)).toEqual({ rid: RID, name: 'Risk', type: 'CeRisk', businessId: 'r1' });
     expect(c.sendToPanelByTab).toHaveBeenCalledWith(7, {
-      type: 'CONTEXT_RID_DATA', rid: RID, name: 'Risk', objectType: 'CeRisk', businessId: 'r1', source: 'badge',
+      type: 'CONTEXT_RID_DATA', rid: RID, name: 'Risk', objectType: 'CeRisk', businessId: 'r1', pointed: true, source: 'badge',
     });
     expect(c.sendToPanel).not.toHaveBeenCalled();
     // Badge clicks are too frequent for the Log tab; right-clicks are logged.

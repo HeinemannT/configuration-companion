@@ -342,3 +342,10 @@
 @media (prefers-reduced-motion:reduce){
   #crev-pointtell-layer .pt-pip-busy circle,#crev-pointtell-layer .pt-sent-btn.pt-ping{animation:none}
 }
+/* A mark without words: a hollow drop (and a hollow number, "No words" in italics in the list), so
+   marks that still say nothing stand apart from the ones that are filled in. */
+#crev-pointtell-layer .pt-badge.pt-wordless .pt-drop{fill:#fff;stroke:var(--pt-violet);stroke-width:1.8}
+#crev-pointtell-layer .pt-badge.pt-wordless text{fill:var(--pt-violet-dk)}
+#crev-pointtell-layer .pt-badge.pt-wordless:hover .pt-drop{fill:var(--pt-violet-soft);stroke:var(--pt-violet-dk)}
+#crev-pointtell-layer .pt-num.pt-num-wordless{background:#fff;color:var(--pt-violet-dk);box-shadow:inset 0 0 0 1.5px var(--pt-violet)}
+#crev-pointtell-layer .pt-row-words.pt-row-empty{font-style:italic;opacity:.75}

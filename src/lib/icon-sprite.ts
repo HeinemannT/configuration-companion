@@ -1,5 +1,8 @@
 /** SVG symbol sprite of the extension pages (object window, code search, Compare, side panel):
- *  16px stroke icons. Drawn with the DOM kit's icon() (lib/dom.ts). */
+ *  16px stroke icons. Drawn with the DOM kit's icon() (lib/dom.ts). The object-type glyphs
+ *  (`o-*`) come from lib/object-glyphs.ts, the one icon set for BMP object types. */
+import { GLYPH_SYMBOLS } from './object-glyphs';
+
 export const ICON_SPRITE = `<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
 <symbol id="i-back" viewBox="0 0 16 16"><path d="M10 3 5 8l5 5"/></symbol>
 <symbol id="i-fwd" viewBox="0 0 16 16"><path d="M6 3l5 5-5 5"/></symbol>
@@ -82,4 +85,5 @@ export const ICON_SPRITE = `<svg width="0" height="0" style="position:absolute" 
 <symbol id="i-ok" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5"/><path d="m5.2 8.2 2 2 3.8-4"/></symbol>
 <symbol id="i-no" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5"/><path d="M8 4.6v4.2"/><circle cx="8" cy="11.2" r=".9" fill="currentColor" stroke="none"/></symbol>
 <symbol id="i-retry" viewBox="0 0 16 16"><path d="M13 8a5 5 0 1 1-1.5-3.5M13 2.5v2.5h-2.5"/></symbol>
+${GLYPH_SYMBOLS}
 </defs></svg>`;

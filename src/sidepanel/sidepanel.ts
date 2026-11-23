@@ -304,27 +304,40 @@ function buildApp(): void {
   const tabBar = buildTabBar();
   const tabContent = buildTabContent();
 
-  // Cache count gets a label so the lone "0" in the corner isn't a mystery.
-  // Hidden entirely when zero — nothing useful to surface yet.
-  // Only the message is a live region; latency and counts change too often to be read out.
+  // The bar: the current object first (it gets the room), then what is
+  // happening right now, then the latency. Nothing is shown at rest: no
+  // "Ready", no counts. Only the message is a live region.
   const statusBar = h('div', { class: 'status-bar', id: 'status-bar' },
-    h('div', { class: 'status-bar-activity is-idle', 'aria-live': 'polite' }, idleText()),
     renderContextPill(),
+    h('button', {
+      class: 'status-bar-clear', id: 'status-bar-clear', type: 'button', hidden: true,
+      title: 'Clear. The current object is the page again.', 'aria-label': 'Clear the current object',
+      onClick: () => { sendMessage({ type: 'CLEAR_CONTEXT_RID' }); },
+    }, icon('i-x', 'ic-sm')),
+    h('div', { class: 'status-bar-activity is-idle', 'aria-live': 'polite' }, idleText()),
     renderLatencyPill(),
+    h('span', { class: 'status-bar-flash', id: 'status-bar-flash', hidden: true }),
   );
 
-  // Feedback line — short confirmations (badge copies, saves) overlay the
-  // status bar's right side for ~1.8s, then the quiet line returns.
+  // Feedback line: a short confirmation (a copy, a save, a notice) owns the
+  // bar for a moment, then the bar returns. Longer text stays long enough to read.
   let flashTimer: ReturnType<typeof setTimeout> | null = null;
   document.addEventListener('crev:status-flash', (e) => {
     const bar = document.getElementById('status-bar');
-    if (!bar) return;
-    let el = bar.querySelector<HTMLElement>('.status-bar-flash');
-    if (!el) { el = h('span', { class: 'status-bar-flash' }); bar.appendChild(el); }
-    el.textContent = String((e as CustomEvent).detail ?? '');
+    const el = document.getElementById('status-bar-flash');
+    if (!bar || !el) return;
+    const text = String((e as CustomEvent).detail ?? '');
+    el.textContent = text;
+    el.title = text;
+    el.hidden = false;
     bar.classList.add('status-bar--flash');
     if (flashTimer) clearTimeout(flashTimer);
-    flashTimer = setTimeout(() => { bar.classList.remove('status-bar--flash'); }, 1800);
+    flashTimer = setTimeout(() => {
+      flashTimer = null;
+      bar.classList.remove('status-bar--flash');
+      el.hidden = true;
+      el.textContent = '';
+    }, flashMs(text));
   });
 
   render(app, header, tabBar, buildBand(), tabContent, statusBar);
@@ -514,16 +527,20 @@ function showServerMenu(anchor: HTMLElement): void {
   });
 }
 
-/** The bar's resting text: Ready only while the server is connected. */
+/** The bar's resting text: nothing while the server is connected, else the connection's state. */
 function idleText(): string {
   if (!S.settings.profiles.length) return 'No server';
-  return S.connState.display === 'connected' ? 'Ready' : describeConnection(S.connState).label;
+  return S.connState.display === 'connected' ? '' : describeConnection(S.connState).label;
+}
+
+/** How long a confirmation stays: 1.8 s, longer for a sentence (about 55 ms a character), at most 5 s. */
+function flashMs(text: string): number {
+  return Math.min(5000, Math.max(1800, text.length * 55));
 }
 
 function updateStatusBar() {
   const bar = document.getElementById('status-bar');
   if (!bar) return;
-  const connected = S.connState.display === 'connected' && S.settings.profiles.length > 0;
 
   const activity = bar.querySelector<HTMLElement>('.status-bar-activity');
   if (activity) {
@@ -532,21 +549,11 @@ function updateStatusBar() {
     activity.title = logTab.latestActivityTitle ?? '';
     activity.classList.toggle('is-working', logTab.isWorking);
     activity.classList.toggle('is-idle', !logTab.latestActivityMsg);
+    bar.classList.toggle('status-bar--busy', !!text);
   }
   // The mark reads along while the same work is running.
   const control = document.getElementById('header-status');
   if (control) setMarkWorking(control, logTab.isWorking);
-
-  // Cached objects: only next to a working connection.
-  const count = bar.querySelector<HTMLElement>('.status-bar-count');
-  if (connected && S.cacheCount > 0) {
-    const text = `${S.cacheCount} cached`;
-    const title = `${S.cacheCount} cached ${S.cacheCount === 1 ? 'object' : 'objects'}`;
-    if (count) { count.textContent = text; count.title = title; }
-    else bar.appendChild(h('div', { class: 'status-bar-count', title }, text));
-  } else {
-    count?.remove();
-  }
 
   updateContextPill();
   updateLatencyPill();
@@ -562,7 +569,7 @@ function renderContextPill(): HTMLElement | null {
   const c = S.context;
   // No server: no page context to show.
   if (!S.settings.profiles.length) return h('div', { class: 'status-bar-context', id: 'status-bar-context', hidden: true });
-  if (!c?.rid) return h('div', { class: 'status-bar-context status-bar-context--empty', id: 'status-bar-context', title: `No object. Turn on Inspect (${shortcutLabel('browser.inspect')}) and click a badge, or right-click an element on the BMP page.` }, 'no object');
+  if (!c?.rid) return h('div', { class: 'status-bar-context status-bar-context--empty', id: 'status-bar-context', title: `No object. Turn on Inspect (${shortcutLabel('browser.inspect')}) and click a badge, or right-click an element on the BMP page.` }, 'No object');
   // Never a raw RID as the label: the name, else the ID, else the type.
   const label = c.name || c.businessId || c.type || 'Object';
   // When the context is a Tab, prefix the label so it's distinguishable
@@ -578,7 +585,7 @@ function renderContextPill(): HTMLElement | null {
     onOpenFull: () => openInObjectWindow(c.rid),
   });
   chip.id = 'status-bar-context';
-  chip.title = `Show ${prefix}${label} in Browse`;
+  chip.title = `${prefix}${label}${c.pointed ? '' : ' (this page)'}. Show in Browse`;
   return chip;
 }
 /** Context pill: switch to Browse and reveal the current position's row. */
@@ -604,6 +611,9 @@ function updateContextPill(): void {
   const next = renderContextPill();
   if (!old || !next) return;
   old.replaceWith(next);
+  // Only an object the user pointed at can be cleared; the page's own object stays.
+  const clear = document.getElementById('status-bar-clear');
+  if (clear) clear.hidden = !(S.context?.rid && S.context.pointed && S.settings.profiles.length);
 }
 
 /** Latency traffic light — 6-step ramp plus a grey "X" for "no data".

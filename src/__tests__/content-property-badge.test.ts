@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ContentState } from '../content-state';
 import { createIdentityLabel, updateLabels } from '../content-overlays';
-import { ICON_PROP_REFERENCE } from '../lib/icons';
+import { glyphSvg } from '../lib/object-glyphs';
 
 describe('inspect overlay property badge presentation', () => {
   beforeEach(() => {
@@ -57,8 +57,9 @@ describe('inspect overlay property badge presentation', () => {
     const action = label.querySelector<HTMLElement>('.crev-sub--property')!;
 
     expect(action.style.getPropertyValue('--crev-property-color')).toBe('#a56f43');
-    expect(action.querySelector('svg')?.outerHTML).toContain(
-      ICON_PROP_REFERENCE.match(/<path d="([^"]+)"/)?.[1] ?? 'missing-reference-icon',
+    // The reference glyph of the shared set (the same one the property's badge shows).
+    expect(action.querySelector('svg path')?.getAttribute('d')).toBe(
+      glyphSvg('ref').match(/<path d="([^"]+)"/)?.[1] ?? 'missing-reference-glyph',
     );
   });
 });

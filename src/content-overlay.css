@@ -123,8 +123,8 @@
 /* Edge label — the approved "STUB + SQUARES": a full-bleed type stub
    (colour tile with the role glyph, welded to a light identity chip) on the
    top-left edge of the outline, half above the line, and the squares beside
-   it on one rail — violet `</>` opens the editor / CVO studio, blue arrow
-   the flow, the linked property, and the cascade jump chip the chain target.
+   it on one rail: the linked object's end cap (welded to the stub), violet
+   `</>` opens the editor / CVO studio, and the linked property.
    The widget's own controls at the top right stay free. Short hosts keep a
    tile on the top-right corner (.crev-label--edge). Literal colours: this
    file is injected into the BMP page and can't see the extension tokens. */
@@ -268,7 +268,6 @@
   inset: -3px -2px;
 }
 .crev-sub svg { width: 10px; height: 10px; display: block; }
-.crev-sub--flow { background: #0f62fe; }
 .crev-sub--code { background: #8a3ffc; cursor: pointer; }
 .crev-sub--code:hover { background: #7c3aed; }
 .crev-sub--property {
@@ -280,20 +279,38 @@
 .crev-sub--property:hover {
   filter: brightness(0.88);
 }
+/* The linked object's end cap (an input view's input set, a create object view's edit page):
+   welded to the right end of the stub, the linked type's icon on its colour. Its ID slides out
+   while the cap is hovered or focused, so at rest the pair takes 20px more than a plain badge. */
+.crev-label--linked .crev-stub { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.crev-label--linked .crev-meta { margin-left: -4px; }
 .crev-cascade {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  height: 18px;
-  padding: 0 6px;
-  border-radius: 2px;
-  font: 600 9.5px/1 'Inter', system-ui, sans-serif;
+  height: 20px;
+  min-width: 20px;
+  box-sizing: border-box;
+  padding: 0 4px;
+  border: none;
+  border-radius: 0 4px 4px 0;
+  font: 600 10.5px/1 'Inter', system-ui, sans-serif;
   color: #fff;
   cursor: pointer;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.25);
-  opacity: 0.92;
+  box-shadow: 0 1px 2px rgba(22,22,22,0.16), 0 2px 6px rgba(22,22,22,0.10);
 }
-.crev-cascade::before { content: '↓'; opacity: 0.75; margin-right: 3px; font-weight: 700; }
-.crev-cascade:hover { opacity: 1; }
+.crev-cascade::after { content: ''; position: absolute; inset: -3px 0; }
+.crev-cascade svg { width: 12px; height: 12px; display: block; flex: none; }
+.crev-cascade-id {
+  max-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: max-width 140ms ease, margin-left 140ms ease;
+}
+.crev-cascade:hover .crev-cascade-id,
+.crev-cascade:focus-visible .crev-cascade-id { max-width: 240px; margin-left: 4px; margin-right: 2px; }
+.crev-cascade:hover { filter: brightness(0.92); }
+@media (prefers-reduced-motion: reduce) { .crev-cascade-id { transition: none; } }
 /* Compact form — tiny hosts (tab links, breadcrumb chips) get the tile only;
    the identity text + meta row would overlap neighbours or clip. Applied by
    applyCompactMode() when the stub outgrows its host. */
@@ -647,7 +664,6 @@
 /* ── Focus States (content overlay can't use base.css) ── */
 
 .crev-sub--code:focus-visible,
-.crev-sub--flow:focus-visible,
 .crev-sub--property:focus-visible,
 .crev-label-text:focus-visible {
   outline: 2px solid #8a3ffc;

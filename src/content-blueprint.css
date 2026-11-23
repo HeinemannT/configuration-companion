@@ -1033,7 +1033,7 @@
 /* paper and the page underneath */
 #crev-blueprint-layer .bp-canvas-bg{background-color:var(--bp-paper);background-image:linear-gradient(var(--bp-grid-2) 1px,transparent 1px),linear-gradient(90deg,var(--bp-grid-2) 1px,transparent 1px),linear-gradient(var(--bp-grid) 1px,transparent 1px),linear-gradient(90deg,var(--bp-grid) 1px,transparent 1px)}
 /* clean model on the live tab: translucent tracing paper, the page reads faintly through */
-#crev-blueprint-layer.bp-clean .bp-canvas-bg{background-color:rgba(251,250,245,.86)}
+#crev-blueprint-layer.bp-clean .bp-canvas-bg{background-color:rgba(251,250,245,.94)}
 #crev-blueprint-layer.bp-clean .bp-rcell{background:rgba(251,250,245,.78)}
 
 /* boxes: strokes come from the SVG; the CSS border keeps its width for geometry only */
@@ -1399,3 +1399,32 @@
 #crev-blueprint-layer .bp-note-x{flex:none;padding:2px 6px;border:0;border-radius:4px;background:transparent;color:var(--bp-muted);font:500 11px 'BPInter',sans-serif;cursor:pointer}
 #crev-blueprint-layer .bp-note-x:hover{background:var(--bp-violet-soft);color:var(--bp-violet)}
 #crev-blueprint-layer .bp-tray-skip{padding:2px 4px 2px 26px;color:var(--bp-muted);font:11.5px/1.35 'BPInter',sans-serif}
+/* Cell headers: the room belongs to the name. A widget's width is not written in its header (the
+   name's tooltip and the dimension lines of a selected box say it); a container's width shows over
+   the end of its header on hover or selection and takes no room. Nothing leaves the box. */
+#crev-blueprint-layer .bp-rlab{min-width:0;max-width:calc(100% + 18px);overflow:hidden}
+#crev-blueprint-layer .bp-rcell:not(.bp-rcont)>.bp-rlab>.bp-rwd{display:none}
+#crev-blueprint-layer .bp-rcont>.bp-rlab{overflow:visible}
+#crev-blueprint-layer .bp-rcont>.bp-rlab .bp-rnm{min-width:0;max-width:100%}
+#crev-blueprint-layer .bp-rcont>.bp-rlab .bp-rwd{position:absolute;right:26px;top:50%;transform:translateY(-50%);margin:0;padding:1px 4px;background:var(--bp-paper);pointer-events:none}
+/* Select the parent: an icon only (its name is the tooltip) */
+#crev-blueprint-layer .bp-tools .btn.bp-parent{padding-left:7px;padding-right:7px}
+/* Move to: the page's tabs and containers as a tree, like the object trees (icon, name, ID) */
+#crev-blueprint-layer .bp-move{width:340px}
+#crev-blueprint-layer .bp-move .bp-pick-list{padding-top:6px}
+#crev-blueprint-layer .bp-move .bp-pick-it{padding-top:5px;padding-bottom:5px;font-size:12px;color:var(--bp-text)}
+#crev-blueprint-layer .bp-move .bp-mv-tab{font-weight:600;margin-top:2px}
+#crev-blueprint-layer .bp-move .bp-mv-cont{font-size:12px;color:var(--bp-text)}
+#crev-blueprint-layer .bp-move .bp-pick-it .k,#crev-blueprint-layer .bp-move .bp-mv-cont .k{font:10.5px var(--bp-mono);opacity:1;color:var(--bp-muted);max-width:46%}
+#crev-blueprint-layer .bp-move .bp-pick-ic svg{width:14px;height:14px}
+#crev-blueprint-layer .bp-move .bp-mv-here{cursor:default;color:var(--bp-muted)}
+#crev-blueprint-layer .bp-move .bp-mv-here:hover{background:transparent}
+#crev-blueprint-layer .bp-move .bp-mv-here .k{font-family:'BPInter',sans-serif;font-style:italic}
+/* Header: the screen size the width controls change (large by default, one switch for every box) */
+#crev-blueprint-layer .bp-wscreen{display:flex;align-items:center;gap:6px;align-self:center;flex:none;margin:0 8px;padding:0 2px}
+#crev-blueprint-layer .bp-wscreen-l{font:500 10.5px 'BPInter',sans-serif;color:var(--bp-muted);white-space:nowrap}
+#crev-blueprint-layer .bp-wscreen .bp-screens{margin-right:0}
+#crev-blueprint-layer .bp-wscreen .bp-screen{width:22px;height:22px;border:0;border-radius:0;background:#fff;font:600 10px var(--bp-mono);color:var(--bp-muted);cursor:pointer}
+#crev-blueprint-layer .bp-wscreen .bp-screen.on{background:var(--bp-ink);color:#fff}
+#crev-blueprint-layer .bp-wscreen.on .bp-screen.on{background:var(--bp-amber);color:#fff}
+#crev-blueprint-layer .bp-wscreen.on .bp-wscreen-l{color:var(--bp-text);font-weight:600}

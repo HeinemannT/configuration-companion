@@ -17,6 +17,7 @@
  * Pure data + small functions; no DOM, no chrome.*.
  */
 
+import { glyphId } from './object-glyphs';
 import type { FullObject, PropValue } from './object-read';
 import type { StructureRule } from './object-structure';
 
@@ -602,6 +603,12 @@ const GENERIC: TypeInfo = {
 /** Table entry for a type; unknown types get a generic entry carrying their
  *  own class name as label. `*Input` classes share the input shape. */
 export function typeInfo(type: string): TypeInfo {
+  // The icon is always the type's shared glyph (lib/object-glyphs.ts), so a row here shows the
+  // same icon as the type's badge on the page.
+  return { ...tableEntry(type), icon: glyphId(type) };
+}
+
+function tableEntry(type: string): TypeInfo {
   const known = Object.hasOwn(TYPES, type) ? TYPES[type] : undefined;
   if (known) return known;
   if (/Input$/.test(type)) return inputInfo(splitWords(type), 'k-field');
