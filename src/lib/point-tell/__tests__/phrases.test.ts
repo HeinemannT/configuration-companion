@@ -157,3 +157,19 @@ describe('a drawn page, a paper page, a templated page, as copied', () => {
     expect(payload.marks[0]).toEqual({ n: 1, drew: 'click on o5', says: 'x' });
   });
 });
+
+describe('an arrow with no operation, as copied', () => {
+  const ink = { strokes: [{ points: [[0, 0], [9, 9]] as Array<[number, number]> }], place: { tabId: 'tab_overview', row: 4, col: 3 } };
+  it('from one object to another, to empty space, and on empty space: what was drawn, no guess', () => {
+    const both = m(1, { targets: ['txt_info', 'btn_export'], reading: 'Arrow from Info to Export', arrow: { from: 'txt_info', to: 'btn_export' }, ink });
+    expect(kindOf(both)).toBe('direction');
+    expect(phrases(both)).toEqual(['arrow from o3 to o5', undefined]);
+    expect(phrases(m(2, { targets: ['txt_info'], reading: 'Arrow from Info', arrow: { from: 'txt_info', end: { tabId: 'tab_overview', row: 5, col: 4 }, near: { id: 'btn_export', side: 'below' } }, ink })))
+      .toEqual(['arrow from o3 to empty space below o5 at row 5, column 4', undefined]);
+    expect(phrases(m(3, { reading: 'Arrow', arrow: {}, ink }))).toEqual(['arrow on empty space at row 4, column 3', undefined]);
+    expect(phrases(m(4, { targets: ['txt_info'], reading: 'Arrow inside Info', arrow: { from: 'txt_info', to: 'txt_info' }, ink }))).toEqual(['arrow inside o3', undefined]);
+  });
+  it('without its reading (dropped) it is ink', () => {
+    expect(kindOf(m(1, { targets: ['txt_info'], arrow: { from: 'txt_info' }, ink }))).toBe('ink');
+  });
+});

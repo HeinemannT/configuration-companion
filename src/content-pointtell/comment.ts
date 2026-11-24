@@ -155,7 +155,8 @@ const placeholderFor = (ed: PtEditor): string => {
   const m = ed.n !== null ? markByNumber(ed.n) : undefined;
   if (m?.meaning?.kind === 'add' && m.meaning.tab) return 'Tab name';
   if (m?.meaning?.kind === 'add' && m.meaning.page) return 'Page name';
-  if (m?.ink && !m.reading) return 'What do you want here?';
+  // Ink that was not understood, or an arrow that asks for nothing Companion can tell: the words say what it means.
+  if (m?.ink && (!m.reading || m.arrow)) return 'What do you want here?';
   if (m?.ink) return 'Add words (optional)';
   return ed.page ? 'What should change on this page?' : 'What should change here?';
 };

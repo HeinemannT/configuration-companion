@@ -63,7 +63,13 @@ describe('snapshotSettings (credentials never persisted to session storage)', ()
         saveTarget: 'template',
         enrichMode: 'widgets',
         profiles: [],
-        ai: { provider: 'anthropic', model: 'claude-opus-4-8', apiKeyEnc: 'enc:super-secret-key' },
+        ai: {
+          provider: 'anthropic', model: 'claude-opus-5-5',
+          keys: {
+            anthropic: { apiKeyEnc: 'enc:super-secret-key', model: 'claude-opus-5-5' },
+            openai: { apiKeyEnc: 'enc:second-secret-key', model: 'gpt-5.2' },
+          },
+        },
       },
     } as any);
 
@@ -71,10 +77,12 @@ describe('snapshotSettings (credentials never persisted to session storage)', ()
 
     const written = (chrome.storage.session.set as any).mock.calls[0][0].crev_settings_snapshot;
     // Only a non-secret marker says a key is configured.
-    expect(written.ai.apiKeyEnc).toBe('set');
+    expect(written.ai.keys.anthropic.apiKeyEnc).toBe('set');
+    expect(written.ai.keys.openai).toEqual({ apiKeyEnc: 'set', model: 'gpt-5.2' });
     expect(JSON.stringify(written)).not.toContain('super-secret-key');
+    expect(JSON.stringify(written)).not.toContain('second-secret-key');
     expect(written.ai.provider).toBe('anthropic');
-    expect(written.ai.model).toBe('claude-opus-4-8');
+    expect(written.ai.model).toBe('claude-opus-5-5');
   });
 
   it('does not mutate the source AI key', async () => {
@@ -87,11 +95,11 @@ describe('snapshotSettings (credentials never persisted to session storage)', ()
       saveTarget: 'template' as const,
       enrichMode: 'widgets' as const,
       profiles: [],
-      ai: { provider: 'openai' as const, model: 'gpt-5.2', apiKeyEnc: 'KEEP-ENC' },
+      ai: { provider: 'openai' as const, model: 'gpt-5.2', keys: { openai: { apiKeyEnc: 'KEEP-ENC' } } },
     };
     setSwContext({ settings } as any);
     snapshotSettings();
-    expect(settings.ai.apiKeyEnc).toBe('KEEP-ENC');
+    expect(settings.ai.keys.openai.apiKeyEnc).toBe('KEEP-ENC');
   });
 
   it('handles empty profile list without throwing', async () => {

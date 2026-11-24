@@ -49,6 +49,13 @@ export interface PtGridPlace {
   over?: string[];
 }
 
+/** An arrow that asks for no operation Companion can tell: the object under its tail and the one under its tip
+ *  (either may be absent: empty space). When the tip is on empty space: where on the grid, and the object
+ *  nearest to it with the side it is on. */
+export interface PtArrow { from?: string; to?: string; end?: PtGridPlace; near?: { id: string; side: PtSide } }
+
+export type PtSide = 'above' | 'below' | 'left of' | 'right of';
+
 /** The object a mark's ink follows, and its box (page coordinates) when the ink was drawn. */
 export interface PtAnchor { id: string; box: { left: number; top: number; width: number; height: number } }
 
@@ -83,6 +90,8 @@ export interface PtMark {
   reading?: string;
   /** An arrow from empty space onto an object (not a loop round it): both read as "about this". */
   pointer?: true;
+  /** An arrow read as no move and no pointer: where it starts and ends; dropped with the reading. */
+  arrow?: PtArrow;
   ink?: PtInk;
   /** Set after the mark's operations were staged in Blueprint and not yet applied. */
   staged?: boolean;

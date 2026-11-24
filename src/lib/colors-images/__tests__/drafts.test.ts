@@ -140,7 +140,7 @@ describe('image draft', () => {
   });
 
   it('says what is wrong with an ID the person edited', () => {
-    const item: NewImage = { key: 'a', fileName: 'x.png', bytes: bytes(1), mime: 'image/png', id: 'icon_erm', idTouched: true, folderId: 'icons' };
+    const item: NewImage = { key: 'a', fileName: 'x.png', bytes: bytes(1), mime: 'image/png', id: 'icon_erm', idTouched: true, folderId: 'icons', description: '' };
     expect(idProblem(item, INDEX, [item])).toBe('This ID is taken');
     expect(idProblem({ ...item, id: 'icon erm' }, INDEX, [])).toMatch(/letters/);
     expect(idProblem({ ...item, id: 'icon_new' }, INDEX, [{ ...item, key: 'b', id: 'icon_new' }])).toBe('This ID is taken');
@@ -154,7 +154,7 @@ describe('image draft', () => {
   });
 
   it('builds the write: new files first, then changes, and leaves out what is too large', () => {
-    const item: NewImage = { key: 'a', fileName: 'kri.svg', bytes: bytes(3), mime: 'image/svg+xml', id: 'icon_kri', idTouched: false, folderId: 'icons' };
+    const item: NewImage = { key: 'a', fileName: 'kri.svg', bytes: bytes(3), mime: 'image/svg+xml', id: 'icon_kri', idTouched: false, folderId: 'icons', description: '' };
     const big: NewImage = { ...item, key: 'b', fileName: 'big.png', id: 'icon_big' };
     const { ops, tooLarge } = buildFileOps(
       [{ item, out: { bytes: bytes(3), mime: 'image/png' } }, { item: big, out: { bytes: new Uint8Array(40_000), mime: 'image/png' } }],
@@ -177,7 +177,7 @@ describe('image draft', () => {
   });
 
   it('says at once whether a file fits one write, with its size and the limit', () => {
-    const item: NewImage = { key: 'a', fileName: 'photo.jpg', bytes: bytes(3), mime: 'image/jpeg', id: 'photo', idTouched: false, folderId: 'icons' };
+    const item: NewImage = { key: 'a', fileName: 'photo.jpg', bytes: bytes(3), mime: 'image/jpeg', id: 'photo', idTouched: false, folderId: 'icons', description: '' };
     const b64 = (b: Uint8Array) => btoa(String.fromCharCode(...b));
     expect(isOverLimit({ item }, { bytes: new Uint8Array(40_000), mime: 'image/jpeg' }, b64)).toBe(true);
     expect(isOverLimit({ item }, { bytes: new Uint8Array(10_000), mime: 'image/jpeg' }, b64)).toBe(false);

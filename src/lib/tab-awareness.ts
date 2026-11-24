@@ -12,13 +12,13 @@ import { log } from './logger';
 import { notePageLoad } from './page-diagnostics';
 import { checkBmpCookie } from './cookie-gate';
 import { deleteContextRid } from './context-rid';
-import { sendPageInfoToPanel } from './content-script-injection';
+import { queuePageInfoForTab } from './content-script-injection';
 import { sendPanelContextForTab } from './panel-context-sync';
 import { clearEditorContext, editorContextForTab } from './ai/editor-context';
 import { pointTellOnIn } from './point-tell-state';
 
 // Re-export for backward compatibility with existing importers
-export { ensureContentScript, ensureBlueprintScript, sendPageInfoToPanel, handleGetDetection } from './content-script-injection';
+export { ensureContentScript, ensureBlueprintScript, sendPageInfoToPanel, queuePageInfoForTab, handleGetDetection } from './content-script-injection';
 
 /** Per-window active-tab tracking. The previous singleton broke when
  *  the user had BMP open in two windows — onActivated in one window
@@ -117,7 +117,7 @@ export function registerTabListeners() {
       // Detection may already be cached, but page/context state is per tab and
       // must always follow activation. Skipping this when `det` existed was the
       // reason the side panel could keep the previous browser tab's context.
-      sendPageInfoToPanel(activeInfo.tabId);
+      queuePageInfoForTab(activeInfo.tabId);
       try {
         panelPort.postMessage({
           type: 'AI_EDITOR_CONTEXT',
@@ -211,7 +211,7 @@ export function registerTabListeners() {
     if (changeInfo.status !== 'complete' && !changeInfo.url) return;
 
     if (isActiveTab) {
-      sendPageInfoToPanel(tabId);
+      queuePageInfoForTab(tabId);
       void profileReady.then(() => sendPanelContextForTab(tabId));
       const det = getTabDetection(tabId);
       if (det) {

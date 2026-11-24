@@ -16,7 +16,7 @@
  * first-time injection into the already-open tab that was just granted.
  */
 import { log } from './logger';
-import { resolveProvider } from './ai/providers';
+import { customProviderOrigins, keyedProviders, PROVIDERS } from './ai/providers';
 import type { AiSettings } from './ai/types';
 
 const CONTENT_ID = 'crev-content';
@@ -185,9 +185,12 @@ export async function reconcileProfileOrigins(
   for (const origin of configuredPages) pageOrigins.add(origin);
   pageOriginsKnown = true;
   const keep = new Set(configuredPages);
-  if (ai?.apiKeyEnc) {
+  // Every provider that keeps a key keeps its API origin, so switching the
+  // active provider never needs a new browser prompt. Removing a key drops it.
+  for (const provider of keyedProviders(ai)) {
     try {
-      keep.add(resolveProvider(ai).origin);
+      if (provider === 'custom') customProviderOrigins(ai?.customProvider).forEach(origin => keep.add(origin));
+      else keep.add(PROVIDERS[provider].origin);
     } catch (e) {
       // Malformed legacy settings must not pin an otherwise-unused grant.
       log.swallow('siteAccess:resolveAiOrigin', e);

@@ -38,7 +38,9 @@ async function enrichEntry(entry: ContextRidEntry, tabId: number): Promise<Conte
   if (result.name && result.type && result.businessId) return result;
   if (!ctx.client) return result;
   try {
-    await enrichBadges([entry.rid], undefined, ctx);
+    // The tab is the requester: when it leaves its page, the badge queue
+    // drops this rid (releaseTab) instead of keeping it for no one.
+    await enrichBadges([entry.rid], tabId, ctx);
     const live = ctx.cache?.get(entry.rid);
     if (live) {
       result = {

@@ -11,7 +11,7 @@
  * Kept dependency-free (no DOM) so the reducer is unit-testable in isolation.
  */
 
-import type { AiChatEvent, AiChatTurn, AiChatToolTrace } from '../../lib/ai/types';
+import type { AiChatEvent, AiChatTurn, AiChatToolTrace, AiWebSource } from '../../lib/ai/types';
 import type { ObjectReference } from '../../lib/types';
 import { mergeObjectReferences } from '../../lib/ai/tools';
 import { scrubModelReasoning, scrubToolMarkup } from '../../lib/ai/scrub';
@@ -32,13 +32,15 @@ export interface StreamState {
   text: string;
   tools: ToolLine[];
   objects: ObjectReference[];
+  /** Web pages behind the answer (web access). The only URLs shown as links. */
+  sources: AiWebSource[];
   status: StreamStatus;
   /** Present only when status === 'error'. */
   error?: string;
 }
 
 export function initStream(objects: readonly ObjectReference[] = []): StreamState {
-  return { text: '', tools: [], objects: mergeObjectReferences(objects), status: 'streaming' };
+  return { text: '', tools: [], objects: mergeObjectReferences(objects), sources: [], status: 'streaming' };
 }
 
 /** Apply one streaming event, returning a NEW state (never mutates the input).
@@ -76,6 +78,13 @@ export function reduceStream(s: StreamState, ev: AiChatEvent): StreamState {
         duplicate: ev.duplicate,
       });
       return { ...s, tools, objects };
+    }
+    case 'sources': {
+      const sources = [...s.sources];
+      for (const source of ev.sources) {
+        if (!sources.some(seen => seen.url === source.url)) sources.push(source);
+      }
+      return { ...s, sources };
     }
     case 'change-preview-ready':
     case 'change-preview-failed':
@@ -126,6 +135,7 @@ export function toAssistantTurn(s: StreamState): AiChatTurn {
   const trace = toolTraceOf(s);
   if (trace.length) turn.toolTrace = trace;
   if (s.objects.length) turn.objects = s.objects;
+  if (s.sources.length) turn.sources = s.sources;
   return turn;
 }
 

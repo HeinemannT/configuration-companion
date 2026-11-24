@@ -14,6 +14,8 @@
 import { readSummaries } from '../object-summaries';
 import { register } from '../handler-registry';
 import { ctxOf, getCtx } from '../sw-context';
+import type { HandlerMeta } from '../handler-registry';
+import type { InspectorMessage } from '../types';
 import { errorMessage } from '../logger';
 import { environmentMatches, environmentToken, ENVIRONMENT_CHANGED_ERROR } from '../environment';
 import { isRidShaped } from '../validate-inbound';
@@ -41,7 +43,7 @@ type Client = NonNullable<ReturnType<typeof getCtx>['client']>;
  *  (its type's `via` rule) in ONE EC call and read the new nodes in ONE
  *  batched read, so the page tree reaches the inputs a badge can point at.
  *  Failures leave the tree as it was. */
-async function expandReferenced(client: Client, payload: ObjectRootPayload): Promise<{ payload: ObjectRootPayload; posts: number }> {
+async function expandReferenced(client: Client, payload: ObjectRootPayload, signal?: AbortSignal): Promise<{ payload: ObjectRootPayload; posts: number }> {
   const rows = payload.rows ?? [];
   const targets = rows
     .map(r => payload.nodes[r.rid])
@@ -50,14 +52,14 @@ async function expandReferenced(client: Client, payload: ObjectRootPayload): Pro
   if (!targets.length) return { payload, posts: 0 };
   let posts = 0;
   try {
-    const listed = await listStructures(client, targets.map(o => ({ rid: o.rid, rule: typeInfo(o.type).structure! })), undefined, OBJECT_RELATION_EC_TIMEOUT);
+    const listed = await listStructures(client, targets.map(o => ({ rid: o.rid, rule: typeInfo(o.type).structure! })), signal, OBJECT_RELATION_EC_TIMEOUT);
     posts++;
     if (!listed.ok || listed.hasWarning) return { payload, posts };
     const known = new Set([payload.rid, ...rows.map(r => r.rid)]);
     const extra = parseStructureRows(listed.log ?? '').filter(r => !known.has(r.rid));
-    if (!extra.length) return { payload, posts };
+    if (!extra.length || signal?.aborted) return { payload, posts };
     // Row facts only (object-row-facts.ts): a node is read in full when opened.
-    const { objects, posts: n, error } = await client.readRowFacts(extra.map(r => r.rid));
+    const { objects, posts: n, error } = await client.readRowFacts(extra.map(r => r.rid), signal);
     posts += n;
     const rowFactsError = payload.rowFactsError ?? error;
     return { payload: { ...payload, rows: [...rows, ...extra], nodes: { ...payload.nodes, ...objects }, ...(rowFactsError ? { rowFactsError } : {}) }, posts };
@@ -66,9 +68,60 @@ async function expandReferenced(client: Client, payload: ObjectRootPayload): Pro
   }
 }
 
+/** The page trees being read, per panel window. The panel asks for the page
+ *  the user is on; someone moving through pages leaves a read for each page
+ *  behind, and the page they stop on would wait behind them all. A read for
+ *  another page from the same window ends the older ones. */
+const treeReads = new Map<number, Array<{ rid: string; controller: AbortController }>>();
+
+/** Start a tree read for `rid` in `windowId`: every running read of that
+ *  window for another rid is aborted. `done` forgets this read. */
+function claimTreeRead(windowId: number | undefined, rid: string): { signal: AbortSignal; done: () => void } {
+  const controller = new AbortController();
+  if (windowId == null) return { signal: controller.signal, done: () => { /* not tracked */ } };
+  const keep: Array<{ rid: string; controller: AbortController }> = [];
+  for (const read of treeReads.get(windowId) ?? []) {
+    if (read.rid === rid) keep.push(read);
+    else read.controller.abort();
+  }
+  const own = { rid, controller };
+  keep.push(own);
+  treeReads.set(windowId, keep);
+  return {
+    signal: controller.signal,
+    done: () => {
+      const rest = (treeReads.get(windowId) ?? []).filter(r => r !== own);
+      if (rest.length) treeReads.set(windowId, rest); else treeReads.delete(windowId);
+    },
+  };
+}
+
 register('BROWSE_TREE', async (msg, respond, meta) => {
   const ctx = ctxOf(meta);
   const environment = environmentToken(ctx);
+  const { signal, done } = claimTreeRead(meta.panelWindowId, msg.rid);
+  // Superseded by a read for another page: the panel hears at once that this
+  // rid was dropped (it asks again when the page is shown) and nothing more
+  // is sent for it. Waiting posts leave the transport queue with the signal.
+  signal.addEventListener('abort', () => {
+    done();
+    respond({ type: 'BROWSE_TREE_DATA', rid: msg.rid, environment, ok: false, superseded: true });
+  }, { once: true });
+  try {
+    await browseTree(msg, m => { if (!signal.aborted) respond(m); }, meta, environment, signal);
+  } finally {
+    done();
+  }
+});
+
+async function browseTree(
+  msg: { rid: string; typeHint?: string },
+  respond: (m: InspectorMessage) => void,
+  meta: HandlerMeta,
+  environment: string,
+  signal: AbortSignal,
+): Promise<void> {
+  const ctx = ctxOf(meta);
   const client = ctx.client;
   const fail = (error: string) => respond({ type: 'BROWSE_TREE_DATA', rid: msg.rid, environment, ok: false, error });
   if (!client) { fail('Not connected to BMP'); return; }
@@ -88,7 +141,7 @@ register('BROWSE_TREE', async (msg, respond, meta) => {
     try {
       const frame = createEcFrame();
       // One constant script: the object is the command's context.
-      const r = await client.executeEcOn(buildAncestorsEc(CONTEXT_OBJECT, frame), msg.rid, undefined, OBJECT_RELATION_EC_TIMEOUT);
+      const r = await client.executeEcOn(buildAncestorsEc(CONTEXT_OBJECT, frame), msg.rid, signal, OBJECT_RELATION_EC_TIMEOUT);
       posts++;
       out = r.ok ? parseAncestors(r.log ?? '', frame) : [];
     } catch { out = []; }
@@ -100,6 +153,8 @@ register('BROWSE_TREE', async (msg, respond, meta) => {
 
   let root: ObjectRootPayload;
   try {
+    // The shared root read carries no abort (an object window may have
+    // joined it): a superseded browse only stops waiting for it.
     const request = readObjectRoot(msg.rid, msg.typeHint, ctx);
     if (!request) { fail('Not connected to BMP'); return; }
     root = await request;
@@ -107,6 +162,7 @@ register('BROWSE_TREE', async (msg, respond, meta) => {
     fail(errorMessage(e));
     return;
   }
+  if (signal.aborted) return;
   posts += root.posts;
 
   let presented: ObjectRootPayload | null = null;
@@ -119,22 +175,26 @@ register('BROWSE_TREE', async (msg, respond, meta) => {
     // and its direct children.
     fallback = true;
     try {
-      const rows = await client.fetchStructureRows(msg.rid, { depth: 1 });
+      const rows = await client.fetchStructureRows(msg.rid, { depth: 1 }, signal);
       posts++;
-      const { objects, posts: n, error } = rows.length ? await client.readRowFacts(rows.map(r => r.rid)) : { objects: {}, posts: 0, error: undefined };
+      if (signal.aborted) return;
+      const { objects, posts: n, error } = rows.length ? await client.readRowFacts(rows.map(r => r.rid), signal) : { objects: {}, posts: 0, error: undefined };
       posts += n;
       root = { ...root, rows, nodes: objects, ...(rows.truncated ? { structureTruncatedAt: STRUCTURE_MAX_NODES } : {}), ...(error ? { rowFactsError: error } : {}) };
     } catch (e) {
       root = { ...root, structureError: errorMessage(e) };
     }
   }
+  if (signal.aborted) return;
 
   {
-    const own = await expandReferenced(client, root);
+    const own = await expandReferenced(client, root, signal);
     root = own.payload;
     posts += own.posts;
   }
+  if (signal.aborted) return;
   const crumbList = await crumbs;
+  if (signal.aborted) return;
   const build = (): BrowseTree => ({
     rootRid: msg.rid,
     nodes: flattenTree(root, presented),
@@ -159,10 +219,11 @@ register('BROWSE_TREE', async (msg, respond, meta) => {
     try {
       const request = readObjectRoot(templateRid, TEMPLATE_HINT, ctx);
       presented = request ? await request : null;
+      if (signal.aborted) return;
       presentedState = presented ? 'loaded' : 'error';
       if (presented) {
         posts += presented.posts;
-        const tpl = await expandReferenced(client, presented);
+        const tpl = await expandReferenced(client, presented, signal);
         presented = tpl.payload;
         posts += tpl.posts;
       }
@@ -171,9 +232,10 @@ register('BROWSE_TREE', async (msg, respond, meta) => {
     }
   }
 
+  if (signal.aborted) return;
   if (!environmentMatches(ctxOf(meta), environment)) { fail(ENVIRONMENT_CHANGED_ERROR); return; }
   respond({ type: 'BROWSE_TREE_DATA', rid: msg.rid, environment, ok: true, tree: build() });
-});
+}
 
 /** Exact lookups answered lately, per server profile (environment token)
  *  and query: the picker asks one for every pause in typing, and a query

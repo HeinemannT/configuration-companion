@@ -5,6 +5,11 @@
  * tables. No external dependency — every value is emitted as a DOM text node
  * or element, so it is escaped by construction.
  *
+ * Links: `[label](url)` becomes a link only when the URL is in the answer's
+ * source ledger (the pages the provider's web tools cited or read). Any other
+ * link stays literal text, so a page or a model cannot plant a clickable URL.
+ * Only http(s) URLs are ever rendered as links.
+ *
  * Fenced code blocks are delegated to the caller via `opts.codeBlock` so the
  * chat tab can weld its own header (language label + Apply / Preview / Copy)
  * and result strip onto each block. Everything else (prose, headings, tables)
@@ -13,6 +18,7 @@
 
 import { h } from '../../lib/dom';
 import type { ObjectReference } from '../../lib/types';
+import type { AiWebSource } from '../../lib/ai/types';
 import { objectReferencePattern } from '../../lib/ai/tools';
 
 export interface MarkdownOptions {
@@ -22,10 +28,54 @@ export interface MarkdownOptions {
   objects?: readonly ObjectReference[];
   /** Render one verified object citation. */
   objectReference?: (object: ObjectReference) => HTMLElement;
+  /** Web pages behind this answer: the only URLs rendered as links. */
+  sources?: readonly AiWebSource[];
 }
 
 interface RenderOptions extends MarkdownOptions {
   objectByRid: ReadonlyMap<string, ObjectReference>;
+  sourceUrls: ReadonlySet<string>;
+}
+
+/** Normalize a URL for the ledger lookup; null for anything but http(s). */
+function linkHref(raw: string): string | null {
+  try {
+    const url = new URL(raw);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function sourceSet(sources: readonly AiWebSource[] | undefined): Set<string> {
+  const out = new Set<string>();
+  for (const source of sources ?? []) {
+    const href = linkHref(source.url);
+    if (href) out.add(href);
+  }
+  return out;
+}
+
+/** A link that opens in a new tab without giving the page a handle back. */
+export function sourceLink(href: string, label: string): HTMLElement {
+  return h('a', { class: 'ai-link', href, target: '_blank', rel: 'noopener noreferrer' }, label);
+}
+
+/** The "Sources" list under an answer that used the web. */
+export function renderSourceList(sources: readonly AiWebSource[]): HTMLElement | null {
+  const items = sources
+    .map(source => ({ href: linkHref(source.url), source }))
+    .filter((item): item is { href: string; source: AiWebSource } => !!item.href);
+  if (!items.length) return null;
+  return h('div', { class: 'ai-sources' },
+    h('div', { class: 'ai-sources-t' }, 'Sources'),
+    h('ol', { class: 'ai-md-list ai-sources-list' },
+      ...items.map(({ href, source }) => {
+        let host = href;
+        try { host = new URL(href).host; } catch { /* keep href */ }
+        return h('li', null, sourceLink(href, source.title || host), source.title ? h('span', { class: 'ai-sources-host' }, ` ${host}`) : null);
+      })),
+  );
 }
 
 export type MdBlock =
@@ -98,6 +148,7 @@ export function renderMarkdown(container: HTMLElement, text: string, opts: Markd
   const renderOpts: RenderOptions = {
     ...opts,
     objectByRid: new Map((opts.objects ?? []).map(object => [object.rid, object])),
+    sourceUrls: sourceSet(opts.sources),
   };
   for (const block of splitBlocks(text)) {
     if (block.kind === 'code') {
@@ -115,6 +166,7 @@ export function renderInlineMarkdown(container: HTMLElement, text: string, opts:
   renderInline(container, text, {
     ...opts,
     objectByRid: new Map((opts.objects ?? []).map(object => [object.rid, object])),
+    sourceUrls: sourceSet(opts.sources),
   });
 }
 
@@ -222,12 +274,29 @@ function renderEmphasis(el: HTMLElement, text: string, opts: RenderOptions): voi
   for (const part of text.split(/(\*\*[^*]+\*\*)/g)) {
     if (part.length > 4 && part.startsWith('**') && part.endsWith('**')) {
       const strong = h('strong');
-      renderObjectReferences(strong, part.slice(2, -2), opts);
+      renderLinks(strong, part.slice(2, -2), opts);
       el.appendChild(strong);
     } else if (part) {
-      renderObjectReferences(el, part, opts);
+      renderLinks(el, part, opts);
     }
   }
+}
+
+const LINK_PATTERN = /\[([^\]\n]{1,200})\]\((https?:\/\/[^\s)]{1,2000})\)/g;
+
+/** `[label](url)` → a link when the URL is a verified source; else literal. */
+function renderLinks(el: HTMLElement, text: string, opts: RenderOptions): void {
+  if (!opts.sourceUrls.size) { renderObjectReferences(el, text, opts); return; }
+  let cursor = 0;
+  for (const match of text.matchAll(LINK_PATTERN)) {
+    const index = match.index ?? 0;
+    const href = linkHref(match[2]);
+    if (!href || !opts.sourceUrls.has(href)) continue;
+    if (index > cursor) renderObjectReferences(el, text.slice(cursor, index), opts);
+    el.appendChild(sourceLink(href, match[1]));
+    cursor = index + match[0].length;
+  }
+  if (cursor < text.length) renderObjectReferences(el, text.slice(cursor), opts);
 }
 
 function renderObjectReferences(el: HTMLElement, text: string, opts: RenderOptions): void {

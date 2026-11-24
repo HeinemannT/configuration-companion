@@ -50,3 +50,14 @@ describe('ink in the store', () => {
     expect(encodeMarks({ marks, next: 31 }).length).toBeLessThan(150_000);
   });
 });
+
+describe('an arrow with no operation in the store', () => {
+  it('keeps where it starts and ends, and the pointer flag of a pointer', () => {
+    const arrow: PtMark = { ...mark, meaning: undefined, reading: 'Arrow from Export', arrow: { from: 'btn_export', end: { tabId: 'tab_overview', row: 4, col: 3 }, near: { id: 'btn_export', side: 'below' } } };
+    delete arrow.meaning;
+    expect(decodeMarks(encodeMarks({ marks: [arrow], next: 4 })).marks[0]).toEqual(arrow);
+    const pointer: PtMark = { ...arrow, arrow: undefined, pointer: true, reading: 'Export' };
+    delete pointer.arrow;
+    expect(decodeMarks(encodeMarks({ marks: [pointer], next: 4 })).marks[0].pointer).toBe(true);
+  });
+});

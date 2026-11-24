@@ -9,7 +9,7 @@ import type { InspectorMessage, BmpObject } from '../../../lib/types';
 import type { BrowseTree } from '../../../lib/browse-tree';
 import { SEARCH_DEBOUNCE } from '../../../lib/constants';
 import { S } from '../../state';
-import { BrowseTab, TREE_REFRESH_DEBOUNCE } from '../browse-tab';
+import { BrowseTab, TREE_REFRESH_DEBOUNCE, TREE_REST_MS } from '../browse-tab';
 
 const PAGE = '7282092580979928955';
 const VIEW = '2184360149894601037';
@@ -66,6 +66,24 @@ describe('BrowseTab', () => {
     expect([...panel.querySelectorAll('.bw-crumb')].map(c => c.textContent)).toEqual(['Administration', 'CREV QA Sandbox']);
     expect(panel.querySelector('.bw-crumbs [role="status"]')).not.toBeNull();
     expect(panel.querySelectorAll('.bw-sk:not(.crumb)').length).toBeGreaterThan(0);
+  });
+
+  it('reads only the page the user rests on when they move through pages quickly', () => {
+    const { tab, sent } = setup();
+    tab.activate();
+    tab.handleMessage({ type: 'BROWSE_TREE_DATA', rid: PAGE, environment: 'p@x', ok: true, tree });
+    const trees = () => sent.filter(m => m.type === 'BROWSE_TREE').map(m => (m as { rid: string }).rid);
+    const before = trees().length;
+    for (const rid of ['5100000000000000001', '5100000000000000002', '5100000000000000003']) {
+      tab.handleMessage({ type: 'PAGE_INFO', url: 'x', widgets: [], rid });
+      vi.advanceTimersByTime(TREE_REST_MS - 100);
+    }
+    expect(trees().length).toBe(before); // passed through: nothing read
+    vi.advanceTimersByTime(200);
+    expect(trees().slice(before)).toEqual(['5100000000000000003']);
+    // Back on a page read before: shown from memory, refreshed at once, no wait.
+    tab.handleMessage({ type: 'PAGE_INFO', url: 'x', widgets: [], rid: PAGE });
+    expect(trees().at(-1)).toBe(PAGE);
   });
 
   it('never shows the previous page\'s tree after navigating', () => {
@@ -372,6 +390,60 @@ describe('BrowseTab', () => {
     S.page = null;
     show();
     expect(panel.querySelector('.bw-row[role="treeitem"]')).toBeNull();
+  });
+});
+
+describe('BrowseTab with a superseded page read', () => {
+  const A = '5100000000000000001';
+  const B = '5100000000000000002';
+  const trees = (sent: InspectorMessage[]) => sent.filter(m => m.type === 'BROWSE_TREE').map(m => (m as { rid: string }).rid);
+  beforeEach(() => {
+    vi.useFakeTimers();
+    S.page = { rid: A };
+    S.context = null;
+    S.connState = { ...S.connState, display: 'connected' };
+    S.favoriteEntries = [];
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it('forgets the dropped page and asks for it again when it is shown, instead of staying on loading', () => {
+    const { tab, sent } = setup();
+    tab.activate();
+    expect(trees(sent)).toEqual([A]);
+    tab.handleMessage({ type: 'PAGE_INFO', url: 'x', widgets: [], rid: B });
+    vi.advanceTimersByTime(TREE_REST_MS);
+    expect(trees(sent)).toEqual([A, B]);
+    // The worker dropped A's read for B's.
+    tab.handleMessage({ type: 'BROWSE_TREE_DATA', rid: A, environment: 'p@x', ok: false, superseded: true });
+    expect(trees(sent)).toEqual([A, B]);
+    // Back on A: read again (from the rest), not shown as loading forever or as an error.
+    tab.handleMessage({ type: 'PAGE_INFO', url: 'x', widgets: [], rid: A });
+    vi.advanceTimersByTime(TREE_REST_MS);
+    expect(trees(sent)).toEqual([A, B, A]);
+  });
+
+  it('a page the user came back to before the drop arrived is asked for again at once', () => {
+    const { tab, sent } = setup();
+    tab.activate();
+    tab.handleMessage({ type: 'PAGE_INFO', url: 'x', widgets: [], rid: B });
+    vi.advanceTimersByTime(TREE_REST_MS);
+    // Back on A while A's first read still counts as loading: nothing new is asked yet.
+    tab.handleMessage({ type: 'PAGE_INFO', url: 'x', widgets: [], rid: A });
+    expect(trees(sent)).toEqual([A, B]);
+    tab.handleMessage({ type: 'BROWSE_TREE_DATA', rid: A, environment: 'p@x', ok: false, superseded: true });
+    expect(trees(sent)).toEqual([A, B, A]);
+  });
+
+  it('a tree already shown stays when its refresh is dropped', () => {
+    const { tab, sent, panel, show } = setup();
+    S.page = { rid: PAGE };
+    tab.activate();
+    tab.handleMessage({ type: 'BROWSE_TREE_DATA', rid: PAGE, environment: 'p@x', ok: true, tree });
+    tab.handleMessage({ type: 'BROWSE_TREE_DATA', rid: PAGE, environment: 'p@x', ok: false, superseded: true });
+    show();
+    expect(panel.querySelectorAll('.bw-row[role="treeitem"]').length).toBeGreaterThan(0);
+    expect(panel.textContent).not.toContain('Not read');
+    expect(trees(sent)).toEqual([PAGE, PAGE]);
   });
 });
 

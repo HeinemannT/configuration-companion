@@ -158,6 +158,37 @@ export function sendPageInfoToPanel(tabId?: number, retries = 1, panelWindowId?:
   }
 }
 
+/** One navigation reports itself several times (the address change, the
+ *  tab's load states, the page's own render and page-context messages); each
+ *  page-info request makes the page scan its widgets and walk every component.
+ *  Requests for one tab within this rest are answered by one scan. */
+export const PAGE_INFO_COALESCE_MS = 150;
+/** A page that keeps rendering is still scanned at least this often. */
+const PAGE_INFO_MAX_WAIT_MS = 600;
+const queuedPageInfo = new Map<number, { timer: ReturnType<typeof setTimeout>; since: number }>();
+
+/** Refresh the page info of a tab for the side panel of its window, once per
+ *  burst of requests (PAGE_INFO_COALESCE_MS after the last one). Nothing is
+ *  asked of the page when no panel is open in the tab's window by then: the
+ *  scan has no other reader (Inspect names its page from the page context). */
+export function queuePageInfoForTab(tabId: number): void {
+  const now = Date.now();
+  const prev = queuedPageInfo.get(tabId);
+  if (prev) {
+    if (now - prev.since >= PAGE_INFO_MAX_WAIT_MS) return; // due soon anyway
+    clearTimeout(prev.timer);
+  }
+  const timer = setTimeout(() => {
+    queuedPageInfo.delete(tabId);
+    chrome.tabs.get(tabId, (tab) => {
+      if (chrome.runtime.lastError || tab?.windowId == null) return;
+      if (!getCtx().panelPortByWindow.has(tab.windowId)) return;
+      sendPageInfoToPanel(tabId);
+    });
+  }, PAGE_INFO_COALESCE_MS);
+  queuedPageInfo.set(tabId, { timer, since: prev?.since ?? now });
+}
+
 /** Panel requested detection state — sync from cache or trigger fresh query.
  *  `panelWindowId` (from PANEL_HELLO bookkeeping) targets the requesting
  *  panel's own window so multi-window panel setups don't cross-talk. */

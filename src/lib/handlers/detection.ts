@@ -5,7 +5,7 @@
 import { register } from '../handler-registry';
 import { ctxOf } from '../sw-context';
 import { getTabDetection, setTabDetection, updateBadge } from '../detection';
-import { sendPageInfoToPanel, handleGetDetection } from '../tab-awareness';
+import { sendPageInfoToPanel, queuePageInfoForTab, handleGetDetection } from '../tab-awareness';
 import { clearContextRid, getContextRid, getPageContext, setPageContext, deleteContextRid, markPageContextStale } from '../context-rid';
 import type { SwContext } from '../sw-context';
 import { resolvePanelContextForTab, sendPanelContextForTab } from '../panel-context-sync';
@@ -13,6 +13,8 @@ import { setCurrentPosition } from '../current-position';
 import { isRidShaped } from '../validate-inbound';
 import type { DetectionPhase } from '../types';
 import { logPageDiagnostic } from '../page-diagnostics';
+import { releaseTab } from '../enrichment';
+import { releaseEditPageFields } from './inspect';
 
 register('DETECTION_RESULT', (msg, respond, meta) => {
   const ctx = ctxOf(meta);
@@ -44,13 +46,18 @@ register('DETECTION_RESULT', (msg, respond, meta) => {
 });
 
 /**
- * Page info (the widget scan, the walk over the page's components, the
- * context identity) is refreshed only for something that shows it: the side
- * panel of the tab's window, or Inspect in that window (its page heading
- * names the bound object). With neither, a render only marks the tab's page
- * context stale; a reader that needs it later (the editor's EC `this`,
- * Studio, the panel when it opens) asks the page then
+ * The page's context identity is kept current for something that shows it:
+ * the side panel of the tab's window, or Inspect in that window (its page
+ * heading names the bound object). With neither, a render only marks the
+ * tab's page context stale; a reader that needs it later (the editor's EC
+ * `this`, Studio, the panel when it opens) asks the page then
  * (page-context-resolver, GET_PAGE_INFO on panel open).
+ *
+ * The page info itself (the widget scan and the walk over the page's
+ * components) has one reader, the side panel: it is asked for only while a
+ * panel is open in the window, once per burst (queuePageInfoForTab). Inspect
+ * alone does not ask for it, so the tab's page context is marked stale on a
+ * render and the next reader asks the page for the context only.
  */
 export function pageInfoShown(ctx: Pick<SwContext, 'panelPortByWindow' | 'isInspectActive'>, windowId: number): boolean {
   return ctx.panelPortByWindow.has(windowId) || ctx.isInspectActive(windowId);
@@ -74,9 +81,15 @@ register('GET_PAGE_INFO', (_msg, _respond, meta) => {
 // directly instead of dropping the signal — MV3 service workers respawn
 // after ~30 s idle so this race actually matters every time the user
 // triggers a panel action after a coffee break.
-register('BMP_URL_CHANGED', (_msg, _respond, meta) => {
+register('BMP_URL_CHANGED', (msg, _respond, meta) => {
   const tabId = meta.senderTabId;
   if (tabId == null) return;
+  // Someone moving quickly from page to page: the badge naming still queued for the pages passed
+  // through is dropped, so the page they rest on is named first instead of last. The page asks
+  // again for what it shows now (its request follows this message on the same port).
+  // The edit-page field read of a form left behind is ended too. (A tab switch inside a page, see
+  // BMP_PAGE_RENDER_CHANGED, keeps it: the form can still be on screen.)
+  if (msg.left) { releaseTab(tabId); releaseEditPageFields(tabId); }
   // Per-window active-tab gate: only refresh if the navigating tab is
   // the active tab of its OWN window. Previously a global activeTabId
   // singleton was used, which broke when the user had BMP tabs in two
@@ -92,9 +105,10 @@ register('BMP_URL_CHANGED', (_msg, _respond, meta) => {
   chrome.tabs.get(tabId, (tab) => {
     if (chrome.runtime.lastError || !tab?.windowId) return;
     if (!pageInfoShown(ctx, tab.windowId)) return;
+    const panel = ctx.panelPortByWindow.has(tab.windowId);
     chrome.tabs.query({ active: true, windowId: tab.windowId }, (actives) => {
       if (actives[0]?.id === tabId) {
-        sendPageInfoToPanel(tabId);
+        if (panel) queuePageInfoForTab(tabId);
         void sendPanelContextForTab(tabId);
       }
     });
@@ -104,16 +118,21 @@ register('BMP_URL_CHANGED', (_msg, _respond, meta) => {
 // React render/tab change without a page-owner change. Refresh the visible
 // widget/context snapshot, but deliberately keep contextRid: a render is not
 // navigation and must not erase the object the user explicitly selected.
-register('BMP_PAGE_RENDER_CHANGED', (_msg, _respond, meta) => {
+register('BMP_PAGE_RENDER_CHANGED', (msg, _respond, meta) => {
   const tabId = meta.senderTabId;
   if (tabId == null) return;
+  if (msg.left) releaseTab(tabId); // a tab switch: see BMP_URL_CHANGED
   const ctx = ctxOf(meta);
   chrome.tabs.get(tabId, (tab) => {
     if (chrome.runtime.lastError || !tab?.windowId) return;
     if (!pageInfoShown(ctx, tab.windowId)) { markPageContextStale(tabId); return; }
+    const panel = ctx.panelPortByWindow.has(tab.windowId);
+    // Inspect alone: no page scan follows to refresh the context, so the
+    // identity lookup below asks the page for its context only.
+    if (!panel) markPageContextStale(tabId);
     chrome.tabs.query({ active: true, windowId: tab.windowId }, (actives) => {
       if (actives[0]?.id === tabId) {
-        sendPageInfoToPanel(tabId);
+        if (panel) queuePageInfoForTab(tabId);
         void sendPanelContextForTab(tabId);
       }
     });
@@ -137,9 +156,10 @@ register('PAGE_CONTEXT', (msg, _respond, meta) => {
   chrome.tabs.get(tabId, (tab) => {
     if (chrome.runtime.lastError || !tab?.windowId) return;
     if (!pageInfoShown(ctx, tab.windowId)) return;
+    const panel = ctx.panelPortByWindow.has(tab.windowId);
     chrome.tabs.query({ active: true, windowId: tab.windowId }, (actives) => {
       if (actives[0]?.id !== tabId) return; // only the active tab's panel
-      sendPageInfoToPanel(tabId); // Browse's Here tree
+      if (panel) queuePageInfoForTab(tabId); // Browse's Here tree
       // Footer + AI chip use the same cache-first/live-fallback identity as the
       // Extended window, with a post-lookup race check inside the helper.
       void sendPanelContextForTab(tabId);

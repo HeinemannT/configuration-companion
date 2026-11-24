@@ -244,7 +244,7 @@ const OPENAI_NARRATED_TOOL_TURN = [
   'data: [DONE]\n\n',
 ];
 
-const settings: AiSettings = { provider: 'anthropic', model: 'claude-opus-4-8', apiKeyEnc: '' };
+const settings: AiSettings = { provider: 'anthropic', model: 'claude-opus-4-8', keys: {} };
 
 /** fetch mock: tool_use whenever tools are offered, text otherwise. */
 function toolThenText() {
@@ -280,7 +280,7 @@ describe('streamChat tool loop', () => {
       bodies.push(JSON.parse(init.body));
       return Promise.resolve(okStream(OPENAI_TEXT_TURN));
     }));
-    const openAiSettings: AiSettings = { provider: 'openai', model: 'gpt-5.2', apiKeyEnc: '' };
+    const openAiSettings: AiSettings = { provider: 'openai', model: 'gpt-5.2', keys: {} };
 
     await streamChat({ settings: openAiSettings, apiKey: 'k', system: 'S', history: [], text: 'go', onEvent: () => {}, executeTool: vi.fn() });
 
@@ -297,7 +297,7 @@ describe('streamChat tool loop', () => {
       return Promise.resolve(okStream(turn === 1 ? OPENAI_EMPTY_TURN : OPENAI_TEXT_TURN));
     }));
     const events: AiChatEvent[] = [];
-    const openAiSettings: AiSettings = { provider: 'deepseek', model: 'deepseek-v4-flash', apiKeyEnc: '' };
+    const openAiSettings: AiSettings = { provider: 'deepseek', model: 'deepseek-v4-flash', keys: {} };
 
     const metrics = await streamChat({
       settings: openAiSettings, apiKey: 'k', system: 'S', history: [], text: 'go',
@@ -316,7 +316,7 @@ describe('streamChat tool loop', () => {
     let turn = 0;
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(okStream(turn++ < 2 ? OPENAI_EMPTY_TURN : OPENAI_TEXT_TURN))));
     const events: AiChatEvent[] = [];
-    const openAiSettings: AiSettings = { provider: 'deepseek', model: 'deepseek-v4-flash', apiKeyEnc: '' };
+    const openAiSettings: AiSettings = { provider: 'deepseek', model: 'deepseek-v4-flash', keys: {} };
 
     const metrics = await streamChat({
       settings: openAiSettings, apiKey: 'k', system: 'S', history: [], text: 'go',
@@ -346,7 +346,7 @@ describe('streamChat tool loop', () => {
   it('reports an error after the bounded empty-response retries', async () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(okStream(OPENAI_EMPTY_TURN))));
     const events: AiChatEvent[] = [];
-    const openAiSettings: AiSettings = { provider: 'deepseek', model: 'deepseek-v4-flash', apiKeyEnc: '' };
+    const openAiSettings: AiSettings = { provider: 'deepseek', model: 'deepseek-v4-flash', keys: {} };
 
     const metrics = await streamChat({
       settings: openAiSettings, apiKey: 'k', system: 'S', history: [], text: 'go',
@@ -374,7 +374,7 @@ describe('streamChat tool loop', () => {
       return Promise.resolve(okStream(openAiTextTurn(CHANGE_TICKET)));
     }));
     const events: AiChatEvent[] = [];
-    const openAiSettings: AiSettings = { provider: 'deepseek', model: 'deepseek-v4-flash', apiKeyEnc: '' };
+    const openAiSettings: AiSettings = { provider: 'deepseek', model: 'deepseek-v4-flash', keys: {} };
     const executeTool = vi.fn(async (_call: ToolCall): Promise<ToolResult> => ({ content: 'EC preview OK', isError: false }));
 
     const metrics = await streamChat({
@@ -404,7 +404,7 @@ describe('streamChat tool loop', () => {
     const executeTool = vi.fn();
 
     await streamChat({
-      settings: { provider: 'deepseek', model: 'deepseek-v4-flash', apiKeyEnc: '' },
+      settings: { provider: 'deepseek', model: 'deepseek-v4-flash', keys: {} },
       apiKey: 'k',
       system: 'S',
       history: [],
@@ -428,7 +428,7 @@ describe('streamChat tool loop', () => {
     const executeTool = vi.fn(async (): Promise<ToolResult> => ({ content: 'EC preview OK', isError: false }));
 
     const metrics = await streamChat({
-      settings: { provider: 'deepseek', model: 'deepseek-v4-flash', apiKeyEnc: '' },
+      settings: { provider: 'deepseek', model: 'deepseek-v4-flash', keys: {} },
       apiKey: 'k', system: 'S', history: [], text: 'I want this different.',
       onEvent: event => events.push(event), executeTool,
     });
@@ -445,7 +445,7 @@ describe('streamChat tool loop', () => {
     const executeChangePreview = vi.fn(async (): Promise<ToolResult & { previewId: string }> => ({
       content: '1 change', isError: false, previewId: 'preview-1',
     }));
-    const openAiSettings: AiSettings = { provider: 'deepseek', model: 'deepseek-v4-flash', apiKeyEnc: '' };
+    const openAiSettings: AiSettings = { provider: 'deepseek', model: 'deepseek-v4-flash', keys: {} };
 
     await streamChat({
       settings: openAiSettings, apiKey: 'k', system: 'S', history: [], text: 'Change this object.',
@@ -476,7 +476,7 @@ describe('streamChat tool loop', () => {
     }));
     const events: AiChatEvent[] = [];
     const executeTool = vi.fn(async (_call: ToolCall): Promise<ToolResult> => ({ content: 'Preview succeeded', isError: false }));
-    const openAiSettings: AiSettings = { provider: 'deepseek', model: 'deepseek-v4-flash', apiKeyEnc: '' };
+    const openAiSettings: AiSettings = { provider: 'deepseek', model: 'deepseek-v4-flash', keys: {} };
 
     await streamChat({
       settings: openAiSettings, apiKey: 'k', system: 'S', history: [], text: 'Rename this object.',
@@ -505,7 +505,7 @@ describe('streamChat tool loop', () => {
         : openAiSubmitTurn(repaired)));
     }));
     const events: AiChatEvent[] = [];
-    const openAiSettings: AiSettings = { provider: 'deepseek', model: 'deepseek-v4-flash', apiKeyEnc: '' };
+    const openAiSettings: AiSettings = { provider: 'deepseek', model: 'deepseek-v4-flash', keys: {} };
     const executeTool = vi.fn(async (): Promise<ToolResult> => ({ content: 'line 1: unknown property name', isError: true }));
 
     const metrics = await streamChat({
@@ -578,7 +578,7 @@ describe('streamChat tool loop', () => {
     }));
 
     const metrics = await streamChat({
-      settings: { provider: 'deepseek', model: 'deepseek-v4-flash', apiKeyEnc: '' },
+      settings: { provider: 'deepseek', model: 'deepseek-v4-flash', keys: {} },
       apiKey: 'k', system: 'S', history: [], text: 'Hide Latest Bulletin.',
       onEvent: event => events.push(event), executeTool, signal: controller.signal,
     });
@@ -639,7 +639,7 @@ describe('streamChat tool loop', () => {
     }));
 
     const metrics = await streamChat({
-      settings: { provider: 'deepseek', model: 'deepseek-v4-flash', apiKeyEnc: '' },
+      settings: { provider: 'deepseek', model: 'deepseek-v4-flash', keys: {} },
       apiKey: 'k', system: 'S', history: [], text: 'Hide Latest Bulletin.',
       onEvent: event => events.push(event), executeTool,
     });
@@ -675,7 +675,7 @@ describe('streamChat tool loop', () => {
     const executeTool = vi.fn(async (): Promise<ToolResult> => ({ content: 'Preview succeeded', isError: false }));
 
     await streamChat({
-      settings: { provider: 'deepseek', model: 'deepseek-v4-flash', apiKeyEnc: '' }, apiKey: 'k', system: 'S', history: [],
+      settings: { provider: 'deepseek', model: 'deepseek-v4-flash', keys: {} }, apiKey: 'k', system: 'S', history: [],
       text: 'Rename this object.', onEvent: event => events.push(event), executeTool,
     });
 
@@ -689,7 +689,7 @@ describe('streamChat tool loop', () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(okStream(openAiTextTurnWithUsage('Final')))));
 
     const metrics = await streamChat({
-      settings: { provider: 'openai', model: 'gpt-5.2', apiKeyEnc: '' }, apiKey: 'k', system: 'S', history: [],
+      settings: { provider: 'openai', model: 'gpt-5.2', keys: {} }, apiKey: 'k', system: 'S', history: [],
       text: 'Explain this setting.', onEvent: () => {}, executeTool: vi.fn(),
     });
 
@@ -717,7 +717,7 @@ describe('streamChat tool loop', () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(okStream(turn))));
 
     const metrics = await streamChat({
-      settings: { provider: 'deepseek', model: 'deepseek-v4-flash', apiKeyEnc: '' },
+      settings: { provider: 'deepseek', model: 'deepseek-v4-flash', keys: {} },
       apiKey: 'k', system: 'S', history: [], text: 'Explain this setting.',
       onEvent: () => {}, executeTool: vi.fn(),
     });
@@ -738,7 +738,7 @@ describe('streamChat tool loop', () => {
       return Promise.resolve(okStream(openAiTextTurn(turn++ === 0 ? wrong : corrected)));
     }));
     const executeTool = vi.fn(async (_call: ToolCall): Promise<ToolResult> => ({ content: 'Preview succeeded', isError: false }));
-    const openAiSettings: AiSettings = { provider: 'deepseek', model: 'deepseek-v4-flash', apiKeyEnc: '' };
+    const openAiSettings: AiSettings = { provider: 'deepseek', model: 'deepseek-v4-flash', keys: {} };
 
     await streamChat({
       settings: openAiSettings, apiKey: 'k', system: 'S', history: [], text: 'Add a risk table here.',
@@ -765,7 +765,7 @@ describe('streamChat tool loop', () => {
       return Promise.resolve(okStream(turn++ === 0 ? openAiTextTurn(wrong) : openAiSubmitTurn(corrected)));
     }));
     const executeTool = vi.fn(async (): Promise<ToolResult> => ({ content: 'Preview succeeded', isError: false }));
-    const openAiSettings: AiSettings = { provider: 'deepseek', model: 'deepseek-v4-flash', apiKeyEnc: '' };
+    const openAiSettings: AiSettings = { provider: 'deepseek', model: 'deepseek-v4-flash', keys: {} };
 
     await streamChat({
       settings: openAiSettings,
@@ -809,7 +809,7 @@ describe('streamChat tool loop', () => {
       }
       return { content: 'Preview succeeded', isError: false };
     });
-    const openAiSettings: AiSettings = { provider: 'deepseek', model: 'deepseek-v4-flash', apiKeyEnc: '' };
+    const openAiSettings: AiSettings = { provider: 'deepseek', model: 'deepseek-v4-flash', keys: {} };
 
     await streamChat({
       settings: openAiSettings,
@@ -851,7 +851,7 @@ describe('streamChat tool loop', () => {
       : { content: 'Preview succeeded', isError: false });
 
     await streamChat({
-      settings: { provider: 'deepseek', model: 'deepseek-v4-flash', apiKeyEnc: '' },
+      settings: { provider: 'deepseek', model: 'deepseek-v4-flash', keys: {} },
       apiKey: 'k',
       system: 'S',
       history: [],
@@ -885,7 +885,7 @@ describe('streamChat tool loop', () => {
       : { content: 'Preview succeeded', isError: false });
 
     await streamChat({
-      settings: { provider: 'deepseek', model: 'deepseek-v4-flash', apiKeyEnc: '' },
+      settings: { provider: 'deepseek', model: 'deepseek-v4-flash', keys: {} },
       apiKey: 'k',
       system: 'S',
       history: [],
@@ -924,7 +924,7 @@ describe('streamChat tool loop', () => {
       : { content: 'Preview succeeded', isError: false });
 
     await streamChat({
-      settings: { provider: 'deepseek', model: 'deepseek-v4-flash', apiKeyEnc: '' },
+      settings: { provider: 'deepseek', model: 'deepseek-v4-flash', keys: {} },
       apiKey: 'k',
       system: 'S',
       history: [],
@@ -962,7 +962,7 @@ describe('streamChat tool loop', () => {
     let turn = 0;
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(okStream(turn++ === 0 ? OPENAI_DSML_ONLY_TURN : OPENAI_TEXT_TURN))));
     const events: AiChatEvent[] = [];
-    const openAiSettings: AiSettings = { provider: 'deepseek', model: 'deepseek-v4-flash', apiKeyEnc: '' };
+    const openAiSettings: AiSettings = { provider: 'deepseek', model: 'deepseek-v4-flash', keys: {} };
 
     const metrics = await streamChat({
       settings: openAiSettings, apiKey: 'k', system: 'S', history: [], text: 'go',
@@ -991,7 +991,7 @@ describe('streamChat tool loop', () => {
   it('does not emit OpenAI-compatible narration from an intermediate tool turn', async () => {
     let round = 0;
     const bodies: any[] = [];
-    const openAiSettings: AiSettings = { provider: 'deepseek', model: 'deepseek-v4-flash', apiKeyEnc: '' };
+    const openAiSettings: AiSettings = { provider: 'deepseek', model: 'deepseek-v4-flash', keys: {} };
     vi.stubGlobal('fetch', vi.fn((_u: string, init: any) => {
       const body = JSON.parse(init.body);
       bodies.push(body);
@@ -1004,12 +1004,13 @@ describe('streamChat tool loop', () => {
 
     expect(events.filter(event => event.kind === 'text-delta')).toEqual([{ kind: 'text-delta', delta: 'Final' }]);
     expect(JSON.stringify(events)).not.toContain('I will inspect');
-    expect(bodies[0].parallel_tool_calls).toBe(false);
+    // Discovery turns use the provider default (parallel calls allowed).
+    expect(bodies[0].parallel_tool_calls).toBeUndefined();
   });
 
   it.each([
     ['Anthropic', settings, ANTHROPIC_THINK_TURN],
-    ['OpenAI-compatible', { provider: 'deepseek', model: 'deepseek-v4-flash', apiKeyEnc: '' } as AiSettings, OPENAI_THINK_TURN],
+    ['OpenAI-compatible', { provider: 'deepseek', model: 'deepseek-v4-flash', keys: {} } as AiSettings, OPENAI_THINK_TURN],
   ])('strips final %s reasoning while retaining the answer', async (_dialect, dialectSettings, finalTurn) => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(okStream(finalTurn))));
     const events: AiChatEvent[] = [];
@@ -1023,7 +1024,7 @@ describe('streamChat tool loop', () => {
 
   it.each([
     ['Anthropic', settings, TEXT_TURN],
-    ['OpenAI-compatible', { provider: 'deepseek', model: 'deepseek-v4-flash', apiKeyEnc: '' } as AiSettings, OPENAI_TEXT_TURN],
+    ['OpenAI-compatible', { provider: 'deepseek', model: 'deepseek-v4-flash', keys: {} } as AiSettings, OPENAI_TEXT_TURN],
   ])('emits a clean final %s answer unchanged', async (_dialect, dialectSettings, finalTurn) => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(okStream(finalTurn))));
     const events: AiChatEvent[] = [];
@@ -1040,7 +1041,7 @@ describe('streamChat tool loop', () => {
       return Promise.resolve(okStream(OPENAI_TEXT_TURN));
     }));
     const customSettings: AiSettings = {
-      provider: 'custom', model: 'small', apiKeyEnc: '',
+      provider: 'custom', model: 'small', keys: {},
       customProvider: {
         name: 'Custom', vendor: 'Vendor', apiType: 'openai',
         models: [{ id: 'small', name: 'Small', url: 'https://ai.example.test/v1', toolCalling: true, maxOutputTokens: 768, maxTokensParam: 'max_tokens' }],
@@ -1199,7 +1200,8 @@ describe('streamChat tool loop', () => {
 
     const remaining = bodies[1].tools.map((tool: any) => tool.name);
     expect(remaining).toEqual(expect.arrayContaining(['read_type', 'read_object', 'search_objects']));
-    expect(bodies[1].tool_choice).toEqual({ type: 'auto', disable_parallel_tool_use: true });
+    // Discovery turns allow parallel read-only calls.
+    expect(bodies[1].tool_choice).toEqual({ type: 'auto' });
   });
 
   it('ends discovery after a state-changing Preview but still Previews the final exact ticket', async () => {

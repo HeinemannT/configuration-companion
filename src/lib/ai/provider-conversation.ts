@@ -5,12 +5,21 @@
  * the shared orchestrator.
  */
 
-import { streamAnthropicTurn, type AnthropicContentBlock, type AnthropicMessage } from './anthropic';
+import {
+  MAX_PAUSE_CONTINUATIONS,
+  streamAnthropicTurn,
+  type AnthropicContentBlock,
+  type AnthropicEffort,
+  type AnthropicMessage,
+  type AnthropicServerTool,
+  type ServerToolTrace,
+} from './anthropic';
 import { streamOpenAiTurn, type OpenAiMessage } from './openai-compat';
+import type { ProviderErrorContext } from './provider-errors';
 import { scrubModelReasoning, ToolMarkupScrubber } from './scrub';
 import { toAnthropicTools, toOpenAiTools, type ToolDef } from './tool-contracts';
 import { toolResultForModel, type ToolCall, type ToolResult } from './tools';
-import type { AiChatTurn, AiProviderTiming, AiTokenUsage } from './types';
+import type { AiChatTurn, AiProviderTiming, AiTokenUsage, AiWebSource } from './types';
 
 export interface ProviderToolSelection {
   tools: ToolDef[];
@@ -26,6 +35,12 @@ export interface ProviderConversationTurn {
   /** Concrete provider response model. Important when the requested model is
    * a router rather than a fixed model id. */
   resolvedModel?: string;
+  /** Pages the provider's web tools cited or read on this turn. */
+  sources?: AiWebSource[];
+  /** Provider-run tool calls (web search / fetch), for the tool trace. */
+  serverTools?: ServerToolTrace[];
+  /** Why the provider stopped (`end_turn`, `tool_use`, `max_tokens`, ...). */
+  stopReason?: string | null;
   appendAssistant: () => void;
 }
 
@@ -45,9 +60,30 @@ interface ConversationBaseOptions {
   history: readonly AiChatTurn[];
   user: string;
   signal?: AbortSignal;
+  errorContext?: ProviderErrorContext;
+  /** Called before a request is repeated after a temporary failure. */
+  onRetry?: () => void;
 }
 
-export function createAnthropicConversation(options: ConversationBaseOptions): ProviderConversation {
+interface AnthropicConversationOptions extends ConversationBaseOptions {
+  /** The built-in Anthropic API (not a custom compatible endpoint). */
+  firstParty?: boolean;
+  /** Web search / web fetch, offered whenever discovery tools are. */
+  serverTools?: AnthropicServerTool[];
+  effort?: AnthropicEffort;
+}
+
+function addUsage(target: AiTokenUsage, usage: AiTokenUsage): void {
+  target.inputTokens += usage.inputTokens;
+  target.cachedInputTokens += usage.cachedInputTokens;
+  target.cacheWriteTokens += usage.cacheWriteTokens;
+  target.outputTokens += usage.outputTokens;
+  target.reasoningTokens += usage.reasoningTokens;
+  if (usage.webSearchRequests) target.webSearchRequests = (target.webSearchRequests ?? 0) + usage.webSearchRequests;
+  if (usage.webFetchRequests) target.webFetchRequests = (target.webFetchRequests ?? 0) + usage.webFetchRequests;
+}
+
+export function createAnthropicConversation(options: AnthropicConversationOptions): ProviderConversation {
   const messages: AnthropicMessage[] = options.history.map(turn => ({ role: turn.role, content: turn.text }));
   messages.push({ role: 'user', content: options.user });
 
@@ -55,26 +91,50 @@ export function createAnthropicConversation(options: ConversationBaseOptions): P
     requestTurn: async selection => {
       const scrubber = new ToolMarkupScrubber();
       let text = '';
-      const turn = await streamAnthropicTurn({
+      // Web tools ride along only while ordinary discovery tools are offered:
+      // never on a forced terminal or a tools-off final turn.
+      const discovery = selection.tools.length > 0 && !selection.forceTool && !selection.requireTool;
+      const request = () => streamAnthropicTurn({
         baseUrl: options.baseUrl,
+        firstParty: options.firstParty,
         model: options.model,
         maxTokens: options.maxTokens,
         apiKey: options.apiKey,
         system: options.system,
         messages,
         tools: toAnthropicTools(selection.tools),
+        ...(discovery && options.serverTools?.length ? { serverTools: options.serverTools } : {}),
         ...(selection.forceTool ? { forceTool: selection.forceTool } : {}),
         ...(selection.requireTool ? { requireTool: true } : {}),
+        ...(options.effort ? { effort: options.effort } : {}),
+        ...(options.errorContext ? { errorContext: options.errorContext } : {}),
+        ...(options.onRetry ? { onRetry: options.onRetry } : {}),
         signal: options.signal,
         onText: delta => { text += scrubber.feed(delta); },
       });
+      let turn = await request();
+      const usage = { ...turn.usage };
+      const sources = [...turn.sources];
+      const serverTools = [...turn.serverTools];
+      // A long server-tool turn pauses (`pause_turn`). Send the paused content
+      // back unchanged and the server resumes; no extra user message.
+      for (let resumed = 0; turn.stopReason === 'pause_turn' && resumed < MAX_PAUSE_CONTINUATIONS; resumed++) {
+        if (turn.content.length) messages.push({ role: 'assistant', content: turn.content });
+        turn = await request();
+        addUsage(usage, turn.usage);
+        sources.push(...turn.sources.filter(source => !sources.some(seen => seen.url === source.url)));
+        serverTools.push(...turn.serverTools);
+      }
       text += scrubber.flush();
       return {
         text: scrubModelReasoning(text),
         toolCalls: turn.toolCalls,
-        usage: turn.usage,
+        usage,
         timing: turn.timing,
+        stopReason: turn.stopReason,
         ...(turn.resolvedModel ? { resolvedModel: turn.resolvedModel } : {}),
+        ...(sources.length ? { sources } : {}),
+        ...(serverTools.length ? { serverTools } : {}),
         appendAssistant: () => {
           if (turn.content.length) messages.push({ role: 'assistant', content: turn.content });
         },
@@ -125,6 +185,8 @@ export function createOpenAiConversation(options: OpenAiConversationOptions): Pr
         tools: toOpenAiTools(selection.tools),
         ...(selection.forceTool ? { forceTool: selection.forceTool } : {}),
         ...(selection.requireTool ? { requireTool: true } : {}),
+        ...(options.errorContext ? { errorContext: options.errorContext } : {}),
+        ...(options.onRetry ? { onRetry: options.onRetry } : {}),
         signal: options.signal,
         onText: delta => { text += scrubber.feed(delta); },
       });
@@ -134,6 +196,7 @@ export function createOpenAiConversation(options: OpenAiConversationOptions): Pr
         toolCalls: turn.toolCalls,
         usage: turn.usage,
         timing: turn.timing,
+        stopReason: turn.finishReason,
         ...(turn.resolvedModel ? { resolvedModel: turn.resolvedModel } : {}),
         appendAssistant: () => { messages.push(turn.assistantMessage); },
       };

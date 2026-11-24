@@ -31,19 +31,28 @@ export function sharedPrefix(neighbourIds: readonly string[]): string {
   return n >= 2 && n * 2 >= neighbourIds.length ? best : '';
 }
 
+/** A name to propose an ID for, with what the ID gets beyond it: `fallbackPrefix` where the
+ *  neighbours share no prefix (`icon_` for a library image), `suffix` at its end (a colour). */
+export interface IdName { name: string; fallbackPrefix?: string; suffix?: string }
+
 /**
- * One ID per name, in the order given: the neighbours' prefix, then the
- * name as an ID part. An ID already taken (by a neighbour, by anything in
+ * One ID per name, in the order given: the neighbours' prefix (or the name's
+ * fallback prefix when they share none), then the name as an ID part, then
+ * the name's suffix. An ID already taken (by a neighbour, by anything in
  * `taken` or by an earlier name of this call) gets `_2`, `_3` …
  * `neighbourIds` give the style; `taken` are all IDs of the workspace
  * that are known.
  */
-export function proposeIds(names: readonly string[], neighbourIds: readonly string[], taken: Iterable<string> = []): string[] {
+export function proposeIds(names: ReadonlyArray<string | IdName>, neighbourIds: readonly string[], taken: Iterable<string> = []): string[] {
   const used = new Set<string>([...neighbourIds, ...taken].map(s => s.toLowerCase()));
-  const prefix = sharedPrefix(neighbourIds);
-  return names.map(name => {
+  const shared = sharedPrefix(neighbourIds);
+  return names.map(entry => {
+    const { name, fallbackPrefix = '', suffix = '' } = typeof entry === 'string' ? { name: entry } : entry;
+    const prefix = shared || fallbackPrefix;
     let part = idPart(name) || 'file';
     if (prefix && part.startsWith(prefix)) part = part.slice(prefix.length) || part;
+    const end = idPart(suffix);
+    if (end && !part.endsWith(`_${end}`)) part = `${part}_${end}`;
     let base = prefix + part;
     if (/^[0-9]/.test(base)) base = `img_${base}`;
     let id = base, n = 2;

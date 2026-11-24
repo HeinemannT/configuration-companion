@@ -3,7 +3,7 @@
  * gone when the tab closes, the same place Blueprint keeps its edit target and its resume note). Reading
  * is defensive: storage may be blocked, hold another version, or hold anything at all.
  */
-import type { PtCopySnapshot, PtDraft, PtGridPlace, PtInk, PtMark, PtMeaning, PtOp, PtRawPlace, PtWidgetKind, PtPlace, PtPoint, PtRefEntry, PtSent, PtSketchRef } from './types';
+import type { PtArrow, PtSide, PtCopySnapshot, PtDraft, PtGridPlace, PtInk, PtMark, PtMeaning, PtOp, PtRawPlace, PtWidgetKind, PtPlace, PtPoint, PtRefEntry, PtSent, PtSketchRef } from './types';
 
 export const MARKS_KEY = 'crev_pt_marks:';
 export const COPY_KEY = 'crev_pt_copy:';
@@ -55,6 +55,13 @@ function grid(v: unknown): PtGridPlace {
   };
 }
 
+function arrowOf(v: unknown): PtArrow | undefined {
+  if (!isObj(v)) return undefined;
+  const n = v.near, sides: PtSide[] = ['above', 'below', 'left of', 'right of'];
+  const near = isObj(n) && str(n.id) && n.id && sides.includes(n.side as PtSide) ? { near: { id: n.id, side: n.side as PtSide } } : {};
+  return { ...(str(v.from) && v.from ? { from: v.from } : {}), ...(str(v.to) && v.to ? { to: v.to } : {}), ...(isObj(v.end) ? { end: grid(v.end) } : {}), ...near };
+}
+
 function ink(v: unknown): PtInk | undefined {
   if (!isObj(v) || !Array.isArray(v.strokes)) return undefined;
   const strokes = v.strokes.flatMap(s => {
@@ -94,6 +101,8 @@ export function decodeMark(v: unknown): PtMark | null {
   };
   const mean = meaning(v.meaning); if (mean) m.meaning = mean;
   if (str(v.reading) && v.reading) m.reading = v.reading;
+  if (v.pointer === true) m.pointer = true;
+  const arrow = arrowOf(v.arrow); if (arrow) m.arrow = arrow;
   const i = ink(v.ink); if (i) m.ink = i;
   if (v.staged === true) m.staged = true;
   const sent = sentOf(v.sent); if (sent) m.sent = sent;

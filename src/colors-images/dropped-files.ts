@@ -3,8 +3,16 @@
  * name and bytes. Only image files are kept by the caller; this reads
  * what it is given.
  */
+import { isImageName } from '../lib/colors-images/image-files';
 
-export interface PickedFile { name: string; bytes: Uint8Array }
+export interface PickedFile {
+  name: string;
+  bytes: Uint8Array;
+  /** The description the image gets in BMP (a library icon's licence note). */
+  description?: string;
+  /** Set for an image from the library: the one colour it is added in ('' for none). */
+  library?: { hex: string };
+}
 
 async function bytesOf(file: File): Promise<PickedFile> {
   return { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) };
@@ -43,4 +51,14 @@ export async function filesFromDrop(dt: DataTransfer): Promise<PickedFile[]> {
 
 export async function filesFromInput(list: FileList): Promise<PickedFile[]> {
   return Promise.all([...list].map(bytesOf));
+}
+
+/** The files of a picked folder (a directory input): every file in it and
+ *  its subfolders, ordered by their path, as a dropped folder gives them.
+ *  Only image files are read; any other file is passed on by name with no
+ *  bytes, so the caller leaves it out and says so as it does for a drop. */
+export async function filesFromFolder(list: FileList | readonly File[]): Promise<PickedFile[]> {
+  const path = (f: File) => (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name;
+  const files = [...list].sort((a, b) => path(a).localeCompare(path(b), undefined, { numeric: true }));
+  return Promise.all(files.map(f => (isImageName(f.name) ? bytesOf(f) : Promise.resolve({ name: f.name, bytes: new Uint8Array() }))));
 }

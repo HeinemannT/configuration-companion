@@ -18,6 +18,7 @@
  */
 
 import type { InspectorSettings, ServerProfile } from './types';
+import { redactAiSettings } from './ai/providers';
 import { getCtx } from './sw-context';
 import { clearCommandAuthSession } from './bmp-auth';
 import { markPortalSignedOut, noteLoginEvidence, normalizeUrl, resetConnectionState, runAuthTest } from './connection';
@@ -49,7 +50,8 @@ export function createSettingsReady(): { settingsReady: Promise<void>; resolveSe
  *  - v0 → v1: flat {bmpUrl,bmpUser,bmpPass} → a single profile in `profiles[]`.
  *  - v1 → v2: legacy auth strategy.
  *  - v2 → v3: AI settings.
- *  - v3 → v4: explicit portal-vs-stored command identity. */
+ *  - v3 → v4: explicit portal-vs-stored command identity.
+ *  - v4 → v5: one encrypted AI key per provider. */
 export function migrateStoredSettings(s: Record<string, unknown>): boolean {
   let migrated = false;
   // The standalone Paint Format feature was removed in favor of Blueprint's
@@ -110,7 +112,34 @@ export function migrateStoredSettings(s: Record<string, unknown>): boolean {
     s.schemaVersion = 4;
     migrated = true;
   }
+  // v4 → v5: one AI key per provider. The single stored key moves, unchanged
+  // (still encrypted), to its provider's entry together with that provider's
+  // model and last check. Nothing is decrypted or dropped.
+  if ((s.schemaVersion as number) < 5) {
+    if (s.ai && typeof s.ai === 'object' && !Array.isArray(s.ai)) s.ai = migrateAiSettingsToV5(s.ai as Record<string, unknown>);
+    s.schemaVersion = 5;
+    migrated = true;
+  }
   return migrated;
+}
+
+/** v4 `{ provider, model, apiKeyEnc, lastTest?, customProvider? }` → v5
+ *  `{ provider, model, keys: { [provider]: { apiKeyEnc, model, lastTest } } }`.
+ *  Idempotent: an object that already has `keys` keeps them. Exported for tests. */
+export function migrateAiSettingsToV5(ai: Record<string, unknown>): Record<string, unknown> {
+  const { apiKeyEnc, lastTest, ...rest } = ai;
+  const keys = (rest.keys && typeof rest.keys === 'object' && !Array.isArray(rest.keys))
+    ? { ...(rest.keys as Record<string, unknown>) }
+    : {};
+  const provider = typeof rest.provider === 'string' ? rest.provider : '';
+  if (provider && typeof apiKeyEnc === 'string' && apiKeyEnc && !keys[provider]) {
+    keys[provider] = {
+      apiKeyEnc,
+      ...(typeof rest.model === 'string' && rest.model ? { model: rest.model } : {}),
+      ...(lastTest && typeof lastTest === 'object' ? { lastTest: { ...(lastTest as object), ...(typeof rest.model === 'string' ? { model: rest.model } : {}) } } : {}),
+    };
+  }
+  return { ...rest, keys };
 }
 
 // ── Load state ──────────────────────────────────────────────────
@@ -326,7 +355,7 @@ export function redactSettings(s: InspectorSettings, activeProfileId: string = s
       const { clearPassword: _clear, ...rest } = p;
       return { ...rest, bmpPass: '', hasStoredPassword: !!p.bmpPass };
     }),
-    ...(s.ai ? { ai: { ...s.ai, apiKeyEnc: s.ai.apiKeyEnc ? 'set' : '' } } : {}),
+    ...(s.ai ? { ai: redactAiSettings(s.ai) } : {}),
   };
 }
 

@@ -102,12 +102,14 @@ export function workStatusForMessage(msg: InspectorMessage): WorkStatus | null {
       return settled(msg.ok ? 'Flow options ready' : 'Flow options failed');
 
     case 'AI_TEST': return working('Testing AI…');
+    case 'AI_CHECK_KEY': return working('Checking the AI key…');
     case 'AI_LIST_MODELS': return working('Loading AI models…');
     case 'AI_CHAT_SEND':
     case 'AI_REQUEST':
       return working('AI working…');
     case 'AI_PREVIEW_CODE': return working('Previewing code…');
     case 'AI_TEST_RESULT': return settled(msg.ok ? 'AI connected' : 'AI test failed');
+    case 'AI_KEY_CHECKED': return settled(msg.ok ? 'AI key works' : 'AI key check failed');
     case 'AI_MODELS_RESULT': return settled(msg.ok ? 'AI models loaded' : 'AI models failed');
     case 'AI_PREVIEW_RESULT': return settled(msg.ok ? 'Preview ready' : 'Preview failed');
 

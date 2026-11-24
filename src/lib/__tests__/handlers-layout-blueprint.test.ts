@@ -317,6 +317,40 @@ describe('Blueprint request version gates', () => {
     load.mockRestore();
   });
 
+  it('a newer Blueprint load from the same tab ends the older one (Point and tell loads and other tabs are left alone)', async () => {
+    const h = makeHarness({ supportsLookup: true });
+    h.ctx.client.serverUrl = 'https://a.test/';
+    const service = await import('../layout-service');
+    const signals: Array<AbortSignal | undefined> = [];
+    const finishes: Array<() => void> = [];
+    const load = vi.spyOn(service, 'loadPage').mockImplementation((_c, _rid, _p, _t, signal) => {
+      signals.push(signal);
+      return new Promise(resolve => { finishes.push(() => resolve({ kind: 'page', ctx: { pageClass: 'Scorecard', pageId: 'page' }, load: {} } as any)); });
+    });
+    const { getHandler } = await import('../handler-registry');
+    const { LAYOUT_LOAD_SUPERSEDED } = await import('../handlers/layout');
+    const run = (rid: string, senderTabId: number, extra: Record<string, unknown> = {}) => {
+      const respond = vi.fn();
+      const done = getHandler('LAYOUT_LOAD')!({ type: 'LAYOUT_LOAD', rid, ...extra } as any, respond, { senderTabId, isOneShot: true });
+      return { respond, done };
+    };
+    const first = run('41', 5);
+    const pointTell = run('41', 5, { for: 'point-tell' });
+    const otherTab = run('41', 6);
+    const second = run('42', 5);
+    expect(signals[0]?.aborted).toBe(true);
+    expect(signals[1]?.aborted).toBe(false);
+    expect(signals[2]?.aborted).toBe(false);
+    expect(signals[3]?.aborted).toBe(false);
+    for (const f of finishes) f();
+    await Promise.all([first.done, pointTell.done, otherTab.done, second.done]);
+    expect(first.respond).toHaveBeenCalledWith({ type: 'LAYOUT_LOAD_RESULT', ok: false, error: LAYOUT_LOAD_SUPERSEDED });
+    for (const r of [pointTell, otherTab, second]) expect(r.respond).toHaveBeenCalledWith(expect.objectContaining({ ok: true }));
+    // A dropped load is not an error worth logging.
+    expect(h.ctx.logActivity).not.toHaveBeenCalledWith('error', expect.anything(), expect.anything());
+    load.mockRestore();
+  });
+
   it('rejects load and apply requests before executing Blueprint code on an old BMP', async () => {
     makeHarness({ supportsLookup: false });
     const { getHandler } = await import('../handler-registry');

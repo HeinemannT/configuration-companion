@@ -37,21 +37,49 @@ export type AiLang = 'extended' | 'html' | 'javascript';
 
 export type AiIntent = 'ask' | 'edit';
 
-/** Persisted AI configuration (stored inside `crev_settings.ai`). The key is
- *  stored AES-GCM encrypted; it is decrypted in the service worker only, on the
- *  way to a provider request. */
-export interface AiSettings {
-  provider: AiProviderId;
-  model: string;
-  /** Encrypted API key (never plaintext at rest, never sent to a UI surface). */
+/** Outcome of the last key check for one provider. Key-free, so it may be
+ *  shown in the panel after a reload. */
+export interface AiLastTest {
+  ok: boolean;
+  ms: number;
+  at: number;
+  /** Model the check ran with. A different active model means "not checked". */
+  model?: string;
+}
+
+/** What Companion keeps for one provider: its own encrypted key, the model
+ *  last used with it, and its last check. Switching the active provider never
+ *  touches another provider's entry. */
+export interface AiProviderKey {
+  /** AES-GCM ciphertext (src/lib/crypto.ts). Pages see only the marker 'set'. */
   apiKeyEnc: string;
+  model?: string;
+  lastTest?: AiLastTest;
+}
+
+/** Persisted AI configuration (stored inside `crev_settings.ai`), schema v5.
+ *  Each provider keeps its own encrypted key; keys are decrypted in the
+ *  service worker only, on the way to a provider request. */
+export interface AiSettings {
+  /** The provider the assistant uses now. */
+  provider: AiProviderId;
+  /** The active provider's model (mirrors `keys[provider].model`). */
+  model: string;
+  /** One entry per provider that has a key. Removing a key is explicit. */
+  keys: Partial<Record<AiProviderId, AiProviderKey>>;
   /** One optional user-authored provider catalogue. Its key lives in
-   *  apiKeyEnc, never in this JSON-shaped metadata. */
+   *  `keys.custom`, never in this JSON-shaped metadata. */
   customProvider?: AiCustomProvider;
-  /** Last connection-test outcome — persisted (key-free) so the Connect tab's
-   *  AI card can render READY + latency after a reload. Cleared on any config
-   *  save (a new provider/model/key invalidates a prior test). */
-  lastTest?: { ok: boolean; ms: number; at: number };
+  /** Web access through the provider's own server tools. Absent means on
+   *  where the provider supports it. */
+  webAccess?: boolean;
+}
+
+/** One web page the model cited or read in an answer. Display-only; the
+ *  panel renders only these URLs as links. */
+export interface AiWebSource {
+  url: string;
+  title?: string;
 }
 
 /** One sibling code property on the same object, truncated for context. */
@@ -161,6 +189,10 @@ export interface AiTokenUsage {
   cacheWriteTokens: number;
   outputTokens: number;
   reasoningTokens: number;
+  /** Provider-side web tool use (Anthropic `usage.server_tool_use`). Web
+   * searches are billed per search by the provider. */
+  webSearchRequests?: number;
+  webFetchRequests?: number;
 }
 
 /** Network timing for one provider request. `firstByteMs` ends when fetch
@@ -194,6 +226,12 @@ export interface AiTurnMetrics {
   cacheWriteTokens: number;
   outputTokens: number;
   reasoningTokens: number;
+  /** Provider-side web searches and page reads (web access only). */
+  webSearchRequests?: number;
+  webFetchRequests?: number;
+  /** Provider requests repeated after an overload, rate limit or network
+   * failure, honouring retry-after. */
+  transportRetries?: number;
   /** Dependency-free estimate used to bound the initial provider transcript. */
   estimatedInputCharacters?: number;
   /** Oldest whole transcript turns omitted to respect the configured context. */
@@ -277,6 +315,9 @@ export interface AiChatTurn {
   /** Verified identities cited by this turn. Display-only and never inferred
    *  from prose. User turns receive only identities from their attached context. */
   objects?: ObjectReference[];
+  /** Web pages the provider searched or read for this answer. Display-only;
+   *  never replayed to the provider. */
+  sources?: AiWebSource[];
 }
 
 /** Streaming events the chat orchestrator emits as it runs one user turn.
@@ -293,5 +334,7 @@ export type AiChatEvent =
   /** The bounded repair attempt also failed. Preserve the proposal as a
    * non-runnable card so its code and BMP error remain available. */
   | { kind: 'change-preview-failed'; code: string; resultText: string }
+  /** Web pages behind the final answer (web access only). */
+  | { kind: 'sources'; sources: AiWebSource[] }
   | { kind: 'done' }
   | { kind: 'error'; message: string };

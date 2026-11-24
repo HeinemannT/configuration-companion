@@ -1,6 +1,6 @@
 {
   "name": "configuration-companion",
-  "version": "0.21.0",
+  "version": "0.22.0",
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
@@ -29,6 +29,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@phosphor-icons/core": "2.1.1",
     "@types/chrome": "^0.1.43",
     "@types/js-beautify": "^1.14.3",
     "@types/node": "^25.9.9",

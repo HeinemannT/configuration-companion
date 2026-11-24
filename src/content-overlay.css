@@ -1004,3 +1004,12 @@ body.crev-task-open #crev-tooltip.crev-overlay-blocked {
 .crev-tt-unread .ui-unread-t { text-decoration: underline dashed; text-underline-offset: 2px; }
 .crev-tt-unread .ui-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .crev-tt-unread .ui-failed-retry { font: inherit; font-style: normal; padding: 0 6px; border: 1px solid #8d8d8d; border-radius: 4px; background: #fff; color: #161616; cursor: pointer; line-height: 18px; }
+/* A small badge (the tile alone, on a narrow widget) of a widget that points at a linked object
+   keeps the cap: tile and cap side by side, the linked ID on hover as usual. Only the cap of the
+   rail shows; the other squares stay away as on every small badge. */
+.crev-label--linked.crev-label--compact .crev-meta,
+.crev-label--linked.crev-label--fit .crev-meta { display: inline-flex; }
+.crev-label--linked.crev-label--compact .crev-meta > :not(.crev-cascade),
+.crev-label--linked.crev-label--fit .crev-meta > :not(.crev-cascade) { display: none; }
+.crev-label--linked.crev-label--compact .crev-tile,
+.crev-label--linked.crev-label--fit .crev-tile { border-radius: 3px 0 0 3px; }

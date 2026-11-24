@@ -62,6 +62,9 @@ export interface BadgeInput {
   /** The visible top at the badge: viewport top or the bottom of a page
    *  element covering the badge. */
   visibleTop: number;
+  /** Width of the badge as a tile only, when it is wider than FIT_W: a badge with a linked-object
+   *  cap keeps the cap beside its tile. */
+  tileW?: number;
   /** Small hosts only (tabs, links, buttons): the box of the host's own
    *  text, which the badge must not cover (kept TEXT_CLEARANCE away). */
   text?: Box;
@@ -101,6 +104,10 @@ const grow = (b: Box, by: number): Box => ({ top: b.top - by, bottom: b.bottom +
 /** Size of a badge shown as its type tile only (crev-label--fit). */
 export const FIT_W = 22;
 export const FIT_H = 20;
+/** The linked-object cap welded to a badge (content-overlay.css: .crev-cascade). */
+export const LINKED_CAP_W = 20;
+/** A host this low or lower (a form field) has no room for a full badge moved down into it. */
+export const SHALLOW_HOST = 160;
 /** Space kept between a badge and the text of the element it marks. */
 export const TEXT_CLEARANCE = 4;
 
@@ -115,7 +122,7 @@ export const TEXT_CLEARANCE = 4;
  *  A full badge moved sideways stays on its host (`host`, left to right):
  *  past the host's edge it would read as its neighbour's badge.
  *  Null: nothing fits. */
-export function clearOf(natural: Box, obstacles: readonly Box[], clip: Box, others: readonly Box[] = [], text?: Box, anchor: Anchor = 'right', host?: Box, textW?: number): Offset | null {
+export function clearOf(natural: Box, obstacles: readonly Box[], clip: Box, others: readonly Box[] = [], text?: Box, anchor: Anchor = 'right', host?: Box, textW?: number, tileW: number = FIT_W): Offset | null {
   const free = (b: Box) => inside(b, clip) && !obstacles.some(o => overlaps(b, o)) && !others.some(o => overlaps(b, o));
   if (free(natural)) return { dx: 0, dy: 0 };
   const onHost = (b: Box) => !host || (b.left >= host.left && b.right <= host.right);
@@ -132,7 +139,7 @@ export function clearOf(natural: Box, obstacles: readonly Box[], clip: Box, othe
   };
   // A small element (with text) does not move its full badge away: it
   // shrinks it to the tile first, next to the text.
-  const tile: Box = tileOf(natural, anchor);
+  const tile: Box = tileOf(natural, anchor, tileW);
   if (!text) {
     const side = sideOf(natural);
     // Sideways on the host first; then the tile in the badge's own corner
@@ -149,7 +156,10 @@ export function clearOf(natural: Box, obstacles: readonly Box[], clip: Box, othe
       }
     }
     if (host && free(tile)) return { dx: 0, dy: 0, fit: true };
-    for (const c of side) if (c.dx === 0 && free(shift(natural, c.dx, c.dy))) return c;
+    // A full badge below the obstacles is fine inside a widget. A shallow host (a form field) has
+    // its input there: it takes the tile instead (below).
+    const shallow = !!host && host.bottom - host.top <= SHALLOW_HOST;
+    if (!shallow) for (const c of side) if (c.dx === 0 && free(shift(natural, c.dx, c.dy))) return c;
   }
   const tiles: Offset[] = [{ dx: 0, dy: 0 }];
   if (text) {
@@ -166,10 +176,10 @@ export function clearOf(natural: Box, obstacles: readonly Box[], clip: Box, othe
 }
 
 /** The tile-only form of a badge: it keeps its anchor corner. */
-function tileOf(natural: Box, anchor: Anchor): Box {
+function tileOf(natural: Box, anchor: Anchor, tileW: number = FIT_W): Box {
   return anchor === 'left'
-    ? { top: natural.top, bottom: natural.top + FIT_H, left: natural.left, right: natural.left + FIT_W }
-    : { top: natural.top, bottom: natural.top + FIT_H, right: natural.right, left: natural.right - FIT_W };
+    ? { top: natural.top, bottom: natural.top + FIT_H, left: natural.left, right: natural.left + tileW }
+    : { top: natural.top, bottom: natural.top + FIT_H, right: natural.right, left: natural.right - tileW };
 }
 
 /** Clear of one text box only (a tab's label). */
@@ -236,10 +246,10 @@ export function layoutBadges(items: readonly BadgeInput[], viewportWidth: number
     const obstacles = [...(ownText ? [ownText] : []), ...neighbourTexts, ...(controls ?? [])];
     if (obstacles.length > 0) {
       const area = clip ?? { top: 0, left: 0, bottom: Infinity, right: viewportWidth };
-      const off = clearOf(base, obstacles, { ...area, top: Math.max(area.top, visibleTop) }, placed, text, anchor, host, nameW);
+      const off = clearOf(base, obstacles, { ...area, top: Math.max(area.top, visibleTop) }, placed, text, anchor, host, nameW, items[i].tileW);
       if (off) {
         const cut = off.squeeze != null && nameW != null ? { ...base, right: base.right - (nameW - off.squeeze) } : base;
-        placed.push(shift(off.fit ? tileOf(base, anchor) : cut, off.dx, off.dy));
+        placed.push(shift(off.fit ? tileOf(base, anchor, items[i].tileW) : cut, off.dx, off.dy));
         const name = off.fit ? undefined : off.squeeze ?? squeeze;
         out[i] = { dx: Math.round(dx + off.dx), dy: Math.round(dy + off.dy), ...(off.fit ? { fit: true } : {}), ...(name != null ? { squeeze: name } : {}) };
         continue;
@@ -415,6 +425,9 @@ function controlBoxes(host: Element, near: Box): Box[] {
   return out;
 }
 
+/** The caption of a form field in BMP's property editors (a styled wrapper named FieldLabel; older builds use a label). */
+const FIELD_CAPTION = '[class*="FieldLabel"], label, legend';
+
 /** A BMP tab (tab set) or an ARIA tab (dom-scanner's ANY_TAB_SELECTOR). */
 const TAB = ANY_TAB_SELECTOR;
 /** Levels above a tab searched for the strip that holds its siblings. */
@@ -514,10 +527,18 @@ export function runBadgeLayout(): void {
     const small = h.height <= SMALL_HOST;
     const text = small ? textBox(host) : undefined;
     const controls = controlBoxes(host, natural);
+    // A form field's badge must not cover the field's own caption (in a narrow form column the
+    // caption reaches under the badge): its text counts like a control.
+    if (label.classList.contains('crev-edit-field-label')) {
+      const caption = host.querySelector(FIELD_CAPTION);
+      const cb = caption ? textBox(caption) : undefined;
+      if (cb && overlaps(cb, grow(natural, NEAR))) controls.push(grow(cb, GAP));
+    }
     const group = text ? stripOf(host, strips) : undefined;
     inputs.push({
       natural, host: h, anchor,
       ...(textW != null ? { textW } : {}),
+      ...(label.classList.contains('crev-label--linked') ? { tileW: FIT_W + LINKED_CAP_W } : {}),
       ...(group != null ? { group } : {}),
       visibleTop: probeY < vh ? visibleTopAt(probeX, probeY, host, pinned) : 0,
       ...(text ? { text } : {}),

@@ -5,7 +5,7 @@
  * the sidepanel UI alike.
  */
 
-import type { AiApiType, AiCustomProvider, AiMaxTokensParam, AiProviderId, AiSettings } from './types';
+import type { AiApiType, AiCustomProvider, AiMaxTokensParam, AiProviderId, AiProviderKey, AiSettings } from './types';
 
 export type BuiltinProviderId = Exclude<AiProviderId, 'custom'>;
 
@@ -29,6 +29,12 @@ export interface ProviderMeta {
   maxOutputTokens?: number;
   /** OpenAI-compatible output-limit field. Defaults to max_completion_tokens. */
   maxTokensParam?: AiMaxTokensParam;
+  /** True only for the first-party Anthropic API: its server-side web search
+   *  and web fetch tools, refusal fallbacks and current API version. Custom
+   *  Anthropic-compatible endpoints are proxies that may not implement them. */
+  firstPartyAnthropic?: boolean;
+  /** Where the user manages keys and credit, for error copy. */
+  console?: string;
 }
 
 export const PROVIDERS: Record<BuiltinProviderId, ProviderMeta> = {
@@ -37,19 +43,24 @@ export const PROVIDERS: Record<BuiltinProviderId, ProviderMeta> = {
     label: 'Anthropic',
     baseUrl: 'https://api.anthropic.com',
     origin: 'https://api.anthropic.com/*',
-    defaultModel: 'claude-opus-4-8',
-    suggestedModels: ['claude-opus-4-8', 'claude-sonnet-5', 'claude-haiku-4-5'],
+    // Anthropic's current default model (claude-api skill, 2026-11).
+    defaultModel: 'claude-opus-5-5',
+    suggestedModels: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'],
     openAiCompat: false,
+    firstPartyAnthropic: true,
+    console: 'Claude Console',
   },
   openai: {
     id: 'openai',
     label: 'OpenAI',
     baseUrl: 'https://api.openai.com/v1',
     origin: 'https://api.openai.com/*',
+    // Static fallbacks only. The live model list is preferred.
     defaultModel: 'gpt-5.2',
     suggestedModels: ['gpt-5.2', 'gpt-5-mini'],
     openAiCompat: true,
     maxTokensParam: 'max_completion_tokens',
+    console: 'OpenAI dashboard',
   },
   deepseek: {
     id: 'deepseek',
@@ -57,9 +68,10 @@ export const PROVIDERS: Record<BuiltinProviderId, ProviderMeta> = {
     baseUrl: 'https://api.deepseek.com/v1',
     origin: 'https://api.deepseek.com/*',
     defaultModel: 'deepseek-v4-flash',
-    suggestedModels: ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-chat'],
+    suggestedModels: ['deepseek-v4-flash', 'deepseek-chat'],
     openAiCompat: true,
     maxTokensParam: 'max_tokens',
+    console: 'DeepSeek platform',
   },
   grok: {
     id: 'grok',
@@ -70,10 +82,152 @@ export const PROVIDERS: Record<BuiltinProviderId, ProviderMeta> = {
     suggestedModels: ['grok-4'],
     openAiCompat: true,
     maxTokensParam: 'max_completion_tokens',
+    console: 'xAI console',
   },
 };
 
 export const AI_PROVIDER_IDS: BuiltinProviderId[] = ['anthropic', 'openai', 'deepseek', 'grok'];
+
+// ── Per-provider keys (settings schema v5) ───────────────────────
+
+/** The active provider's encrypted key, or '' when it has none. */
+export function activeKeyEnc(ai: AiSettings | undefined): string {
+  return ai?.keys?.[ai.provider]?.apiKeyEnc ?? '';
+}
+
+/** True when the active provider has a key: the assistant is available. */
+export function hasActiveKey(ai: AiSettings | undefined): boolean {
+  return !!activeKeyEnc(ai);
+}
+
+/** AI settings as a page may see them: each provider's key is only the
+ *  marker 'set'. Fields are listed, not spread, so a key-bearing field added
+ *  later cannot slip through. */
+export function redactAiSettings(ai: AiSettings): AiSettings {
+  const keys: AiSettings['keys'] = {};
+  for (const [id, entry] of Object.entries(ai.keys ?? {}) as Array<[AiProviderId, AiProviderKey | undefined]>) {
+    if (!entry?.apiKeyEnc) continue;
+    keys[id] = {
+      apiKeyEnc: 'set',
+      ...(entry.model ? { model: entry.model } : {}),
+      ...(entry.lastTest ? { lastTest: { ...entry.lastTest } } : {}),
+    };
+  }
+  return {
+    provider: ai.provider,
+    model: ai.model,
+    keys,
+    ...(ai.customProvider ? { customProvider: ai.customProvider } : {}),
+    ...(ai.webAccess !== undefined ? { webAccess: ai.webAccess } : {}),
+  };
+}
+
+/** Providers that keep a key, in display order. */
+export function keyedProviders(ai: AiSettings | undefined): AiProviderId[] {
+  const ids: AiProviderId[] = [...AI_PROVIDER_IDS, 'custom'];
+  return ids.filter(id => !!ai?.keys?.[id]?.apiKeyEnc);
+}
+
+/** Display name of a provider, including the custom catalogue's own name. */
+export function providerLabel(id: AiProviderId, custom?: AiCustomProvider): string {
+  return id === 'custom' ? custom?.name ?? 'Custom endpoint' : PROVIDERS[id].label;
+}
+
+/** Key prefixes that identify a provider without doubt. DeepSeek keys and
+ *  legacy OpenAI keys both start with a bare `sk-`, so those are not guessed. */
+const KEY_PREFIXES: Array<[prefix: string, provider: BuiltinProviderId]> = [
+  ['sk-ant-', 'anthropic'],
+  ['xai-', 'grok'],
+  ['sk-proj-', 'openai'],
+  ['sk-svcacct-', 'openai'],
+];
+
+/** The provider a pasted key belongs to, when its prefix says so. */
+export function providerFromKey(key: string): BuiltinProviderId | null {
+  const trimmed = key.trim();
+  for (const [prefix, provider] of KEY_PREFIXES) {
+    if (trimmed.startsWith(prefix)) return provider;
+  }
+  return null;
+}
+
+/** Model ids from a provider's live list that can serve a chat with tools.
+ *  OpenAI lists embeddings, speech, image and moderation models too. */
+export function chatModels(provider: AiProviderId, ids: readonly string[]): string[] {
+  const unique = [...new Set(ids.filter(Boolean))];
+  if (provider === 'openai') {
+    return unique
+      .filter(id => /^(gpt-|o\d|chatgpt-)/.test(id))
+      .filter(id => !/(embedding|tts|whisper|dall-e|image|audio|realtime|transcribe|moderation|search|instruct)/.test(id))
+      .sort();
+  }
+  if (provider === 'grok') return unique.filter(id => !/(image|imagine|vision-beta)/.test(id)).sort();
+  if (provider === 'anthropic') return unique; // the Models API already lists newest first
+  return unique.sort();
+}
+
+/** The model to preselect: the one last used with this provider if it is
+ *  still offered, then the provider's suggestions in order, then the first. */
+export function pickDefaultModel(provider: BuiltinProviderId, models: readonly string[], lastUsed?: string): string {
+  if (lastUsed && models.includes(lastUsed)) return lastUsed;
+  const meta = PROVIDERS[provider];
+  for (const preferred of [meta.defaultModel, ...meta.suggestedModels]) {
+    if (models.includes(preferred)) return preferred;
+  }
+  return models[0] ?? lastUsed ?? meta.defaultModel;
+}
+
+// ── Anthropic model traits ───────────────────────────────────────
+
+export interface AnthropicModelTraits {
+  /** `tool_choice` `any` / `tool` is accepted. Claude Fable 5.1/5.2, Mythos
+   *  5.1/5.2, Opus 5.5 and Sonnet 5.5 reject it with a 400. */
+  forcedToolChoice: boolean;
+  /** Thinking runs when the request omits `thinking`, so `max_tokens` needs
+   *  headroom for it. */
+  thinksByDefault: boolean;
+  /** `output_config.effort` is accepted. */
+  effort: boolean;
+  /** Server-side refusal fallback (`fallbacks: "default"`) is offered. */
+  fallbacks: boolean;
+  /** Web tool versions this model takes. The 20260209 versions add dynamic
+   *  filtering; older models take the basic web search only. */
+  webSearchTool: 'web_search_20260209' | 'web_search_20250305';
+  webFetchTool: 'web_fetch_20260209' | null;
+}
+
+const NEW_TOOL_CHOICE_RULES = /^claude-(fable-5-[12]|mythos-5-[12]|opus-5-5|sonnet-5-5)(?![-\w])/;
+const THINKS_BY_DEFAULT = /^claude-(fable-5|mythos-5|opus-5|sonnet-5|sonnet-5-5|haiku-5-5)(?![\w])/;
+const EFFORT = /^claude-(fable-5|mythos-5|opus-5|opus-4-[5-9]|sonnet-5|sonnet-4-6|haiku-5-5)(?![\w])/;
+const FALLBACKS = /^claude-(fable-5-[12]|fable-5|opus-5-5|opus-5|sonnet-5-5)(?![-\w])/;
+const DYNAMIC_WEB_TOOLS = /^claude-(fable-5|mythos-5|opus-5|opus-4-[6-9]|sonnet-5|sonnet-4-6)(?![\w])/;
+
+/** What a Claude model id accepts. Unknown ids get the conservative set. */
+export function anthropicModelTraits(model: string): AnthropicModelTraits {
+  const id = model.trim().toLowerCase();
+  const dynamicWeb = DYNAMIC_WEB_TOOLS.test(id);
+  return {
+    forcedToolChoice: !NEW_TOOL_CHOICE_RULES.test(id),
+    thinksByDefault: THINKS_BY_DEFAULT.test(id),
+    effort: EFFORT.test(id),
+    fallbacks: FALLBACKS.test(id),
+    webSearchTool: dynamicWeb ? 'web_search_20260209' : 'web_search_20250305',
+    webFetchTool: dynamicWeb ? 'web_fetch_20260209' : null,
+  };
+}
+
+/** Whether the provider can give the chat web access. Only the first-party
+ *  Anthropic API has comparable server-side tools; the chat/completions
+ *  dialect has none, and custom endpoints are not assumed to have them. */
+export function webAccessSupported(meta: Pick<ProviderMeta, 'firstPartyAnthropic'>): boolean {
+  return !!meta.firstPartyAnthropic;
+}
+
+/** Web access is on for these settings: supported and not switched off. */
+export function webAccessEnabled(ai: AiSettings | undefined): boolean {
+  if (!ai || ai.webAccess === false) return false;
+  try { return webAccessSupported(resolveProvider(ai)); } catch { return false; }
+}
 
 function nonEmptyString(value: unknown, field: string): string {
   if (typeof value !== 'string' || !value.trim()) throw new Error(`${field} must be a non-empty string`);

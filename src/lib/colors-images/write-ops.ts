@@ -23,7 +23,8 @@ export type ColorOp =
   | { kind: 'addSet'; besideSetId: string; id: string; name: string };
 
 export type FileOp =
-  | { kind: 'add'; folderId: string; id: string; name: string; mime: string; base64: string }
+  /** `description`: the image object's description in BMP (a licence note, or the person's text). */
+  | { kind: 'add'; folderId: string; id: string; name: string; mime: string; base64: string; description?: string }
   /** `rename`: the type changed (an SVG written as a PNG), so the file's name changes with it. */
   | { kind: 'change'; id: string; name: string; mime: string; base64: string; rename?: boolean };
 
@@ -96,7 +97,8 @@ function fileLine(op: FileOp): string {
     return `r.${op.id}.change(content := ${content}${op.rename ? `, name := ${lit(op.name.trim())}` : ''})`;
   }
   need(isValidId(op.id) && isValidId(op.folderId), `Not a valid ID: ${op.id}`);
-  return `t.${op.folderId}.add(FileResource, id := ${lit(op.id)}, name := ${lit(op.name.trim())}, content := ${content})`;
+  const description = op.description?.trim() ? `, description := ${lit(op.description.trim())}` : '';
+  return `t.${op.folderId}.add(FileResource, id := ${lit(op.id)}, name := ${lit(op.name.trim())}${description}, content := ${content})`;
 }
 
 /** The EC for one file operation. */

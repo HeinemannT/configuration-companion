@@ -16,7 +16,7 @@ export function typeWords(className: string | undefined): string {
 }
 
 /** What the tag of a mark says, or null for no tag. `classOf` gives an object's type by its id. */
-export function tagSpec(m: Pick<PtMark, 'meaning' | 'targets' | 'ink' | 'reading'>, classOf: (id: string) => string | undefined): TagSpec | null {
+export function tagSpec(m: Pick<PtMark, 'meaning' | 'targets' | 'ink' | 'reading' | 'arrow'>, classOf: (id: string) => string | undefined): TagSpec | null {
   const k = m.meaning?.kind;
   if (k === 'move') return { word: 'Move', icon: 'move' };
   if (k === 'add') {
@@ -25,6 +25,8 @@ export function tagSpec(m: Pick<PtMark, 'meaning' | 'targets' | 'ink' | 'reading
   }
   if (k === 'change') return { word: 'Change', icon: 'change' };
   if (k === 'crossed') return { word: 'Crossed out', icon: 'crossed' };
+  // An arrow that asks for no operation: it is read as an arrow, and the words say what it means.
+  if (m.ink && m.arrow && m.reading) return { word: 'Arrow', icon: 'move' };
   if (!m.targets.length) return null;
   // A loop or a pointer: about these objects. A drawing with no reading is not understood: no tag.
   if (m.ink) return m.reading ? { word: m.targets.length > 1 ? `${m.targets.length} objects` : typeWords(classOf(m.targets[0])), icon: 'objects' } : null;

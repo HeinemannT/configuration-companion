@@ -6,15 +6,40 @@
  *   body: { model, stream, messages:[{role:'system'...},{role:'user'...}] }
  *   SSE:  `data: {json}` lines, text at choices[0].delta.content, `data: [DONE]`
  *
- * `listModels` hits `GET {baseUrl}/models` to populate the model datalist.
+ * `listModels` hits `GET {baseUrl}/models` to populate the model picker.
+ *
+ * Requests retry temporary failures (http.ts). Prompt caching is automatic on
+ * these providers (no markers); cached tokens are read from usage. A turn cut
+ * off at the output limit never runs its last tool call, and a refusal or a
+ * content filter stop surfaces as a ProviderError.
  */
 
+export interface OpenAiEndpoint {
+  /** Names used in error sentences. */
+  errorContext?: ProviderErrorContext;
+  retryPolicy?: RetryPolicy;
+  onRetry?: () => void;
+}
+
+function contextFor(opts: OpenAiEndpoint & { baseUrl: string; model?: string }): ProviderErrorContext {
+  if (opts.errorContext) return opts.errorContext;
+  let host = opts.baseUrl;
+  try { host = new URL(opts.baseUrl).host; } catch { /* keep the raw address */ }
+  return { provider: host, model: opts.model, host };
+}
+
+function refusal(ctx: ProviderErrorContext, detail?: string): ProviderError {
+  return new ProviderError('refusal', providerErrorSentence('refusal', ctx), { detail });
+}
+
 import { readSse } from './sse';
+import { fetchProvider, type RetryPolicy } from './http';
+import { ProviderError, providerErrorFromStream, providerErrorSentence, type ProviderErrorContext } from './provider-errors';
 import type { ToolCall } from './tools';
 import type { toOpenAiTools } from './tool-contracts';
 import type { AiMaxTokensParam, AiProviderTiming, AiTokenUsage } from './types';
 
-export interface OpenAiStreamOpts {
+export interface OpenAiStreamOpts extends OpenAiEndpoint {
   baseUrl: string;
   model: string;
   maxTokens?: number;
@@ -38,10 +63,10 @@ interface OpenAiChunk {
    * may return a different id from the model requested by the client. */
   model?: string;
   choices?: Array<{
-    delta?: { content?: string; tool_calls?: OpenAiToolCallDelta[] };
+    delta?: { content?: string; refusal?: string | null; tool_calls?: OpenAiToolCallDelta[] };
     finish_reason?: string | null;
   }>;
-  error?: { message?: string };
+  error?: { message?: string; type?: string; code?: string };
   usage?: {
     prompt_tokens?: number;
     completion_tokens?: number;
@@ -81,13 +106,14 @@ function captureUsage(target: AiTokenUsage, parsed: OpenAiChunk): void {
   target.reasoningTokens = usage.completion_tokens_details?.reasoning_tokens ?? target.reasoningTokens;
 }
 
-export async function streamOpenAiCompat(opts: OpenAiStreamOpts): Promise<{ text: string; usage: AiTokenUsage; resolvedModel?: string }> {
+export async function streamOpenAiCompat(opts: OpenAiStreamOpts): Promise<{ text: string; usage: AiTokenUsage; resolvedModel?: string; finishReason: string | null }> {
   const url = `${opts.baseUrl}/chat/completions`;
+  const ctx = contextFor(opts);
   const messages: Array<{ role: string; content: string }> = [];
   if (opts.system) messages.push({ role: 'system', content: opts.system });
   messages.push({ role: 'user', content: opts.user });
 
-  const response = await fetch(url, {
+  const response = await fetchProvider(url, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${opts.apiKey}`,
@@ -100,25 +126,28 @@ export async function streamOpenAiCompat(opts: OpenAiStreamOpts): Promise<{ text
       messages,
       ...outputLimit(opts.maxTokens, opts.maxTokensParam),
     }),
-    signal: opts.signal,
-  });
-
-  if (!response.ok) throw new Error(await errorFromResponse(response));
+  }, { ctx, signal: opts.signal, policy: opts.retryPolicy, onRetry: opts.onRetry });
 
   let text = '';
   let resolvedModel: string | undefined;
+  let finishReason: string | null = null;
+  let refused = '';
   const usage = EMPTY_USAGE();
   await readSse(response, (frame) => {
     if (!frame.data || frame.data === '[DONE]') return;
     const parsed = safeParse(frame.data);
     if (!parsed) return;
     resolvedModel ??= parsed.model;
-    if (parsed.error?.message) throw new Error(parsed.error.message);
+    if (parsed.error?.message) throw providerErrorFromStream(parsed.error.type ?? parsed.error.code ?? '', parsed.error.message, ctx);
     captureUsage(usage, parsed);
-    const delta = parsed.choices?.[0]?.delta?.content;
+    const choice = parsed.choices?.[0];
+    if (choice?.delta?.refusal) refused += choice.delta.refusal;
+    if (choice?.finish_reason) finishReason = choice.finish_reason;
+    const delta = choice?.delta?.content;
     if (delta) { text += delta; opts.onChunk(delta); }
   });
-  return { text, usage, ...(resolvedModel ? { resolvedModel } : {}) };
+  if (refused || finishReason === 'content_filter') throw refusal(ctx, refused || 'content_filter');
+  return { text, usage, finishReason, ...(resolvedModel ? { resolvedModel } : {}) };
 }
 
 // ── Tool-aware turn (chat orchestrator) ──────────────────────────
@@ -130,7 +159,7 @@ export type OpenAiMessage =
   | { role: 'assistant'; content: string | null; tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }> }
   | { role: 'tool'; tool_call_id: string; content: string };
 
-export interface OpenAiTurnOpts {
+export interface OpenAiTurnOpts extends OpenAiEndpoint {
   baseUrl: string;
   model: string;
   maxTokens?: number;
@@ -171,9 +200,11 @@ function outputLimit(maxTokens?: number, param: AiMaxTokensParam = 'max_completi
  *  ToolCalls. Returns the finish reason + the assistant message to replay. */
 export async function streamOpenAiTurn(opts: OpenAiTurnOpts): Promise<OpenAiTurnResult> {
   const url = `${opts.baseUrl}/chat/completions`;
+  const ctx = contextFor(opts);
   const useTools = opts.tools && opts.tools.length > 0;
+  const forced = !!opts.forceTool || !!opts.requireTool;
   const requestStarted = Date.now();
-  const response = await fetch(url, {
+  const response = await fetchProvider(url, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${opts.apiKey}`,
@@ -187,22 +218,22 @@ export async function streamOpenAiTurn(opts: OpenAiTurnOpts): Promise<OpenAiTurn
       ...outputLimit(opts.maxTokens, opts.maxTokensParam),
       ...(useTools ? {
         tools: opts.tools,
-        parallel_tool_calls: false,
+        // Discovery turns may ask for several read-only tools at once (the
+        // provider default); a terminal choice is exactly one call.
+        ...(forced ? { parallel_tool_calls: false } : {}),
         ...(opts.forceTool
           ? { tool_choice: { type: 'function', function: { name: opts.forceTool } } }
           : opts.requireTool ? { tool_choice: 'required' } : {}),
       } : {}),
     }),
-    signal: opts.signal,
-  });
-
-  if (!response.ok) throw new Error(await errorFromResponse(response));
+  }, { ctx, signal: opts.signal, policy: opts.retryPolicy, onRetry: opts.onRetry });
 
   const timing: AiProviderTiming = { firstByteMs: Date.now() - requestStarted };
 
   let text = '';
   let finishReason: string | null = null;
   let resolvedModel: string | undefined;
+  let refused = '';
   const calls = new Map<number, ToolCallAcc>();
   const usage = EMPTY_USAGE();
 
@@ -211,10 +242,11 @@ export async function streamOpenAiTurn(opts: OpenAiTurnOpts): Promise<OpenAiTurn
     const parsed = safeParse(frame.data);
     if (!parsed) return;
     resolvedModel ??= parsed.model;
-    if (parsed.error?.message) throw new Error(parsed.error.message);
+    if (parsed.error?.message) throw providerErrorFromStream(parsed.error.type ?? parsed.error.code ?? '', parsed.error.message, ctx);
     captureUsage(usage, parsed);
     const choice = parsed.choices?.[0];
     if (!choice) return;
+    if (choice.delta?.refusal) refused += choice.delta.refusal;
     if (timing.firstOutputMs === undefined
         && (choice.delta?.content || (choice.delta?.tool_calls?.length ?? 0) > 0)) {
       timing.firstOutputMs = Date.now() - requestStarted;
@@ -231,9 +263,13 @@ export async function streamOpenAiTurn(opts: OpenAiTurnOpts): Promise<OpenAiTurn
     if (choice.finish_reason) finishReason = choice.finish_reason;
   });
 
+  if (refused || finishReason === 'content_filter') throw refusal(ctx, refused || 'content_filter');
+
   const toolCalls: ToolCall[] = [];
   const rawCalls: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }> = [];
-  for (const idx of [...calls.keys()].sort((a, b) => a - b)) {
+  // `length`: cut off at the output limit, possibly inside a tool call's
+  // arguments. Never run those; the orchestrator retries the turn.
+  if (finishReason !== 'length') for (const idx of [...calls.keys()].sort((a, b) => a - b)) {
     const acc = calls.get(idx)!;
     const id = acc.id || `call_${idx}`;
     toolCalls.push({ id, name: acc.name, input: parseToolArgs(acc.args) });
@@ -271,16 +307,15 @@ interface ModelsResponse {
   error?: { message?: string };
 }
 
-/** List available model ids. Best-effort — the text input still works if this
- *  fails. */
-export async function listModels(baseUrl: string, apiKey: string, signal?: AbortSignal): Promise<string[]> {
-  const response = await fetch(`${baseUrl}/models`, {
+/** List available model ids. Costs no tokens and proves the key. */
+export async function listModels(baseUrl: string, apiKey: string, signal?: AbortSignal, endpoint: OpenAiEndpoint = {}): Promise<string[]> {
+  const ctx = contextFor({ ...endpoint, baseUrl });
+  const response = await fetchProvider(`${baseUrl}/models`, {
+    method: 'GET',
     headers: { 'Authorization': `Bearer ${apiKey}` },
-    signal,
-  });
-  if (!response.ok) throw new Error(await errorFromResponse(response));
+  }, { ctx, signal, policy: endpoint.retryPolicy });
   const json = (await response.json()) as ModelsResponse;
-  if (json.error?.message) throw new Error(json.error.message);
+  if (json.error?.message) throw providerErrorFromStream('', json.error.message, ctx);
   return (json.data ?? [])
     .map(m => m.id)
     .filter((id): id is string => !!id)
@@ -289,14 +324,4 @@ export async function listModels(baseUrl: string, apiKey: string, signal?: Abort
 
 function safeParse(data: string): OpenAiChunk | null {
   try { return JSON.parse(data) as OpenAiChunk; } catch { return null; }
-}
-
-async function errorFromResponse(response: Response): Promise<string> {
-  let detail = '';
-  try {
-    const raw = await response.text();
-    const json = raw ? (JSON.parse(raw) as OpenAiChunk) : null;
-    detail = json?.error?.message ?? raw;
-  } catch { /* not JSON */ }
-  return detail ? `${response.status}: ${detail}` : `Request failed (${response.status})`;
 }

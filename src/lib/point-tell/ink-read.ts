@@ -10,6 +10,8 @@
  *   a sketch of a widget on empty space   add, with a widget kind (table, chart, button, text; see widget-read)
  *   an arrow from an object into a square you drew   move (the place and width of the square)
  *   an arrow from empty space onto an object   about that object (a select, like a loop)
+ *   any other arrow with a head   an arrow from the object under its tail to the one under its tip (either may be
+ *                                empty space); no operation. The shaft may be curved (a C, a U-turn) when a head is at its end
  *   scratch-out, X (two strokes or one) or a line struck through an object   crossed out (not a delete: the words and the context say what it means)
  *   underline or squiggle under an object  change
  *   anything else                 plain ink, with the objects it touches
@@ -20,18 +22,18 @@
 import type { LModel } from '../layout/types';
 import { findNode } from '../layout/model';
 import { area, centre, contains, intersection, type Rect } from './hit';
-import { contentBounds, inkBounds, inkPlace, objectsIn, resolveArrow, resolveBox, type PtScene } from './resolve';
+import { contentBounds, inkBounds, inkPlace, objectsIn, resolveArrow, resolveBox, resolvePlace, type PtScene } from './resolve';
 import { readSketch } from './widget-read';
 import { analyze, joinedLoop, pip, type Features } from './ink-features';
-import { arrowParts, crossOf, objectAt, pairMove, pointerTarget, splitArrow, struckThrough } from './gestures';
+import { arrowParts, crossOf, curvedArrow, objectAt, pairMove, pointerTarget, splitArrow, struckThrough } from './gestures';
 import { dist } from './ink-geom';
 import { tabReading } from './tab-read';
 import { crumbReading } from './crumb-read';
-import type { PtGridPlace, PtMeaning, PtPoint } from './types';
+import type { PtArrow, PtGridPlace, PtMeaning, PtPoint, PtSide } from './types';
 
 export interface InkStroke { points: PtPoint[] }
 
-export type InkKind = 'plain' | 'select' | 'move' | 'add' | 'crossed' | 'change';
+export type InkKind = 'plain' | 'select' | 'move' | 'add' | 'crossed' | 'change' | 'arrow';
 
 export interface InkReading {
   kind: InkKind;
@@ -42,6 +44,8 @@ export interface InkReading {
   reading?: string;
   /** Read from an arrow that ends on an object (not a loop). */
   pointer?: true;
+  /** An arrow that is no move and no pointer: the objects under its tail and its tip. */
+  arrow?: PtArrow;
   place: PtGridPlace;
 }
 
@@ -166,6 +170,52 @@ const withKind = (scene: PtScene, strokes: ReadonlyArray<InkStroke>, kind: InkKi
   kind, targets, place: inkPlace(scene, strokes), ...extra,
 });
 
+/** Where on the grid a point of empty space is: the tab, the container, the row and the column. */
+function pointPlace(scene: PtScene, p: PtPoint): PtGridPlace {
+  const r = resolvePlace(scene, p[0], p[1], { kind: 'widget' }, 'nearest');
+  if (!r.ok) return scene.liveTabId ? { tabId: scene.liveTabId } : {};
+  return { tabId: r.tabId, ...(r.containerId ? { containerId: r.containerId } : {}), row: r.row, col: r.col };
+}
+
+/** The object nearest to a point of empty space, and the side of it the point is on. */
+function nearestSide(scene: PtScene, p: PtPoint): { id: string; side: PtSide } | null {
+  let best: { id: string; side: PtSide } | null = null, bd = Infinity, ba = Infinity;
+  for (const t of scene.targets) {
+    const r = t.rect, dx = Math.max(r.left - p[0], p[0] - (r.left + r.width), 0), dy = Math.max(r.top - p[1], p[1] - (r.top + r.height), 0);
+    const d = Math.hypot(dx, dy);
+    if (d > bd + 0.5 || (Math.abs(d - bd) <= 0.5 && area(r) >= ba)) continue;
+    const side: PtSide = dy >= dx ? (p[1] < r.top ? 'above' : 'below') : p[0] < r.left ? 'left of' : 'right of';
+    best = { id: t.id, side }; bd = d; ba = area(r);
+  }
+  return best;
+}
+
+/**
+ * An arrow with a head (`F` read from its tail to its tip) that is no move and no pointer: an arrow from the
+ * object under its tail to the one under its tip. Either may be empty space; the direction is kept.
+ */
+function arrowOnly(scene: PtScene, strokes: ReadonlyArray<InkStroke>, F: Features): InkReading {
+  const from = objectAt(scene, F.start), to = objectAt(scene, F.tip);
+  const near = to ? null : nearestSide(scene, F.tip);
+  const arrow: PtArrow = { ...(from ? { from: from.id } : {}), ...(to ? { to: to.id } : { end: pointPlace(scene, F.tip), ...(near ? { near } : {}) }) };
+  const targets = [...new Set([from?.id, to?.id].filter((id): id is string => !!id))];
+  const reading = from && to ? (from.id === to.id ? `Arrow inside ${nameOf(scene, from.id)}` : `Arrow from ${nameOf(scene, from.id)} to ${nameOf(scene, to.id)}`)
+    : from ? `Arrow from ${nameOf(scene, from.id)}` : to ? `Arrow to ${nameOf(scene, to.id)}` : 'Arrow';
+  return withKind(scene, strokes, 'arrow', targets, { arrow, reading });
+}
+
+/** An arrow (`F` from its tail to its tip, with a head): a move when it starts on an object and ends at a place, a pointer from empty space onto an object, else an arrow. */
+function arrowReading(scene: PtScene, strokes: ReadonlyArray<InkStroke>, F: Features): InkReading {
+  const src = objectAt(scene, F.start);
+  if (src && dist(F.start, F.tip) >= 60 && !contains(src.rect, F.tip[0], F.tip[1])) {
+    const r = resolveArrow(scene, src.id, F.tip[0], F.tip[1]);
+    if (r.ok) return { kind: 'move', targets: [src.id], meaning: r.meaning, place: strokes.length === 1 ? r.grid : inkPlace(scene, strokes), reading: strip(r.meaning.words ?? `Move ${nameOf(scene, src.id)}`) };
+  }
+  const to = src ? null : objectAt(scene, F.tip);
+  if (to) return withKind(scene, strokes, 'select', [to.id], { reading: nameOf(scene, to.id), pointer: true });
+  return arrowOnly(scene, strokes, F);
+}
+
 /** One stroke. */
 function readOne(scene: PtScene, strokes: ReadonlyArray<InkStroke>, F: Features): InkReading {
   if (F.tap || F.L < 40) return plain(scene, strokes, F);
@@ -212,6 +262,10 @@ function readOne(scene: PtScene, strokes: ReadonlyArray<InkStroke>, F: Features)
     return plain(scene, strokes, F);
   }
 
+  // A curved shaft (a C, a U-turn) with its head drawn on in the same stroke.
+  const curved = curvedArrow(F);
+  if (curved) return arrowReading(scene, strokes, curved);
+
   if (F.scribble && F.bbox.width >= 24 && F.bbox.height >= 10) {
     const id = crossedTarget(scene, F.bbox);
     if (id) return withKind(scene, strokes, 'crossed', [id], { meaning: { kind: 'crossed' }, reading: `Crossed out ${nameOf(scene, id)}` });
@@ -229,8 +283,8 @@ function readOne(scene: PtScene, strokes: ReadonlyArray<InkStroke>, F: Features)
         return { kind: 'move', targets: [src.id], meaning: r.meaning, place: r.grid, reading };
       }
     }
-    // Starts and ends on the same object: struck through, below.
-    if (!contains(src.rect, F.tip[0], F.tip[1])) return plain(scene, strokes, F);
+    // Starts and ends on the same object: struck through, below. With a head it is an arrow all the same.
+    if (!contains(src.rect, F.tip[0], F.tip[1])) return F.hasHead ? arrowOnly(scene, strokes, F) : plain(scene, strokes, F);
   }
   if (under) {
     return withKind(scene, strokes, 'change', [under], { meaning: { kind: 'change' }, reading: `Change ${nameOf(scene, under)}` });
@@ -239,6 +293,8 @@ function readOne(scene: PtScene, strokes: ReadonlyArray<InkStroke>, F: Features)
   if (struck) return withKind(scene, strokes, 'crossed', [struck], { meaning: { kind: 'crossed' }, reading: `Crossed out ${nameOf(scene, struck)}` });
   const pointed = pointerTarget(scene, F);
   if (pointed) return withKind(scene, strokes, 'select', [pointed.id], { reading: nameOf(scene, pointed.id), pointer: true });
+  // Any other arrow with a head: from where it starts to where it points, with no operation.
+  if (F.arrowish && F.hasHead && dist(F.start, F.tip) >= 60) return arrowOnly(scene, strokes, F);
   return plain(scene, strokes, F);
 }
 
@@ -279,8 +335,13 @@ export function readInk(scene: PtScene, strokes: ReadonlyArray<InkStroke>): InkR
     if (list.length <= 4) {
       const ap = arrowParts(fs);
       if (ap && ap.heads.length > 0 && ap.heads.length + 1 === list.length) {
-        const one = readOne(scene, [list[ap.shaft]], ap.F);
-        if (one.kind === 'move' || one.kind === 'select') return { ...one, place: inkPlace(scene, list) };
+        if (ap.F.arrowish) {
+          const one = readOne(scene, [list[ap.shaft]], ap.F);
+          if (one.kind === 'move' || one.kind === 'select') return { ...one, place: inkPlace(scene, list) };
+        }
+        // A curved shaft, or a straight one that is no move or pointer: an arrow from its tail to its tip, when
+        // the head has the shape of one (a short stroke near the end of a line is also a 7, a tick, an equals sign).
+        if (ap.shaped) return arrowReading(scene, list, ap.F);
       }
     }
     // A sketch of a widget on empty grid (a box with lines across, bars, a few wavy lines).
@@ -301,7 +362,12 @@ export const GROUP_GAP = 36;
 /** A stroke drawn inside the box of a group (a line across a table sketch) may follow after a longer pause: a person draws a sketch calmly. */
 export const GROUP_INSIDE_MS = 3500;
 
-export interface GroupState { box: Rect; endedAt: number }
+export interface GroupState {
+  box: Rect;
+  endedAt: number;
+  /** Where the group's strokes start and end: a big arrowhead is drawn at one of those. */
+  ends?: PtPoint[];
+}
 
 export function joinsGroup(group: GroupState, strokeBox: Rect, startedAt: number): boolean {
   const g = group.box;
@@ -316,7 +382,15 @@ export function joinsGroup(group: GroupState, strokeBox: Rect, startedAt: number
     && cx >= g.left && cx <= g.left + g.width && cy >= g.top && cy <= g.top + g.height
     && gcx >= strokeBox.left && gcx <= strokeBox.left + strokeBox.width && gcy >= strokeBox.top && gcy <= strokeBox.top + strokeBox.height;
   // The head of an arrow: a small stroke that touches the line, drawn after the line is done and the hand has gone back.
-  const head = Math.max(strokeBox.width, strokeBox.height) <= 70 && gap <= 8 && Math.max(g.width, g.height) >= 50;
+  const strokeSize = Math.max(strokeBox.width, strokeBox.height), groupSize = Math.max(g.width, g.height);
+  const smallHead = strokeSize <= 70 && gap <= 8 && groupSize >= 50;
+  // A big head (a V with barbs of 100 px and more on a long shaft) is as big as a share of the shaft, and lies over one of its ends.
+  const nearEnd = (p: PtPoint): boolean => {
+    const ex = Math.max(strokeBox.left - p[0], p[0] - (strokeBox.left + strokeBox.width), 0), ey = Math.max(strokeBox.top - p[1], p[1] - (strokeBox.top + strokeBox.height), 0);
+    return Math.hypot(ex, ey) <= Math.max(16, 0.3 * strokeSize);
+  };
+  const bigHead = gap <= 8 && groupSize >= 150 && strokeSize <= Math.min(260, Math.max(70, 0.5 * groupSize)) && !!group.ends?.some(nearEnd);
+  const head = smallHead || bigHead;
   if (startedAt - group.endedAt > (inside || across || head ? GROUP_INSIDE_MS : GROUP_MS)) return false;
   // Crossing or touching the group's box always joins; otherwise the stroke must start close by.
   // The margin grows with the size of what is drawn: handwriting spaces its letters by about their size.

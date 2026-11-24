@@ -20,8 +20,9 @@
 import type { Tab, SendFn } from './tab-types';
 import type { InspectorMessage, ObjectReference } from '../../lib/types';
 import type {
-  AiChatTurn, AiChatQuote, AiContextEnvelope, AiContextSource,
+  AiChatTurn, AiChatQuote, AiContextEnvelope, AiContextSource, AiWebSource,
 } from '../../lib/ai/types';
+import { webAccessEnabled } from '../../lib/ai/providers';
 import { h, svg, statusFlash } from '../../lib/dom';
 import { copyTextResult, copyFailureMessage } from '../../lib/copy-feedback';
 import { confirmModal } from '../../lib/modal';
@@ -41,7 +42,7 @@ import { sendFireForget, sendRequest } from '../../lib/messaging';
 import { openObject } from '../../lib/open-object';
 import { showToast } from '../../lib/toast';
 import { S } from '../state';
-import { renderInlineMarkdown, renderMarkdown } from './ai-markdown';
+import { renderInlineMarkdown, renderMarkdown, renderSourceList } from './ai-markdown';
 import {
   type StreamState, initStream, reduceStream, cancelStream, isTerminal,
   toAssistantTurn, prepareRetry, prepareEdit,
@@ -483,7 +484,9 @@ export class AiTab implements Tab {
       el.appendChild(h('div', { class: 'ai-a-tag' }, h('span', { class: 'ai-a-pip' }), d.contextTag));
     }
     const body = h('div', { class: 'ai-a-body' });
-    renderMarkdown(body, d.turn.text, this.markdownOptions(d.turn.objects));
+    renderMarkdown(body, d.turn.text, this.markdownOptions(d.turn.objects, d.turn.sources));
+    const sources = d.turn.sources?.length ? renderSourceList(d.turn.sources) : null;
+    if (sources) body.appendChild(sources);
     el.appendChild(body);
     if (retryable) {
       const retry = h('button', {
@@ -505,7 +508,9 @@ export class AiTab implements Tab {
     const body = h('div', { class: 'ai-a-body' });
     const visibleText = scrubModelReasoning(s.text);
     if (visibleText) {
-      renderMarkdown(body, visibleText, this.markdownOptions(s.objects));
+      renderMarkdown(body, visibleText, this.markdownOptions(s.objects, s.sources));
+      const sources = s.sources.length ? renderSourceList(s.sources) : null;
+      if (sources) body.appendChild(sources);
     } else if (!s.tools.length) {
       body.appendChild(h('div', { class: 'ai-status' }, 'Thinking…'));
     }
@@ -513,10 +518,11 @@ export class AiTab implements Tab {
     return el;
   }
 
-  private markdownOptions(objects: readonly ObjectReference[] | undefined) {
+  private markdownOptions(objects: readonly ObjectReference[] | undefined, sources?: readonly AiWebSource[]) {
     return {
       codeBlock: (lang: string, code: string) => this.buildCodeBlock(lang, code, objects),
       objects,
+      ...(sources?.length ? { sources } : {}),
       objectReference: (object: ObjectReference) => objectChip(object, {
         size: 'xs',
         className: 'ai-answer-object',
@@ -1012,7 +1018,9 @@ export class AiTab implements Tab {
   private buildEmptyState(): HTMLElement {
     return emptyState({
       title: 'Ask about your workspace',
-      text: 'Answers can read objects, types and layouts, search code, and preview EC. The conversation lasts until the panel closes.',
+      text: webAccessEnabled(S.settings.ai)
+        ? 'Answers can read objects, types and layouts, search code, preview EC, and search the web. The conversation lasts until the panel closes.'
+        : 'Answers can read objects, types and layouts, search code, and preview EC. The conversation lasts until the panel closes.',
       art: 'sm',
       className: 'ai-empty',
     });

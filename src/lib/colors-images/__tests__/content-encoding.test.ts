@@ -24,7 +24,7 @@ describe('file size limit', () => {
   it('uses the content prepared by the page and names the limit', () => {
     const big = { bytes: new Uint8Array(1), mime: 'image/svg+xml', base64: 'A'.repeat(30_000) };
     const small = { bytes: new Uint8Array(3), mime: 'image/svg+xml', base64: 'AAAA' };
-    const item = (id: string) => ({ key: id, fileName: `${id}.svg`, bytes: new Uint8Array(1), mime: 'image/svg+xml', id, idTouched: false, folderId: 'f' });
+    const item = (id: string) => ({ key: id, fileName: `${id}.svg`, bytes: new Uint8Array(1), mime: 'image/svg+xml', id, idTouched: false, folderId: 'f', description: '' });
     const { ops, tooLarge } = buildFileOps([{ item: item('a'), out: big }, { item: item('b'), out: small }], [], () => 'x');
     expect(ops.map(o => o.kind === 'add' && o.base64)).toEqual(['AAAA']);
     expect(tooLarge).toEqual(['a.svg']);

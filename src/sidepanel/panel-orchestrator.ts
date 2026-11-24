@@ -17,6 +17,7 @@ import { S, sendMessage } from './state';
 import { resetObjectPreview } from '../lib/object-chip';
 import { statusFlash } from '../lib/dom';
 import type { Tab } from './tabs/tab-types';
+import { hasActiveKey } from '../lib/ai/providers';
 
 export type PanelTabId = 'connect' | 'browse' | 'utilities' | 'ai' | 'log';
 
@@ -97,6 +98,7 @@ const LIVE_RESULT_OWNER = new Map<InspectorMessage['type'], PanelTabId>([
   ['PROFILE_VERDICT', 'connect'],
   ['AI_TEST_RESULT', 'connect'],
   ['AI_MODELS_RESULT', 'connect'],
+  ['AI_KEY_CHECKED', 'connect'],
   ['BROWSE_TREE_DATA', 'browse'],
   ['BROWSE_SEARCH_RESULT', 'browse'],
   ['BROWSE_RESOLVE_RESULT', 'browse'],
@@ -177,7 +179,7 @@ export function createPanelOrchestrator(
       case 'SETTINGS_DATA':
         S.settings = msg.settings;
         headerChanged = true;
-        if (!S.settings.ai && S.activeTab === 'ai') selectTab('connect');
+        if (!hasActiveKey(S.settings.ai) && S.activeTab === 'ai') selectTab('connect');
         host.syncAiTab();
         host.refreshSiteAccess();
         break;
@@ -227,21 +229,8 @@ export function createPanelOrchestrator(
         S.favoriteEntries = msg.entries;
         break;
       case 'AI_CONFIG_CHANGED':
-        S.settings = {
-          ...S.settings,
-          ai: msg.configured
-            ? {
-                provider: msg.provider ?? S.settings.ai?.provider ?? 'anthropic',
-                model: msg.model ?? '',
-                apiKeyEnc: 'set',
-                ...(msg.customProvider
-                  ? { customProvider: msg.customProvider }
-                  : S.settings.ai?.customProvider
-                    ? { customProvider: S.settings.ai.customProvider }
-                    : {}),
-              }
-            : undefined,
-        };
+        // The worker sends the redacted configuration: keys only as 'set'.
+        S.settings = { ...S.settings, ai: msg.ai };
         if (!msg.configured && S.activeTab === 'ai') selectTab('connect');
         host.syncAiTab();
         break;

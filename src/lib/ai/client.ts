@@ -4,11 +4,13 @@
  * decrypted API key is passed in by the handler and never stored here.
  */
 
-import type { AiChatEvent, AiChatTurn, AiRequestPayload, AiSettings, AiTokenUsage, AiTurnMetrics } from './types';
-import { resolveProvider } from './providers';
+import type { AiChatEvent, AiChatTurn, AiRequestPayload, AiSettings, AiTokenUsage, AiTurnMetrics, AiWebSource } from './types';
+import { chatModels, resolveProvider, webAccessSupported, type ProviderMeta } from './providers';
 import { buildEditorPrompt } from './editor-prompt';
-import { streamAnthropic } from './anthropic';
+import { anthropicWebTools, listAnthropicModels, streamAnthropic } from './anthropic';
 import { streamOpenAiCompat, listModels as listOpenAiModels } from './openai-compat';
+import { ProviderError, type ProviderErrorContext, type ProviderErrorKind } from './provider-errors';
+import { WEB_ACCESS_POLICY } from './sidebar-prompt';
 import type { ExecuteTool, ToolCall, ToolResult } from './tools';
 import { boundedToolResult, CHANGE_PREVIEW_SATISFIED_NOTE, MAX_TOOL_CALLS, MAX_TOOL_LOOP_MS, MAX_TOOL_ROUNDS, MAX_UNPRODUCTIVE_TOOL_ROUNDS, TOOL_BUDGET_EXHAUSTED_NOTE, toolResultEvidenceKey, toolResultForModel } from './tools';
 import type { ToolDef } from './tool-contracts';
@@ -40,6 +42,8 @@ export const MAX_EMPTY_RESPONSE_RETRIES = 2;
 export const MAX_MISSING_PREVIEW_RETRIES = 1;
 
 const SUBMIT_CHANGE_TICKET = 'submit_change_ticket';
+/** Appended when an answer stopped at the output limit. */
+export const TRUNCATED_ANSWER_NOTE = 'The answer reached the output limit and stops here. Ask for the rest to continue.';
 const ANSWER_USER = 'answer_user';
 
 function answerUserDef(): ToolDef {
@@ -131,9 +135,18 @@ export interface StreamCompletionOpts {
   signal?: AbortSignal;
 }
 
+/** Names the error sentences use for a provider: its label, where keys and
+ *  credit are managed, the model and the API host. */
+export function providerErrorContext(meta: ProviderMeta, model: string): ProviderErrorContext {
+  let host = meta.baseUrl;
+  try { host = new URL(meta.baseUrl).host; } catch { /* keep the raw address */ }
+  return { provider: meta.label, ...(meta.console ? { console: meta.console } : {}), model, host };
+}
+
 export async function streamCompletion(opts: StreamCompletionOpts): Promise<{ text: string }> {
   const meta = resolveProvider(opts.settings);
   const { system, user } = buildEditorPrompt(opts.payload);
+  const errorContext = providerErrorContext(meta, opts.settings.model);
   if (meta.openAiCompat) {
     return streamOpenAiCompat({
       baseUrl: meta.baseUrl,
@@ -143,17 +156,21 @@ export async function streamCompletion(opts: StreamCompletionOpts): Promise<{ te
       apiKey: opts.apiKey,
       system,
       user,
+      errorContext,
       signal: opts.signal,
       onChunk: opts.onChunk,
     });
   }
   return streamAnthropic({
     baseUrl: meta.baseUrl,
+    firstParty: !!meta.firstPartyAnthropic,
     model: opts.settings.model,
     maxTokens: meta.maxOutputTokens,
     apiKey: opts.apiKey,
     system,
     user,
+    effort: 'medium',
+    errorContext,
     signal: opts.signal,
     onChunk: opts.onChunk,
   });
@@ -260,6 +277,7 @@ function toolEventSummary(summary: string, result: ToolResult): string {
 export async function streamChat(opts: StreamChatOpts): Promise<AiTurnMetrics> {
   const started = Date.now();
   const meta = resolveProvider(opts.settings);
+  const transport = { retries: 0 };
   let turn: PreparedAiTurn | undefined;
   try {
     turn = await prepareAiTurn({
@@ -280,24 +298,38 @@ export async function streamChat(opts: StreamChatOpts): Promise<AiTurnMetrics> {
       ...opts,
       turn,
     };
+    // Web access: the provider's own server tools, offered on the full
+    // discovery route only (the prepared one-request route has no reads).
+    const webTools = !meta.openAiCompat && webAccessSupported(meta) && opts.settings.webAccess !== false
+      && !turn.prefetch?.providerPlan
+      ? anthropicWebTools(effectiveOpts.settings.model)
+      : [];
     const conversationBase = {
       baseUrl: meta.baseUrl,
       model: effectiveOpts.settings.model,
       maxTokens: turn.maxOutputTokens,
       apiKey: effectiveOpts.apiKey,
-      system: turn.system,
+      system: webTools.length ? `${turn.system}\n\n---\n\n${WEB_ACCESS_POLICY}` : turn.system,
       history: turn.history,
       user: turn.user,
       signal: effectiveOpts.signal,
+      errorContext: providerErrorContext(meta, effectiveOpts.settings.model),
+      onRetry: () => { transport.retries++; },
     };
     const conversation = meta.openAiCompat
       ? createOpenAiConversation({ ...conversationBase, maxTokensParam: meta.maxTokensParam })
-      : createAnthropicConversation(conversationBase);
+      : createAnthropicConversation({
+        ...conversationBase,
+        firstParty: !!meta.firstPartyAnthropic,
+        serverTools: webTools,
+        effort: 'medium',
+      });
     const metrics = await runProviderChat(effectiveOpts, conversation);
     const withPrefetch = mergePrefetchMetrics(metrics, turn.prefetch, Date.now() - started);
     opts.onEvent({ kind: 'done' });
     return {
       ...withPrefetch,
+      ...(transport.retries ? { transportRetries: transport.retries } : {}),
       estimatedInputCharacters: turn.estimatedInputCharacters,
       historyTurnsDropped: turn.historyTurnsDropped,
       terminalPhase: 'complete',
@@ -324,6 +356,7 @@ export async function streamChat(opts: StreamChatOpts): Promise<AiTurnMetrics> {
     );
     return {
       ...partial,
+      ...(transport.retries ? { transportRetries: transport.retries } : {}),
       ...(turn ? {
         estimatedInputCharacters: turn.estimatedInputCharacters,
         historyTurnsDropped: turn.historyTurnsDropped,
@@ -593,25 +626,31 @@ async function runToolLoop(
     requested += toolCalls.length;
     const results: Array<{ call: ToolCall; result: ToolResult }> = [];
     let productiveRound = false;
-    for (const requestedCall of toolCalls) {
+    if (opts.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    // Parallel tool use: every call of one round runs at once (all tools are
+    // read-only), and all results go back to the provider in one message.
+    // The budget is assigned in request order before anything runs.
+    const planned = toolCalls.map(requestedCall => {
       const call = normalizeRidInputs(requestedCall);
-      if (opts.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-      const summary = summarizeToolCall(call);
-      opts.onEvent({ kind: 'tool-start', name: call.name, summary });
-      let result: ToolResult;
-      let durationMs = 0;
+      const withinBudget = used < MAX_TOOL_CALLS;
+      if (withinBudget) used++;
+      else budgetExhausted = true;
+      return { call, summary: summarizeToolCall(call), withinBudget };
+    });
+    for (const { call, summary } of planned) opts.onEvent({ kind: 'tool-start', name: call.name, summary });
+    if (planned.some(item => item.withinBudget)) onPhase('model-tool');
+    const executed = await Promise.all(planned.map(async ({ call, withinBudget }) => {
+      if (!withinBudget) return { result: { content: TOOL_BUDGET_EXHAUSTED_NOTE, isError: true } as ToolResult, durationMs: 0 };
+      const callStarted = Date.now();
+      const result = boundedToolResult(await opts.executeTool(call, opts.signal));
+      return { result, durationMs: Date.now() - callStarted };
+    }));
+    if (opts.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    for (let index = 0; index < planned.length; index++) {
+      const { call, summary } = planned[index];
+      const { result, durationMs } = executed[index];
       const fingerprint = toolCallFingerprint(call);
       const prior = priorResults.get(fingerprint);
-      if (used >= MAX_TOOL_CALLS) {
-        budgetExhausted = true;
-        result = { content: TOOL_BUDGET_EXHAUSTED_NOTE, isError: true };
-      } else {
-        used++;
-        const callStarted = Date.now();
-        onPhase('model-tool');
-        result = boundedToolResult(await opts.executeTool(call, opts.signal));
-        durationMs = Date.now() - callStarted;
-      }
       const evidenceKey = toolResultEvidenceKey(result);
       const duplicate = prior !== undefined && prior === evidenceKey;
       if (duplicate) duplicates++;
@@ -691,6 +730,8 @@ interface ProviderPolicyState {
   providerFirstByteMs?: number;
   providerFirstOutputMs?: number;
   usage: AiTokenUsage;
+  /** Pages the provider's web tools cited or read during this user turn. */
+  sources: AiWebSource[];
   terminalOutcome?: AiTurnMetrics['terminalOutcome'];
   phase: NonNullable<AiTurnMetrics['terminalPhase']>;
 }
@@ -705,6 +746,8 @@ function addUsage(target: AiTokenUsage, usage: AiTokenUsage): void {
   target.cacheWriteTokens += usage.cacheWriteTokens;
   target.outputTokens += usage.outputTokens;
   target.reasoningTokens += usage.reasoningTokens;
+  if (usage.webSearchRequests) target.webSearchRequests = (target.webSearchRequests ?? 0) + usage.webSearchRequests;
+  if (usage.webFetchRequests) target.webFetchRequests = (target.webFetchRequests ?? 0) + usage.webFetchRequests;
 }
 
 function withProviderMetrics(metrics: AiTurnMetrics, state: ProviderPolicyState): AiTurnMetrics {
@@ -721,6 +764,8 @@ function withProviderMetrics(metrics: AiTurnMetrics, state: ProviderPolicyState)
     cacheWriteTokens: state.usage.cacheWriteTokens,
     outputTokens: state.usage.outputTokens,
     reasoningTokens: state.usage.reasoningTokens,
+    ...(state.usage.webSearchRequests ? { webSearchRequests: state.usage.webSearchRequests } : {}),
+    ...(state.usage.webFetchRequests ? { webFetchRequests: state.usage.webFetchRequests } : {}),
     ...(state.terminalOutcome ? { terminalOutcome: state.terminalOutcome } : {}),
   };
 }
@@ -840,6 +885,7 @@ async function finalizeProviderTurn(
     current = repaired;
   }
   if (current.toolCalls.length === 0 && current.visible) {
+    if (state.sources.length) opts.onEvent({ kind: 'sources', sources: [...state.sources] });
     opts.onEvent({ kind: 'text-delta', delta: current.changeTicket ? isolateValidChangeTicket(current.visible) : current.visible });
   }
   if (current.outcome !== 'none') state.terminalOutcome = current.outcome;
@@ -862,6 +908,7 @@ async function runProviderChat(
     providerRequests: 0,
     providerDurationMs: 0,
     usage: emptyUsage(),
+    sources: [],
     phase: 'provider',
   };
   let partialMetrics = emptyTurnMetrics();
@@ -902,7 +949,18 @@ async function runProviderChat(
         }
         if (turn.resolvedModel) state.resolvedModels.push(turn.resolvedModel);
         addUsage(state.usage, turn.usage);
-        return normalizeProviderTurn(state.automaticTools, turn.text, turn.toolCalls, turn.appendAssistant);
+        // Provider-run web tools already ran; show them in the tool trace.
+        for (const server of turn.serverTools ?? []) {
+          opts.onEvent({ kind: 'tool-start', name: server.name, summary: server.summary });
+          opts.onEvent({ kind: 'tool-end', name: server.name, summary: server.summary, ok: server.ok });
+        }
+        for (const source of turn.sources ?? []) {
+          if (!state.sources.some(seen => seen.url === source.url)) state.sources.push(source);
+        }
+        const truncated = (turn.stopReason === 'max_tokens' || turn.stopReason === 'length')
+          && turn.toolCalls.length === 0 && !!turn.text.trim() && !extractValidChangeTicket(turn.text);
+        const text = truncated ? `${turn.text}\n\n${TRUNCATED_ANSWER_NOTE}` : turn.text;
+        return normalizeProviderTurn(state.automaticTools, text, turn.toolCalls, turn.appendAssistant);
       } finally {
         state.providerDurationMs += Date.now() - requestStarted;
       }
@@ -928,39 +986,76 @@ async function runProviderChat(
   }
 }
 
-/** One-shot "does this key work" probe. Sends a tiny request and reports
- *  success/failure with the provider's error message. */
-export async function testConnection(settings: AiSettings, apiKey: string, signal?: AbortSignal): Promise<{ ok: boolean; error?: string }> {
+export interface ProviderCheck {
+  ok: boolean;
+  /** One sentence: what is wrong and what to do. */
+  error?: string;
+  kind?: ProviderErrorKind;
+  /** The provider's own message, for a tooltip and the log. Key-free. */
+  detail?: string;
+}
+
+function checkFailure(error: unknown): ProviderCheck {
+  if (error instanceof ProviderError) {
+    return { ok: false, error: error.message, kind: error.kind, ...(error.detail ? { detail: error.detail } : {}) };
+  }
+  return { ok: false, error: error instanceof Error ? error.message : String(error), kind: 'other' };
+}
+
+/** A tiny real generation with the chosen model. A successful response,
+ *  even an empty one, proves the key, the credit and the model. No retries:
+ *  the user is waiting on the answer. */
+export async function testConnection(settings: AiSettings, apiKey: string, signal?: AbortSignal): Promise<ProviderCheck> {
   const meta = resolveProvider(settings);
   const user = 'Reply with the single word: OK';
+  const errorContext = providerErrorContext(meta, settings.model);
+  const retryPolicy = { maxRetries: 0, baseDelayMs: 0, maxDelayMs: 0, maxRetryAfterMs: 0 };
   try {
-    let got = '';
-    const onChunk = (d: string) => { got += d; };
     if (meta.openAiCompat) {
       await streamOpenAiCompat({
         baseUrl: meta.baseUrl,
         model: settings.model,
-        maxTokens: meta.maxOutputTokens,
+        maxTokens: meta.maxOutputTokens ?? 16,
         maxTokensParam: meta.maxTokensParam,
         apiKey,
         system: '',
         user,
+        errorContext,
+        retryPolicy,
         signal,
-        onChunk,
+        onChunk: () => {},
       });
     } else {
-      await streamAnthropic({ baseUrl: meta.baseUrl, model: settings.model, maxTokens: meta.maxOutputTokens, apiKey, system: '', user, signal, onChunk });
+      await streamAnthropic({
+        baseUrl: meta.baseUrl,
+        firstParty: !!meta.firstPartyAnthropic,
+        model: settings.model,
+        maxTokens: 16,
+        apiKey,
+        system: '',
+        user,
+        effort: 'low',
+        errorContext,
+        retryPolicy,
+        signal,
+        onChunk: () => {},
+      });
     }
-    return { ok: got.length > 0 };
+    return { ok: true };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    return checkFailure(e);
   }
 }
 
-/** List models for an OpenAI-compatible provider. Throws for Anthropic (no
- *  listing endpoint — callers use the static suggestion list). */
+/** The provider's live model list (chat-capable models only). Proves the key
+ *  without spending tokens. */
 export async function listModels(settings: AiSettings, apiKey: string, signal?: AbortSignal): Promise<string[]> {
   const meta = resolveProvider(settings);
-  if (!meta.openAiCompat) throw new Error('Model listing is not available for this provider');
-  return listOpenAiModels(meta.baseUrl, apiKey, signal);
+  const errorContext = providerErrorContext(meta, settings.model);
+  const ids = meta.openAiCompat
+    ? await listOpenAiModels(meta.baseUrl, apiKey, signal, { errorContext })
+    : await listAnthropicModels({ baseUrl: meta.baseUrl, firstParty: !!meta.firstPartyAnthropic, apiKey, signal, errorContext });
+  return chatModels(settings.provider, ids);
 }
+
+export { checkFailure as providerCheckFailure };

@@ -482,6 +482,13 @@ function enrichBody(): string[] {
     '  _cType := _o.inputSet.className.whenMissing("")',
     '  _cName := _o.inputSet.name.whenMissing("")',
     'ENDIF',
+    // A create object view points at the edit page it opens.
+    'IF _cls = "CreateObjectView" THEN',
+    '  _cRid := output(_o.editPage.rid.whenMissing(""))',
+    '  _cBid := _o.editPage.id.whenMissing("")',
+    '  _cType := _o.editPage.className.whenMissing("")',
+    '  _cName := _o.editPage.name.whenMissing("")',
+    'ENDIF',
     'IF _cls = "ActionButton" THEN',
     '  _cRid := output(_o.actionObject.rid.whenMissing(""))',
     '  _cBid := _o.actionObject.id.whenMissing("")',

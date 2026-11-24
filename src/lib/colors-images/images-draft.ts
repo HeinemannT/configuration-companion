@@ -5,7 +5,7 @@
  * Pure: no DOM, no chrome.*.
  */
 import { EXTENSION_OF_MIME, extensionOf, imageMime, type ImageFile, type ImageIndex } from './image-files';
-import { isValidId, proposeIds } from './id-proposal';
+import { isValidId, proposeIds, type IdName } from './id-proposal';
 import { FILE_LIMIT_KB, fileFits, type FileOp } from './write-ops';
 
 /** A file added to the workspace, not yet written. */
@@ -18,7 +18,59 @@ export interface NewImage {
   id: string;
   idTouched: boolean;
   folderId: string;
+  /** The image's description in BMP ('' for none): a library icon's licence note, or what the person writes. */
+  description: string;
+  /** Set for an image from the library: the one colour it was added in (six lower-case hex
+   *  digits, '' for none). Its proposed ID starts with `icon_` where the folder gives no
+   *  prefix and ends with its colour. */
+  library?: { hex: string };
 }
+
+/** The prefix a library image's ID gets where the IDs of its folder share none. */
+export const LIBRARY_PREFIX = 'icon_';
+
+/** What the ID of a new image is proposed from: its file name, and for a library image the
+ *  `icon_` fallback and the colour it is written in (`hex`, or its own when not given). */
+function idName(n: Pick<NewImage, 'fileName' | 'library'>, hex?: string): IdName {
+  if (!n.library) return { name: n.fileName };
+  return { name: n.fileName, fallbackPrefix: LIBRARY_PREFIX, suffix: hex ?? n.library.hex };
+}
+
+/**
+ * The ID proposed again for a new image after its folder or colour changed: the
+ * neighbours of its folder decide the prefix, `hex` (six hex digits, '' for none) the
+ * colour at the end of a library image's ID. An ID the person typed is kept.
+ */
+export function reproposeId(n: NewImage, index: ImageIndex, news: readonly NewImage[], hex?: string): string {
+  if (n.idTouched) return n.id;
+  return proposeIds([idName(n, hex)], neighbourIds(index, n.folderId), takenFileIds(index, news, n.key))[0];
+}
+
+/** Words in a folder's name that tell which folder holds images of a library collection. */
+const FOLDER_HINTS: Readonly<Record<string, string>> = { buttons: 'button', status: 'status' };
+
+/**
+ * The folder library images go to unless the person picks another: the BMP folder
+ * selected in the sidebar; with All images, the folder that already holds most images of
+ * this kind when its name tells it (one with "button" in its name for button icons,
+ * "status" for status symbols), else the first folder (in the order given).
+ */
+export function defaultDestination(index: ImageIndex, selected: string | null, kind: string | null, order?: readonly string[]): string {
+  if (selected && index.folders.some(f => f.id === selected)) return selected;
+  const hint = kind ? FOLDER_HINTS[kind] : undefined;
+  if (hint) {
+    const count = (id: string) => index.files.filter(f => f.folderId === id).length;
+    const named = index.folders.filter(f => f.name.toLowerCase().includes(hint))
+      .map((f, i) => ({ id: f.id, n: count(f.id), i }))
+      .sort((a, b) => b.n - a.n || a.i - b.i);
+    if (named.length) return named[0].id;
+  }
+  const first = order?.find(id => index.folders.some(f => f.id === id));
+  return first ?? index.folders[0]?.id ?? '';
+}
+
+/** The longest description written with an image. */
+export const DESCRIPTION_LIMIT = 500;
 
 /** The IDs next to a folder: the style new IDs follow. */
 export function neighbourIds(index: ImageIndex, folderId: string): string[] {
@@ -32,12 +84,15 @@ export function takenFileIds(index: ImageIndex, news: readonly NewImage[], excep
 /** New images for dropped files, in the order given, with proposed IDs.
  *  Files that are not images are left out; their names are returned. */
 export function newImagesFor(
-  files: ReadonlyArray<{ name: string; bytes: Uint8Array }>, folderId: string, index: ImageIndex, existing: readonly NewImage[], nextKey: () => string,
+  files: ReadonlyArray<{ name: string; bytes: Uint8Array; description?: string; library?: { hex: string } }>, folderId: string, index: ImageIndex, existing: readonly NewImage[], nextKey: () => string,
 ): { added: NewImage[]; skipped: string[] } {
   const images = files.filter(f => imageMime(f.name) !== null);
-  const ids = proposeIds(images.map(f => f.name), neighbourIds(index, folderId), takenFileIds(index, existing));
+  const ids = proposeIds(images.map(f => idName({ fileName: f.name, ...(f.library ? { library: f.library } : {}) })), neighbourIds(index, folderId), takenFileIds(index, existing));
   return {
-    added: images.map((f, i): NewImage => ({ key: nextKey(), fileName: f.name, bytes: f.bytes, mime: imageMime(f.name)!, id: ids[i], idTouched: false, folderId })),
+    added: images.map((f, i): NewImage => ({
+      key: nextKey(), fileName: f.name, bytes: f.bytes, mime: imageMime(f.name)!, id: ids[i], idTouched: false, folderId, description: f.description ?? '',
+      ...(f.library ? { library: { hex: f.library.hex } } : {}),
+    })),
     skipped: files.filter(f => imageMime(f.name) === null).map(f => f.name),
   };
 }
@@ -73,7 +128,11 @@ export function buildFileOps(
   const ops: FileOp[] = [];
   const tooLarge: string[] = [];
   for (const { item, out } of news) {
-    const op: FileOp = { kind: 'add', folderId: item.folderId, id: item.id, name: outputName(item.fileName, out.mime), mime: out.mime, base64: out.base64 ?? toBase64(out.bytes) };
+    const description = item.description.trim().slice(0, DESCRIPTION_LIMIT);
+    const op: FileOp = {
+      kind: 'add', folderId: item.folderId, id: item.id, name: outputName(item.fileName, out.mime), mime: out.mime, base64: out.base64 ?? toBase64(out.bytes),
+      ...(description ? { description } : {}),
+    };
     if (fileFits(op)) ops.push(op); else tooLarge.push(op.name);
   }
   for (const { file, out } of changes) {

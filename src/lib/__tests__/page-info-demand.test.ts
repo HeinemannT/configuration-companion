@@ -11,6 +11,7 @@ import { getHandler, type HandlerMeta } from '../handler-registry';
 import { setSwContext, type SwContext } from '../sw-context';
 import { clearAllContextRids, pageContextIsCurrent, setPageContext } from '../context-rid';
 import { resolveTabPageContext } from '../page-context-resolver';
+import { PAGE_INFO_COALESCE_MS } from '../content-script-injection';
 import '../handlers/detection';
 
 const TAB = 7;
@@ -69,14 +70,34 @@ describe('page info on demand', () => {
     expect(sent).toEqual([]);
   });
 
-  it('refreshes as before for an open panel or Inspect in the window', async () => {
+  it('scans once per navigation for an open panel', async () => {
+    panels.set(WIN, {});
+    // One navigation reports itself several times.
+    await run('BMP_URL_CHANGED');
+    await run('PAGE_CONTEXT', { rid: '7265488200395209451' });
+    await run('BMP_PAGE_RENDER_CHANGED');
+    expect(sent.filter(s => s.type === 'GET_PAGE_INFO')).toHaveLength(0);
+    await new Promise(r => setTimeout(r, PAGE_INFO_COALESCE_MS + 50));
+    expect(sent.filter(s => s.type === 'GET_PAGE_INFO')).toHaveLength(1);
+  });
+
+  it('Inspect alone asks the page for its context only, never for a scan', async () => {
+    inspect = true;
+    setPageContext(TAB, { rid: '1111111111111111111' });
+    await run('BMP_PAGE_RENDER_CHANGED');
+    await run('BMP_URL_CHANGED');
+    await new Promise(r => setTimeout(r, PAGE_INFO_COALESCE_MS + 50));
+    expect(sent.filter(s => s.type === 'GET_PAGE_INFO')).toHaveLength(0);
+    // The page heading's identity still follows the page.
+    expect(sent.some(s => s.type === 'GET_PAGE_CONTEXT')).toBe(true);
+  });
+
+  it('a panel closed before the scan is due asks nothing of the page', async () => {
     panels.set(WIN, {});
     await run('BMP_PAGE_RENDER_CHANGED');
-    expect(sent.filter(s => s.type === 'GET_PAGE_INFO')).toHaveLength(1);
     panels.clear();
-    inspect = true;
-    await run('BMP_URL_CHANGED');
-    expect(sent.filter(s => s.type === 'GET_PAGE_INFO')).toHaveLength(2);
+    await new Promise(r => setTimeout(r, PAGE_INFO_COALESCE_MS + 50));
+    expect(sent.filter(s => s.type === 'GET_PAGE_INFO')).toHaveLength(0);
   });
 
   it('a later reader asks the page once for its bound object (context only)', async () => {

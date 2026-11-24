@@ -117,6 +117,23 @@ describe('the brief, one kind of mark at a time', () => {
   });
 });
 
+describe('an arrow that asks for no operation', () => {
+  it('says where it starts and where it points, and that the user did not say what it means', () => {
+    const t = buildBrief(base([
+      m(1, { targets: ['txt_info', 'btn_export'], reading: 'Arrow from Info to Export', arrow: { from: 'txt_info', to: 'btn_export' }, ink: ink() }),
+      m(2, { targets: ['txt_info'], reading: 'Arrow from Info', arrow: { from: 'txt_info', end: { tabId: 'tab_overview', row: 5, col: 4 }, near: { id: 'btn_export', side: 'below' } }, ink: ink() }),
+      m(3, { reading: 'Arrow', arrow: {}, ink: ink({ tabId: 'tab_overview', row: 4, col: 3, cols: 2 }) }),
+      m(4, { text: 'this goes there', targets: ['txt_info'], reading: 'Arrow inside Info', arrow: { from: 'txt_info', to: 'txt_info' }, ink: ink() }),
+    ]));
+    expect(t).toContain('1. Arrow from "Info" (TextElement, txt_info) to "Export" (ActionButton, btn_export). The user did not say what it means: ask before changing anything.');
+    expect(t).toContain('2. Arrow from "Info" (TextElement, txt_info) to empty space below "Export" (ActionButton, btn_export), at row 5, column 4. The user did not say what it means: ask before changing anything.');
+    expect(t).toContain('3. Arrow on empty space at row 4, columns 3-4. The user did not say what it means: ask before changing anything.');
+    expect(t).toContain('4. Arrow inside "Info" (TextElement, txt_info). The user says: "this goes there"');
+    expect(t).not.toContain('not a shape Companion recognised');
+    expect(t).not.toContain('Our guess');
+  });
+});
+
 describe('a drawn tab that is on screen', () => {
   it('is named where its sketches sit, and is not given as the shown tab of the page', () => {
     const marks = [

@@ -240,6 +240,12 @@ register('BLUEPRINT_RESUME', async (_msg, _respond, meta) => {
 // LAYOUT_LOAD/APPLY are request/response: the content overlay sends them via `sendRequest`
 // (one-shot), so the handler's `respond` IS sendResponse and goes straight back to the sender.
 
+/** The Blueprint layout load running per tab. Blueprint reloads on every page the user moves to; the
+ *  next load from the same tab ends the older one, so its waiting posts leave the transport queue and
+ *  the page the user stays on is read first. */
+const layoutLoads = new Map<string, AbortController>();
+export const LAYOUT_LOAD_SUPERSEDED = 'Superseded by a newer layout load';
+
 register('LAYOUT_LOAD', async (msg, respond, meta) => {
   const ctx = ctxOf(meta);
   if (!ctx.client) { respond({ type: 'LAYOUT_LOAD_RESULT', ok: false, error: 'Not connected' }); return; }
@@ -247,8 +253,17 @@ register('LAYOUT_LOAD', async (msg, respond, meta) => {
   const environment = environmentToken(ctx);
   const t0 = Date.now();
   const timings: string[] = []; // operation-local — see makeLayoutIO
+  // Point and tell keeps its own loads as they are.
+  const key = meta.senderTabId != null && msg.for !== 'point-tell' ? String(meta.senderTabId) : null;
+  const controller = new AbortController();
+  if (key) {
+    layoutLoads.get(key)?.abort();
+    layoutLoads.set(key, controller);
+  }
+  const signal = controller.signal;
   try {
-    const res = await loadPage(ctx.client, msg.rid, msg.prefer, timings);
+    const res = await loadPage(ctx.client, msg.rid, msg.prefer, timings, signal);
+    if (signal.aborted) { respond({ type: 'LAYOUT_LOAD_RESULT', ok: false, error: LAYOUT_LOAD_SUPERSEDED }); return; }
     if (!res) {
       respond({ type: 'LAYOUT_LOAD_RESULT', ok: false, error: 'Not an editable page (no tabset resolved)' });
       ctx.logActivity('warn', 'This page cannot be edited in Blueprint', `RID ${msg.rid}`);
@@ -260,8 +275,11 @@ register('LAYOUT_LOAD', async (msg, respond, meta) => {
     });
     ctx.logActivity('success', msg.for === 'point-tell' ? `Read the layout of ${res.ctx.pageId} for Point and tell` : `Opened Blueprint for ${res.ctx.pageId}`, [`${res.ctx.pageClass} ${res.ctx.pageId}${res.ctx.resultOnly ? ' (result-only, no tabset)' : ''}`, `EC calls: ${timings.join(' | ')}`].join('\n'), { category: 'system', action: 'blueprint-load', durationMs: Date.now() - t0 });
   } catch (e) {
+    if (signal.aborted) { respond({ type: 'LAYOUT_LOAD_RESULT', ok: false, error: LAYOUT_LOAD_SUPERSEDED }); return; }
     respond({ type: 'LAYOUT_LOAD_RESULT', ok: false, error: errorMessage(e) });
     ctx.logActivity('error', 'Blueprint load threw', e instanceof Error ? e.message : String(e));
+  } finally {
+    if (key && layoutLoads.get(key) === controller) layoutLoads.delete(key);
   }
 });
 

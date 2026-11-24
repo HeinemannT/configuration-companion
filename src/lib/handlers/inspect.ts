@@ -127,8 +127,43 @@ register('SET_INSPECT_STATE', async (msg, _respond, meta) => {
   }
 });
 
+/** The edit-page field read running per tab. A form's fields are read with its whole layout; someone
+ *  moving on from the form leaves that read behind, ahead of what the next page needs. The next read
+ *  from the same tab, or the tab leaving its page, ends it (its waiting posts leave the queue). */
+const editPageFieldReads = new Map<number, AbortController>();
+export const EDIT_PAGE_FIELDS_SUPERSEDED = 'Superseded: the tab moved on';
+
+/** The tab left its page: its edit-page field read is no longer needed. */
+export function releaseEditPageFields(tabId: number): void {
+  editPageFieldReads.get(tabId)?.abort();
+  editPageFieldReads.delete(tabId);
+}
+
 register('INSPECT_EDIT_PAGE_FIELDS', async (msg, respond, meta) => {
   const ctx = ctxOf(meta);
+  const tabId = meta.senderTabId;
+  const controller = new AbortController();
+  if (tabId != null) {
+    editPageFieldReads.get(tabId)?.abort();
+    editPageFieldReads.set(tabId, controller);
+  }
+  const signal = controller.signal;
+  const superseded = () => respond({ type: 'INSPECT_EDIT_PAGE_FIELDS_RESULT', ok: false, error: EDIT_PAGE_FIELDS_SUPERSEDED });
+  try {
+    await editPageFields(msg.editPageRid, ctx, respond, signal, superseded);
+  } finally {
+    if (tabId != null && editPageFieldReads.get(tabId) === controller) editPageFieldReads.delete(tabId);
+  }
+});
+
+async function editPageFields(
+  editPageRid: string,
+  ctx: SwContext,
+  respond: (r: InspectorMessage) => void,
+  signal: AbortSignal,
+  superseded: () => void,
+): Promise<void> {
+  const msg = { editPageRid };
   if (!ctx.client) {
     respond({ type: 'INSPECT_EDIT_PAGE_FIELDS_RESULT', ok: false, error: 'Not connected' });
     return;
@@ -142,7 +177,8 @@ register('INSPECT_EDIT_PAGE_FIELDS', async (msg, respond, meta) => {
     return;
   }
   try {
-    const loaded = await loadPage(ctx.client, msg.editPageRid, 'instance', []);
+    const loaded = await loadPage(ctx.client, msg.editPageRid, 'instance', [], signal);
+    if (signal.aborted) { superseded(); return; }
     const model = loaded?.load.model;
     const projection = Object.values(model?.flows ?? {}).find(flow =>
       flow.ownerClass === 'EditPage' && (
@@ -159,6 +195,7 @@ register('INSPECT_EDIT_PAGE_FIELDS', async (msg, respond, meta) => {
     }
     const objectTypes = [...new Set(model?.editPageTypes ?? [])];
     const schemaResults = await typeKnowledgeFor(ctx).propertiesFor(objectTypes);
+    if (signal.aborted) { superseded(); return; }
     const schemas = schemaResults.results.flatMap(result => result.ok ? [result.props] : []);
     const properties = schemas.length === objectTypes.length
       ? intersectTypeSchemas(schemas)
@@ -194,11 +231,12 @@ register('INSPECT_EDIT_PAGE_FIELDS', async (msg, respond, meta) => {
         }),
     });
   } catch (error) {
+    if (signal.aborted) { superseded(); return; }
     respond({
       type: 'INSPECT_EDIT_PAGE_FIELDS_RESULT',
       ok: false,
       error: errorMessage(error),
     });
   }
-});
+}
 

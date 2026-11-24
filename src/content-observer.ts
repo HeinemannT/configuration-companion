@@ -97,12 +97,13 @@ export function startObserver(
         // The page owner changed — drop the stale fiber context and tell the
         // worker this is navigation (which also clears explicit selection).
         s.fiberPageContext = null;
-        sendToSW({ type: 'BMP_URL_CHANGED' } as InspectorMessage);
+        sendToSW({ type: 'BMP_URL_CHANGED', left: true } as InspectorMessage);
       } else {
         // BMP may write tabrid, period, ytd, and other presentation state into
         // the URL. Those are renders within the same page owner and must not
-        // erase an object the user explicitly selected.
-        sendToSW({ type: 'BMP_PAGE_RENDER_CHANGED' } as InspectorMessage);
+        // erase an object the user explicitly selected. The badges were reset above all the same
+        // (a tab switch shows other widgets): `left` drops the naming still queued for the old ones.
+        sendToSW({ type: 'BMP_PAGE_RENDER_CHANGED', left: true } as InspectorMessage);
       }
     }
 

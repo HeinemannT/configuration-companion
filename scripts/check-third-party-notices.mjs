@@ -1,13 +1,16 @@
 // Checks THIRD-PARTY-NOTICES.md against what the built extension ships: the browser extension and the
 // Claude Desktop extension packed into it (claude-desktop/, shipped as claude-setup/configuration-companion.mcpb).
-// Offline; reads only the two package.json and package-lock.json files and the notices file.
+// Offline; reads only the two package.json and package-lock.json files, the notices file and the
+// generated Phosphor data of the image library.
 //
 // Fails when
 //   - a runtime dependency in package.json is neither SHIPPED nor NOT_SHIPPED;
 //   - a package reachable from a shipped dependency (following package-lock.json, minus the
 //     subtrees in NOT_BUNDLED) is not SHIPPED, so a new transitive package forces a decision;
 //   - a shipped package's licence differs from the one recorded here;
-//   - a shipped package, icon set or font is not named in THIRD-PARTY-NOTICES.md.
+//   - a shipped package, icon set or font is not named in THIRD-PARTY-NOTICES.md;
+//   - the Phosphor icons of the image library (generated from the devDependency @phosphor-icons/core by
+//     scripts/generate-image-library.mjs) come from another version than the one installed, or its licence changed.
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -101,6 +104,21 @@ for (const name of [...Object.keys(SHIPPED), ...Object.keys(DESKTOP_SHIPPED)]) {
 for (const asset of ASSETS) if (!notices.includes(asset)) problems.push(`THIRD-PARTY-NOTICES.md does not name ${asset}`);
 for (const licence of new Set([...Object.values(SHIPPED), ...Object.values(DESKTOP_SHIPPED), 'ISC', 'OFL'])) {
   if (!notices.includes(`## ${LICENCE_HEADINGS[licence]}`)) problems.push(`THIRD-PARTY-NOTICES.md lacks the ${licence} licence text`);
+}
+
+// Icons that ship from a devDependency: the package is not bundled, its generated data is.
+const PHOSPHOR_DATA = 'src/lib/colors-images/library-data/button-icons.ts';
+{
+  const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+  const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
+  const meta = lock.packages['node_modules/@phosphor-icons/core'];
+  const data = readFileSync(join(root, PHOSPHOR_DATA), 'utf8');
+  const version = /PHOSPHOR_VERSION = "([^"]+)"/.exec(data)?.[1];
+  if (!pkg.devDependencies?.['@phosphor-icons/core'] || !meta) problems.push(`${PHOSPHOR_DATA} is generated from @phosphor-icons/core, which is not a devDependency`);
+  else {
+    if (meta.license !== 'MIT') problems.push(`@phosphor-icons/core has licence ${meta.license}, expected MIT (Phosphor Icons)`);
+    if (version !== meta.version) problems.push(`${PHOSPHOR_DATA} holds Phosphor ${version ?? '?'}, @phosphor-icons/core is ${meta.version}: run node scripts/generate-image-library.mjs`);
+  }
 }
 
 if (problems.length) {

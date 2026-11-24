@@ -156,6 +156,8 @@ export interface FinishedStroke {
 }
 
 const rawOf = new WeakMap<PtStroke, PtPoint[]>();
+/** Where a stroke starts and ends: a big arrowhead drawn after a pause joins a group at one of those. */
+const endsOf = (raw: PtPoint[]): PtPoint[] => (raw.length ? [raw[0], raw[raw.length - 1]] : []);
 let group: (GroupState & { n: number }) | null = null;
 
 const boxOf = (strokes: ReadonlyArray<PtStroke>): Rect => {
@@ -165,7 +167,7 @@ const boxOf = (strokes: ReadonlyArray<PtStroke>): Rect => {
 };
 
 /** The mark's fields that come from reading its ink. */
-function fromReading(r: InkReading, strokes: PtStroke[]): Pick<PtMark, 'targets' | 'meaning' | 'reading' | 'pointer' | 'ink'> {
+function fromReading(r: InkReading, strokes: PtStroke[]): Pick<PtMark, 'targets' | 'meaning' | 'reading' | 'pointer' | 'arrow' | 'ink'> {
   const first = r.targets[0];
   const rect = first ? targetRect(first) : null;
   const paper = pt.scene?.paper;
@@ -176,6 +178,7 @@ function fromReading(r: InkReading, strokes: PtStroke[]): Pick<PtMark, 'targets'
     ...(r.meaning ? { meaning: r.meaning } : {}),
     ...(r.reading ? { reading: r.reading } : {}),
     ...(r.pointer ? { pointer: true as const } : {}),
+    ...(r.arrow ? { arrow: r.arrow } : {}),
     ink: { strokes, place: r.place, ...(anchor ? { anchor } : {}) },
   };
 }
@@ -208,7 +211,7 @@ function pairMarks(cur: PtMark): { merged: PtMark; other: PtMark } | null {
       if (!paired) continue;
       const keep = cur.n < other.n ? cur : other;
       const strokes = [...keep.ink!.strokes, ...(keep === cur ? other : cur).ink!.strokes];
-      const { meaning: _m, reading: _r, pointer: _p, ...rest } = keep;
+      const { meaning: _m, reading: _r, pointer: _p, arrow: _a, ...rest } = keep;
       return { merged: { ...rest, text: a.text, ...fromReading(paired, strokes) }, other };
     }
   }
@@ -244,9 +247,9 @@ export function commitStroke(f: FinishedStroke): PtMark | null {
   const sameObject = !prev?.targets[0] || !startObj || startObj === prev.targets[0] || (prev.targets.includes(startObj));
   if (group && prev?.ink && !prev.text.trim() && joinsGroup(group, box, f.startedAt) && (crosses || sameObject)) {
     const strokes = [...prev.ink.strokes, f.stroke];
-    const { meaning: _m, reading: _r, pointer: _p, ...rest } = prev;
+    const { meaning: _m, reading: _r, pointer: _p, arrow: _a, ...rest } = prev;
     const next: PtMark = { ...rest, ...fromReading(read(strokes), strokes) };
-    group = { n: prev.n, box: boxOf(next.ink!.strokes), endedAt: f.endedAt };
+    group = { n: prev.n, box: boxOf(next.ink!.strokes), endedAt: f.endedAt, ends: [...(group.ends ?? []), ...endsOf(f.raw)] };
     const stands = settle(next, prev, [pt.next, pt.next]);
     if (stands === next) setMarks(pt.marks.map(m => (m.n === prev.n ? next : m)), pt.next);
     return stands;
@@ -255,7 +258,7 @@ export function commitStroke(f: FinishedStroke): PtMark | null {
   const before = pt.next;
   const mark = addMark({ text: '', ...fromReading(read(strokes), strokes) });
   if (!mark) return null;
-  group = { n: mark.n, box, endedAt: f.endedAt };
+  group = { n: mark.n, box, endedAt: f.endedAt, ends: endsOf(f.raw) };
   return settle(mark, null, [before, pt.next]);
 }
 
@@ -268,7 +271,7 @@ export function dropReading(n: number): void {
   const m = markByNumber(n);
   if (!m || !m.ink) return;
   const over = (m.ink.place.over ?? []).slice(0, 3);
-  const { meaning: _meaning, reading: _reading, ...rest } = m;
+  const { meaning: _meaning, reading: _reading, pointer: _pointer, arrow: _arrow, ...rest } = m;
   const next: PtMark = { ...rest, targets: over.length ? over : m.targets };
   // The ink follows the first object it still names (or nothing).
   const first = next.targets[0];
@@ -301,11 +304,11 @@ export function eraseStrokes(keys: string[]): void {
     const left = m.ink.strokes.filter((_, i) => !gone.has(i));
     if (left.length) {
       // What is left of the ink is read again.
-      const { meaning: _m, reading: _r, pointer: _p, ...rest } = m;
+      const { meaning: _m, reading: _r, pointer: _p, arrow: _a, ...rest } = m;
       const next: PtMark = { ...rest, ...fromReading(read(left), left) };
       changes.push({ n: m.n, before: m, after: next }); marks.push(next);
     } else if (m.text.trim()) {
-      const { ink: _ink, meaning: _meaning, reading: _reading, ...rest } = m;
+      const { ink: _ink, meaning: _meaning, reading: _reading, pointer: _pointer, arrow: _arrow, ...rest } = m;
       const next: PtMark = { ...rest };
       changes.push({ n: m.n, before: m, after: next }); marks.push(next);
     } else changes.push({ n: m.n, before: m, after: null });

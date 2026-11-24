@@ -15,7 +15,7 @@ warmServiceWorkerGraph(mockChromeStorage);
 import { DEFAULT_SETTINGS, type InspectorSettings } from '../types';
 
 const STORED = {
-  schemaVersion: 4, activeProfileId: 'p1', autoDetect: true, saveTarget: 'instance', enrichMode: 'all',
+  schemaVersion: 5, activeProfileId: 'p1', autoDetect: true, saveTarget: 'instance', enrichMode: 'all',
   profiles: [{ id: 'p1', label: 'Prod', bmpUrl: 'https://bmp.test/Ws/', bmpUser: '', bmpPass: '', commandAuthMode: 'portal', commandAuthRevision: 'r' }],
 };
 

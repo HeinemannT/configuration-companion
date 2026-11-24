@@ -21,6 +21,7 @@ import { LogTab } from './tabs/log-tab';
 import { UtilitiesTab } from './tabs/utilities-tab';
 import { applyPrimaryActions, buildPrimaryActions, type PrimaryActionsState } from './header-actions';
 import { AiTab } from './tabs/ai-tab';
+import { hasActiveKey } from '../lib/ai/providers';
 import { provisionalConnectionSnapshot } from '../lib/connection-snapshot';
 import { objectChip } from '../lib/object-chip';
 import { runtimeVersion } from '../lib/build-info';
@@ -75,11 +76,11 @@ const tabs: Record<PanelTabId, Tab> = {
 const aiTab = tabs.ai as AiTab;
 const browseTab = tabs.browse as BrowseTab;
 
-/** The AI tab is present ONLY when a provider key is configured (zero-footprint).
- *  `S.settings.ai` exists iff a key was saved (the session snapshot keeps the
- *  provider even with the key stripped). Kept in sync via AI_CONFIG_CHANGED. */
+/** The AI tab is present ONLY when the active provider has a key
+ *  (zero-footprint). The redacted settings mark stored keys as 'set'. Kept in
+ *  sync via AI_CONFIG_CHANGED. */
 let aiEnabled = false;
-function computeAiEnabled(): boolean { return !!S.settings.ai; }
+function computeAiEnabled(): boolean { return hasActiveKey(S.settings.ai); }
 
 /** The current object the mark last glanced for (enrichment repaints the pill too). */
 let glancedRid: string | null = null;

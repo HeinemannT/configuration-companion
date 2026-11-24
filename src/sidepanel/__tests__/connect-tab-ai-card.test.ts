@@ -9,14 +9,15 @@
  *
  * @vitest-environment happy-dom
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { InspectorMessage, InspectorSettings, ServerProfile } from '../../lib/types';
+import type { AiLastTest, AiProviderId, AiSettings } from '../../lib/ai/types';
 import { DEFAULT_SETTINGS } from '../../lib/types';
 
 vi.mock('../state', () => ({
   S: {
     activeTab: 'connect',
-    settings: { schemaVersion: 3, profiles: [], activeProfileId: '', autoDetect: true, saveTarget: 'template', enrichMode: 'widgets' },
+    settings: { schemaVersion: 5, profiles: [], activeProfileId: '', autoDetect: true, saveTarget: 'template', enrichMode: 'widgets' },
     connState: {
       display: 'connected',
       identities: {
@@ -34,6 +35,9 @@ vi.mock('../state', () => ({
   getTabPanel: () => document.querySelector('[data-test-connect-panel]'),
   sendMessage: vi.fn(),
 }));
+
+const { confirmModalMock } = vi.hoisted(() => ({ confirmModalMock: vi.fn(async () => true) }));
+vi.mock('../../lib/modal', () => ({ confirmModal: confirmModalMock }));
 
 // The update banner asks GitHub for the latest release; here no update is known.
 vi.mock('../../lib/version-check', () => ({
@@ -53,6 +57,25 @@ import { S as shared } from '../state';
 function freshSettings(ai?: InspectorSettings['ai']): InspectorSettings {
   return { ...DEFAULT_SETTINGS, profiles: [], activeProfileId: '', ...(ai ? { ai } : {}) };
 }
+
+/** Redacted AI settings as the panel receives them: keys are only 'set'. */
+function keyed(provider: AiProviderId, model: string, extra: Partial<AiSettings> = {}, lastTest?: AiLastTest): AiSettings {
+  return {
+    provider, model,
+    keys: { [provider]: { apiKeyEnc: 'set', model, ...(lastTest ? { lastTest } : {}) } },
+    ...extra,
+  };
+}
+
+function setChromeForKeys(granted = true) {
+  (globalThis as { chrome?: unknown }).chrome = {
+    runtime: { getManifest: () => ({ version: '0.0.0-test' }) },
+    tabs: { query: async () => [] },
+    permissions: { request: vi.fn(async () => granted), contains: async () => granted },
+  };
+}
+
+const flushAsync = async () => { for (let i = 0; i < 6; i++) await new Promise(r => setTimeout(r, 0)); };
 
 function renderTab(): { tab: ConnectTab; el: HTMLElement; sent: InspectorMessage[] } {
   const sent: InspectorMessage[] = [];
@@ -92,7 +115,7 @@ describe('AI Assistant card states', () => {
   });
 
   it('configured but untested: plain card (no keyline, no dot/latency), mono line, Edit', () => {
-    shared.settings = freshSettings({ provider: 'deepseek', model: 'deepseek-chat', apiKeyEnc: 'set' });
+    shared.settings = freshSettings(keyed('deepseek', 'deepseek-chat'));
     const { el } = renderTab();
     const card = el.querySelector('.ai-card')!;
     expect(card.classList.contains('ready')).toBe(false);
@@ -105,10 +128,7 @@ describe('AI Assistant card states', () => {
   });
 
   it('configured + verified: green keyline, dot + latency, no pill', () => {
-    shared.settings = freshSettings({
-      provider: 'anthropic', model: 'claude-sonnet-5', apiKeyEnc: 'set',
-      lastTest: { ok: true, ms: 412, at: Date.now() },
-    });
+    shared.settings = freshSettings(keyed('anthropic', 'claude-sonnet-5', {}, { ok: true, ms: 412, at: Date.now() }));
     const { el } = renderTab();
     const card = el.querySelector('.ai-card')!;
     expect(card.classList.contains('ready')).toBe(true);
@@ -118,10 +138,7 @@ describe('AI Assistant card states', () => {
   });
 
   it('a failed last test renders a plain card (no green keyline)', () => {
-    shared.settings = freshSettings({
-      provider: 'openai', model: 'gpt-5.2', apiKeyEnc: 'set',
-      lastTest: { ok: false, ms: 900, at: Date.now() },
-    });
+    shared.settings = freshSettings(keyed('openai', 'gpt-5.2', {}, { ok: false, ms: 900, at: Date.now() }));
     const { el } = renderTab();
     const card = el.querySelector('.ai-card')!;
     expect(card.classList.contains('ready')).toBe(false);
@@ -130,26 +147,26 @@ describe('AI Assistant card states', () => {
   });
 
   it('the Edit action expands the existing config form (provider/model/key)', () => {
-    shared.settings = freshSettings({ provider: 'deepseek', model: 'deepseek-chat', apiKeyEnc: 'set' });
+    shared.settings = freshSettings(keyed('deepseek', 'deepseek-chat'));
     const { el } = renderTab();
     expandAi(el);
     const form = el.querySelector('.ai-form')!;
     expect(form).toBeTruthy();
     expect(form.querySelector('#ai-provider')).toBeTruthy();
     expect(form.querySelector('#ai-model')).toBeTruthy();
-    expect(form.textContent).toContain('saved'); // masked key row
+    expect(form.querySelector('.ai-key-saved')?.textContent).toBe('Key saved'); // never the key
+    expect(form.querySelector('#ai-key')).toBeNull();
     // Card button flips to Close.
     expect(el.querySelector('.ai-card-edit')?.getAttribute('aria-label')).toBe('Close AI settings');
   });
 
   it('renders a saved custom provider in the picker and redacts its key JSON', () => {
-    shared.settings = freshSettings({
-      provider: 'custom', model: 'agent', apiKeyEnc: 'set',
+    shared.settings = freshSettings(keyed('custom', 'agent', {
       customProvider: {
         name: 'Company Gateway', vendor: 'company', apiType: 'openai',
         models: [{ id: 'agent', name: 'Agent', url: 'https://ai.example.test/v1', toolCalling: true }],
       },
-    });
+    }));
     const { el } = renderTab();
     expandAi(el);
     expect(el.querySelector('.ai-card-ln2')?.textContent).toContain('Company Gateway');
@@ -179,6 +196,7 @@ describe('AI Assistant card states', () => {
     expandAi(el);
     const provider = el.querySelector('#ai-provider') as HTMLSelectElement;
     expect(Array.from(provider.options).at(-1)?.textContent).toBe('Custom endpoint…');
+    expect(el.querySelector('#ai-web')).toBeTruthy();
     provider.value = 'custom';
     provider.dispatchEvent(new Event('change'));
 
@@ -246,10 +264,10 @@ describe('AI Assistant card states', () => {
   });
 
   it('AI_TEST_RESULT persists lastTest into shared settings for the card', () => {
-    shared.settings = freshSettings({ provider: 'deepseek', model: 'deepseek-chat', apiKeyEnc: 'set' });
+    shared.settings = freshSettings(keyed('deepseek', 'deepseek-chat'));
     const { tab, el } = renderTab();
     tab.handleMessage({ type: 'AI_TEST_RESULT', ok: true, model: 'deepseek-chat', ms: 233 });
-    expect(shared.settings.ai?.lastTest).toMatchObject({ ok: true, ms: 233 });
+    expect(shared.settings.ai?.keys.deepseek?.lastTest).toMatchObject({ ok: true, ms: 233, model: 'deepseek-chat' });
     tab.render(el);
     const card = el.querySelector('.ai-card')!;
     expect(card.classList.contains('ready')).toBe(true);
@@ -295,6 +313,152 @@ describe('AI Assistant card states', () => {
     expect(text).toContain('Double-click opens it in the object window');
     expect(text).toContain('Alt+Enter the object window');
     expect(help.querySelectorAll('.cx-htext p')).toHaveLength(5);
+  });
+});
+
+describe('AI setup flow', () => {
+  afterEach(() => {
+    (globalThis as { chrome?: unknown }).chrome = { runtime: { getManifest: () => ({ version: '0.0.0-test' }) } };
+  });
+
+  it('recognises a pasted key by its prefix, switches provider and checks it at once', async () => {
+    setChromeForKeys(true);
+    shared.settings = freshSettings();
+    const { el, sent } = renderTab();
+    expandAi(el);
+    const provider = el.querySelector('#ai-provider') as HTMLSelectElement;
+    provider.value = 'openai';
+    provider.dispatchEvent(new Event('change'));
+    const key = el.querySelector('#ai-key') as HTMLInputElement;
+    key.value = 'sk-ant-FAKE-test-key-000000000000';
+    key.dispatchEvent(new InputEvent('input', { inputType: 'insertFromPaste' }));
+    expect((el.querySelector('#ai-provider') as HTMLSelectElement).value).toBe('anthropic');
+    expect(el.querySelector('.ai-conn-status')?.textContent).toBe('Checking the key…');
+    await flushAsync();
+    expect(sent).toContainEqual({ type: 'AI_CHECK_KEY', provider: 'anthropic', apiKey: 'sk-ant-FAKE-test-key-000000000000' });
+    // The key is never painted into any other element.
+    const html = el.innerHTML.replace(/value="[^"]*"/g, '');
+    expect(html).not.toContain('sk-ant-FAKE');
+  });
+
+  it('does not guess a provider from a bare sk- key', () => {
+    setChromeForKeys(true);
+    shared.settings = freshSettings();
+    const { el } = renderTab();
+    expandAi(el);
+    const provider = el.querySelector('#ai-provider') as HTMLSelectElement;
+    provider.value = 'deepseek';
+    provider.dispatchEvent(new Event('change'));
+    const key = el.querySelector('#ai-key') as HTMLInputElement;
+    key.value = 'sk-0123456789abcdef';
+    key.dispatchEvent(new InputEvent('input', { inputType: 'insertText' }));
+    expect((el.querySelector('#ai-provider') as HTMLSelectElement).value).toBe('deepseek');
+  });
+
+  it('a declined browser prompt says how to allow access', async () => {
+    setChromeForKeys(false);
+    shared.settings = freshSettings();
+    const { el, sent } = renderTab();
+    expandAi(el);
+    const key = el.querySelector('#ai-key') as HTMLInputElement;
+    key.value = 'sk-ant-FAKE-test-key-000000000000';
+    key.dispatchEvent(new Event('input'));
+    (el.querySelector('[data-action="ai-check"]') as HTMLButtonElement).click();
+    await flushAsync();
+    expect(sent.some(m => m.type === 'AI_CHECK_KEY')).toBe(false);
+    expect(el.querySelector('.ai-conn-status.err')?.textContent)
+      .toBe('Companion has no permission to reach api.anthropic.com. Select Check key and allow it in the browser prompt.');
+  });
+
+  it('a successful check shows Key saved, the live model list and the preselected model', () => {
+    shared.settings = freshSettings();
+    const { tab, el } = renderTab();
+    expandAi(el);
+    tab.handleMessage({
+      type: 'AI_KEY_CHECKED', provider: 'anthropic', ok: true, ms: 380,
+      models: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'], model: 'claude-opus-5-5',
+      configured: true, ai: keyed('anthropic', 'claude-opus-5-5', {}, { ok: true, ms: 380, at: 1, model: 'claude-opus-5-5' }),
+    });
+    tab.render(el);
+    expect(el.querySelector('.ai-key-saved')?.textContent).toBe('Key saved');
+    const model = el.querySelector('#ai-model') as HTMLSelectElement;
+    expect(Array.from(model.options).map(o => o.value)).toEqual(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']);
+    expect(model.value).toBe('claude-opus-5-5');
+    expect(el.querySelector('.ai-conn-status.ok')?.textContent)
+      .toBe('Anthropic accepted the key. 3 models available. The model answered in 380 ms.');
+    expect(el.querySelector('.ai-card-ln2')?.textContent).toBe('Anthropic · claude-opus-5-5 · key saved');
+    expect(el.querySelector('.ai-card.ready')).toBeTruthy();
+  });
+
+  it('a failed check shows the plain sentence and keeps the provider detail in the tooltip', () => {
+    shared.settings = freshSettings();
+    const { tab, el } = renderTab();
+    expandAi(el);
+    tab.handleMessage({
+      type: 'AI_KEY_CHECKED', provider: 'openai', ok: false, kind: 'credit',
+      error: 'OpenAI accepted the key, but the account has no credit left. Add credit in the OpenAI dashboard, then check again.',
+      detail: 'You exceeded your current quota.',
+    });
+    tab.render(el);
+    const status = el.querySelector('.ai-conn-status.err') as HTMLElement;
+    expect(status.textContent).toContain('has no credit left');
+    expect(status.title).toBe('You exceeded your current quota.');
+  });
+
+  it('marks every provider that keeps a key, and choosing one makes it active without a key', () => {
+    shared.settings = freshSettings({
+      provider: 'anthropic', model: 'claude-opus-5-5',
+      keys: { anthropic: { apiKeyEnc: 'set', model: 'claude-opus-5-5' }, grok: { apiKeyEnc: 'set', model: 'grok-4' } },
+    });
+    const { el, sent } = renderTab();
+    expandAi(el);
+    const provider = el.querySelector('#ai-provider') as HTMLSelectElement;
+    expect(Array.from(provider.options).map(o => o.textContent)).toEqual([
+      'Anthropic · key saved', 'OpenAI', 'DeepSeek', 'Grok · key saved', 'Custom endpoint…',
+    ]);
+    provider.value = 'grok';
+    provider.dispatchEvent(new Event('change'));
+    expect(sent).toContainEqual({ type: 'AI_SAVE_CONFIG', provider: 'grok', model: 'grok-4' });
+    expect(sent).toContainEqual({ type: 'AI_LIST_MODELS', provider: 'grok' });
+    expect(sent.some(m => m.type === 'AI_REMOVE_KEY')).toBe(false);
+  });
+
+  it('Remove deletes only the shown provider key, after asking', async () => {
+    shared.settings = freshSettings(keyed('deepseek', 'deepseek-chat'));
+    const { el, sent } = renderTab();
+    expandAi(el);
+    (el.querySelector('[data-action="ai-remove"]') as HTMLButtonElement).click();
+    await flushAsync();
+    expect(confirmModalMock).toHaveBeenCalledWith(expect.objectContaining({ title: 'Remove the DeepSeek key?' }));
+    expect(sent).toContainEqual({ type: 'AI_REMOVE_KEY', provider: 'deepseek' });
+  });
+
+  it('web access is on by default for Anthropic and shown as not available elsewhere', () => {
+    shared.settings = freshSettings(keyed('anthropic', 'claude-opus-5-5'));
+    const { el, sent } = renderTab();
+    expandAi(el);
+    const web = el.querySelector('#ai-web') as HTMLInputElement;
+    expect(web.checked).toBe(true);
+    expect(web.disabled).toBe(false);
+    expect(el.querySelector('.ai-web .setting-hint')?.textContent).toContain('Anthropic bills each search');
+    web.checked = false;
+    web.dispatchEvent(new Event('change'));
+    expect(sent).toContainEqual({ type: 'AI_SET_WEB_ACCESS', on: false });
+
+    const provider = el.querySelector('#ai-provider') as HTMLSelectElement;
+    provider.value = 'deepseek';
+    provider.dispatchEvent(new Event('change'));
+    const off = el.querySelector('#ai-web') as HTMLInputElement;
+    expect(off.disabled).toBe(true);
+    expect(off.checked).toBe(false);
+    expect(el.querySelector('.ai-web .setting-hint')?.textContent).toBe('Not available for DeepSeek. Its chat API has no web tools.');
+  });
+
+  it('copy in the AI form has no em dashes', () => {
+    shared.settings = freshSettings(keyed('anthropic', 'claude-opus-5-5'));
+    const { el } = renderTab();
+    expandAi(el);
+    expect(el.querySelector('.ai-form')?.textContent).not.toContain('\u2014');
   });
 });
 

@@ -109,7 +109,14 @@ export function resolveEditPageOverlayTargets(
 
 export function editPageOverlayTargets(s: ContentState): AdditionalOverlayTarget[] {
   if (s.editPageInspectRid !== s.editPageContext?.editPageRid) return [];
-  return resolveEditPageOverlayTargets(s.editPageContext, s.editPageInspectFields);
+  const targets = resolveEditPageOverlayTargets(s.editPageContext, s.editPageInspectFields);
+  // The widget that opens this edit page (a create object view) already carries it as the cap of its
+  // own badge: a second badge for the edit page inside the form would only cover the first field's
+  // caption.
+  const pageRid = s.editPageContext?.editPageRid;
+  let onWidget = false;
+  for (const e of s.enrichments.values()) if (e.cascade?.rid === pageRid) { onWidget = true; break; }
+  return onWidget ? targets.filter(t => t.labelClassName !== 'crev-inline-edit-page-label') : targets;
 }
 
 /** Resolve the EditField identities once per rendered EditPage. Returns true

@@ -97,7 +97,10 @@ describe('redactSettings', () => {
       { id: 'a', label: 'A', bmpUrl: 'https://a.test/', bmpUser: 'cfg', bmpPass: 'secret-a', commandAuthMode: 'stored' },
       { id: 'b', label: 'B', bmpUrl: 'https://b.test/', bmpUser: '', bmpPass: '', commandAuthMode: 'portal' },
     ],
-    ai: { provider: 'anthropic', model: 'm', apiKeyEnc: 'ciphertext-of-key' },
+    ai: {
+      provider: 'anthropic', model: 'm',
+      keys: { anthropic: { apiKeyEnc: 'ciphertext-of-key', model: 'm' }, openai: { apiKeyEnc: 'ciphertext-of-other-key' } },
+    },
   };
 
   it('replaces each password by a flag and the AI key by a marker, for the window’s profile', async () => {
@@ -107,8 +110,10 @@ describe('redactSettings', () => {
     const text = JSON.stringify(seen);
     expect(text).not.toContain('secret-a');
     expect(text).not.toContain('ciphertext-of-key');
+    expect(text).not.toContain('ciphertext-of-other-key');
     expect(seen.profiles.map(p => [p.bmpPass, p.hasStoredPassword])).toEqual([['', true], ['', false]]);
-    expect(seen.ai?.apiKeyEnc).toBe('set');
+    expect(seen.ai?.keys.anthropic?.apiKeyEnc).toBe('set');
+    expect(seen.ai?.keys.openai?.apiKeyEnc).toBe('set');
     expect(seen.activeProfileId).toBe('b');
     // The source is not changed.
     expect(settings.profiles[0].bmpPass).toBe('secret-a');

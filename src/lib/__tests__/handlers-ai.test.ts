@@ -9,7 +9,11 @@ import type { InspectorMessage } from '../types';
 
 let recordedSignal: AbortSignal | null = null;
 const sentBroadcasts: InspectorMessage[] = [];
-const { streamChatMock } = vi.hoisted(() => ({ streamChatMock: vi.fn() }));
+const { streamChatMock, testConnectionMock, listModelsMock } = vi.hoisted(() => ({
+  streamChatMock: vi.fn(),
+  testConnectionMock: vi.fn(),
+  listModelsMock: vi.fn(),
+}));
 
 vi.mock('../ai/client', () => ({
   streamCompletion: (opts: any) => {
@@ -20,8 +24,10 @@ vi.mock('../ai/client', () => ({
     });
   },
   streamChat: streamChatMock,
-  testConnection: vi.fn(() => Promise.resolve({ ok: true })),
-  listModels: vi.fn(() => Promise.resolve(['a', 'b'])),
+  testConnection: testConnectionMock,
+  listModels: listModelsMock,
+  providerErrorContext: (meta: any, model: string) => ({ provider: meta.label, console: meta.console, model, host: new URL(meta.baseUrl).host }),
+  providerCheckFailure: (e: any) => ({ ok: false, error: e.message, kind: e.kind ?? 'other' }),
 }));
 
 vi.mock('../crypto', () => ({
@@ -45,7 +51,7 @@ vi.mock('../messaging', () => ({
 
 function makeCtx() {
   return {
-    settings: { schemaVersion: 3, profiles: [], activeProfileId: '', autoDetect: true, saveTarget: 'template', enrichMode: 'widgets', ai: undefined as any },
+    settings: { schemaVersion: 5, profiles: [], activeProfileId: '', autoDetect: true, saveTarget: 'template', enrichMode: 'widgets', ai: undefined as any },
     logActivity: vi.fn(),
   };
 }
@@ -57,6 +63,8 @@ describe('handlers/ai', () => {
   beforeEach(async () => {
     vi.resetModules();
     streamChatMock.mockReset();
+    testConnectionMock.mockReset().mockResolvedValue({ ok: true });
+    listModelsMock.mockReset().mockResolvedValue(['claude-opus-5-5', 'claude-sonnet-5-5']);
     recordedSignal = null;
     sentBroadcasts.length = 0;
     const swctx = await import('../sw-context');
@@ -79,23 +87,101 @@ describe('handlers/ai', () => {
     expect(responses[0]).toEqual({ type: 'AI_CONFIG_DATA', configured: false, provider: undefined, model: undefined });
   });
 
-  it('AI_SAVE_CONFIG encrypts the key and stores provider + model', async () => {
-    const { responses, done } = call({ type: 'AI_SAVE_CONFIG', provider: 'anthropic', model: 'claude-opus-4-8', apiKey: 'sk-1' });
+  it('AI_SAVE_CONFIG encrypts the key for its provider and stores provider + model', async () => {
+    const { responses, done } = call({ type: 'AI_SAVE_CONFIG', provider: 'anthropic', model: 'claude-opus-5-5', apiKey: 'sk-ant-test-1' });
     await done;
-    expect(ctx.settings.ai).toEqual({ provider: 'anthropic', model: 'claude-opus-4-8', apiKeyEnc: 'enc:sk-1' });
-    expect(responses[0]).toMatchObject({ type: 'AI_CONFIG_SAVED', ok: true, configured: true, provider: 'anthropic', model: 'claude-opus-4-8' });
-    // Open editor / studio surfaces are notified live via a broadcast.
-    expect(sentBroadcasts).toContainEqual({ type: 'AI_CONFIG_CHANGED', configured: true, provider: 'anthropic', model: 'claude-opus-4-8' });
+    expect(ctx.settings.ai).toEqual({
+      provider: 'anthropic', model: 'claude-opus-5-5',
+      keys: { anthropic: { apiKeyEnc: 'enc:sk-ant-test-1', model: 'claude-opus-5-5' } },
+    });
+    expect(responses[0]).toMatchObject({ type: 'AI_CONFIG_SAVED', ok: true, configured: true, provider: 'anthropic', model: 'claude-opus-5-5' });
+    // Pages see only the marker, never the ciphertext.
+    expect(JSON.stringify(responses[0])).not.toContain('enc:');
+    expect(sentBroadcasts).toContainEqual(expect.objectContaining({ type: 'AI_CONFIG_CHANGED', configured: true, provider: 'anthropic', model: 'claude-opus-5-5' }));
+    expect(JSON.stringify(sentBroadcasts)).not.toContain('sk-ant-test-1');
   });
 
-  it('AI_SAVE_CONFIG keeps the existing key when only provider/model change', async () => {
-    ctx.settings.ai = { provider: 'anthropic', model: 'old', apiKeyEnc: 'enc:keep' };
-    const { done } = call({ type: 'AI_SAVE_CONFIG', provider: 'anthropic', model: 'claude-sonnet-5' });
+  it('switching provider keeps every other key, and switching back needs no key', async () => {
+    ctx.settings.ai = {
+      provider: 'anthropic', model: 'claude-opus-5-5',
+      keys: { anthropic: { apiKeyEnc: 'enc:a', model: 'claude-opus-5-5' } },
+    };
+    await call({ type: 'AI_SAVE_CONFIG', provider: 'openai', model: 'gpt-5.2', apiKey: 'sk-proj-test' }).done;
+    expect(ctx.settings.ai.keys).toEqual({
+      anthropic: { apiKeyEnc: 'enc:a', model: 'claude-opus-5-5' },
+      openai: { apiKeyEnc: 'enc:sk-proj-test', model: 'gpt-5.2' },
+    });
+    await call({ type: 'AI_SAVE_CONFIG', provider: 'anthropic', model: 'claude-opus-5-5' }).done;
+    expect(ctx.settings.ai).toMatchObject({ provider: 'anthropic', model: 'claude-opus-5-5' });
+    expect(ctx.settings.ai.keys.openai.apiKeyEnc).toBe('enc:sk-proj-test');
+    expect(ctx.settings.ai.keys.anthropic.apiKeyEnc).toBe('enc:a');
+  });
+
+  it('AI_SAVE_CONFIG refuses a provider without a key and changes nothing', async () => {
+    ctx.settings.ai = { provider: 'anthropic', model: 'claude-opus-5-5', keys: { anthropic: { apiKeyEnc: 'enc:a' } } };
+    const { responses, done } = call({ type: 'AI_SAVE_CONFIG', provider: 'grok', model: 'grok-4' });
     await done;
-    expect(ctx.settings.ai).toEqual({ provider: 'anthropic', model: 'claude-sonnet-5', apiKeyEnc: 'enc:keep' });
+    expect(responses[0]).toMatchObject({ type: 'AI_CONFIG_SAVED', ok: false, error: 'Paste the API key for Grok first.' });
+    expect(ctx.settings.ai.provider).toBe('anthropic');
+  });
+
+  it('AI_CHECK_KEY lists models, preselects the default, tests it, then stores the key', async () => {
+    ctx.settings.ai = { provider: 'openai', model: 'gpt-5.2', keys: { openai: { apiKeyEnc: 'enc:o', model: 'gpt-5.2' } } };
+    const { responses, done } = call({ type: 'AI_CHECK_KEY', provider: 'anthropic', apiKey: 'sk-ant-test-2' });
+    await done;
+    expect(listModelsMock).toHaveBeenCalledWith(expect.objectContaining({ provider: 'anthropic' }), 'sk-ant-test-2');
+    expect(testConnectionMock).toHaveBeenCalledWith(expect.objectContaining({ provider: 'anthropic', model: 'claude-opus-5-5' }), 'sk-ant-test-2');
+    expect(responses[0]).toMatchObject({
+      type: 'AI_KEY_CHECKED', provider: 'anthropic', ok: true,
+      models: ['claude-opus-5-5', 'claude-sonnet-5-5'], model: 'claude-opus-5-5', configured: true,
+    });
+    expect(JSON.stringify(responses[0])).not.toContain('sk-ant-test-2');
+    expect(ctx.settings.ai.provider).toBe('anthropic');
+    expect(ctx.settings.ai.keys.anthropic).toMatchObject({ apiKeyEnc: 'enc:sk-ant-test-2', model: 'claude-opus-5-5', lastTest: { ok: true, model: 'claude-opus-5-5' } });
+    expect(ctx.settings.ai.keys.openai.apiKeyEnc).toBe('enc:o');
+  });
+
+  it('AI_CHECK_KEY keeps nothing when the provider rejects the key', async () => {
+    listModelsMock.mockRejectedValue(Object.assign(new Error('Anthropic rejected the API key. Check that you pasted the whole key, or create a new key in the Claude Console.'), { kind: 'auth' }));
+    const { responses, done } = call({ type: 'AI_CHECK_KEY', provider: 'anthropic', apiKey: 'sk-ant-wrong' });
+    await done;
+    expect(responses[0]).toMatchObject({ type: 'AI_KEY_CHECKED', ok: false, kind: 'auth' });
+    expect((responses[0] as any).error).toContain('rejected the API key');
+    expect(testConnectionMock).not.toHaveBeenCalled();
+    expect(ctx.settings.ai).toBeUndefined();
+  });
+
+  it('AI_CHECK_KEY stores a working key even when the account has no credit, and says so', async () => {
+    testConnectionMock.mockResolvedValue({ ok: false, kind: 'credit', error: 'Anthropic accepted the key, but the account has no credit left. Add credit in the Claude Console, then check again.' });
+    const { responses, done } = call({ type: 'AI_CHECK_KEY', provider: 'anthropic', apiKey: 'sk-ant-nocredit' });
+    await done;
+    expect(responses[0]).toMatchObject({ type: 'AI_KEY_CHECKED', ok: false, kind: 'credit', models: ['claude-opus-5-5', 'claude-sonnet-5-5'] });
+    expect(ctx.settings.ai.keys.anthropic).toMatchObject({ apiKeyEnc: 'enc:sk-ant-nocredit', lastTest: { ok: false } });
+  });
+
+  it('AI_CHECK_KEY with a model and no key re-checks the stored key', async () => {
+    ctx.settings.ai = { provider: 'anthropic', model: 'claude-opus-5-5', keys: { anthropic: { apiKeyEnc: 'enc:stored', model: 'claude-opus-5-5' } } };
+    await call({ type: 'AI_CHECK_KEY', provider: 'anthropic', model: 'claude-sonnet-5-5' }).done;
+    expect(testConnectionMock).toHaveBeenCalledWith(expect.objectContaining({ model: 'claude-sonnet-5-5' }), 'stored');
+    expect(ctx.settings.ai).toMatchObject({ provider: 'anthropic', model: 'claude-sonnet-5-5' });
+    expect(ctx.settings.ai.keys.anthropic.apiKeyEnc).toBe('enc:stored');
+  });
+
+  it('AI_CHECK_KEY reports a missing host permission before any request', async () => {
+    (globalThis as any).chrome = { permissions: { contains: vi.fn(async () => false) } };
+    try {
+      const { responses, done } = call({ type: 'AI_CHECK_KEY', provider: 'deepseek', apiKey: 'sk-0123456789abcdef0123' });
+      await done;
+      expect(responses[0]).toMatchObject({ type: 'AI_KEY_CHECKED', ok: false, kind: 'permission' });
+      expect((responses[0] as any).error).toBe('Companion has no permission to reach api.deepseek.com. Select Check key and allow it in the browser prompt.');
+      expect(listModelsMock).not.toHaveBeenCalled();
+    } finally {
+      delete (globalThis as any).chrome;
+    }
   });
 
   it('AI_SAVE_CUSTOM_PROVIDER encrypts the imported key and stores only sanitized metadata', async () => {
+    ctx.settings.ai = { provider: 'anthropic', model: 'claude-opus-5-5', keys: { anthropic: { apiKeyEnc: 'enc:a' } } };
     const json = JSON.stringify({
       name: 'Gateway', vendor: 'gateway', apiKey: 'plain-secret', apiType: 'openai',
       models: [
@@ -105,25 +191,43 @@ describe('handlers/ai', () => {
     });
     const { responses, done } = call({ type: 'AI_SAVE_CUSTOM_PROVIDER', json });
     await done;
-    expect(ctx.settings.ai).toMatchObject({ provider: 'custom', model: 'agent', apiKeyEnc: 'enc:plain-secret' });
+    expect(ctx.settings.ai).toMatchObject({ provider: 'custom', model: 'agent', keys: { custom: { apiKeyEnc: 'enc:plain-secret' }, anthropic: { apiKeyEnc: 'enc:a' } } });
     expect(ctx.settings.ai.customProvider).toMatchObject({ name: 'Gateway', vendor: 'gateway', apiType: 'openai' });
     expect(JSON.stringify(ctx.settings.ai.customProvider)).not.toContain('plain-secret');
     expect(responses[0]).toMatchObject({ type: 'AI_CONFIG_SAVED', ok: true, provider: 'custom', model: 'agent' });
+    expect(JSON.stringify(responses[0])).not.toContain('plain-secret');
     expect(sentBroadcasts).toContainEqual(expect.objectContaining({ type: 'AI_CONFIG_CHANGED', provider: 'custom', model: 'agent' }));
   });
 
-  it('AI_REMOVE_CONFIG clears the config', async () => {
-    ctx.settings.ai = { provider: 'openai', model: 'gpt-5.2', apiKeyEnc: 'enc:x' };
-    const { responses, done } = call({ type: 'AI_REMOVE_CONFIG' });
+  it('AI_REMOVE_KEY removes only that provider key', async () => {
+    ctx.settings.ai = {
+      provider: 'openai', model: 'gpt-5.2',
+      keys: { openai: { apiKeyEnc: 'enc:x' }, anthropic: { apiKeyEnc: 'enc:y' } },
+    };
+    const { responses, done } = call({ type: 'AI_REMOVE_KEY', provider: 'openai' });
     await done;
-    expect(ctx.settings.ai).toBeUndefined();
-    expect(responses[0]).toEqual({ type: 'AI_CONFIG_SAVED', ok: true, configured: false });
+    expect(ctx.settings.ai.keys).toEqual({ anthropic: { apiKeyEnc: 'enc:y' } });
+    expect(responses[0]).toMatchObject({ type: 'AI_CONFIG_SAVED', ok: true, configured: false });
     // Removal is broadcast too, so surfaces hide the assistant live.
-    expect(sentBroadcasts).toContainEqual({ type: 'AI_CONFIG_CHANGED', configured: false });
+    expect(sentBroadcasts).toContainEqual(expect.objectContaining({ type: 'AI_CONFIG_CHANGED', configured: false }));
+  });
+
+  it('AI_SET_WEB_ACCESS stores the switch without touching keys', async () => {
+    ctx.settings.ai = { provider: 'anthropic', model: 'claude-opus-5-5', keys: { anthropic: { apiKeyEnc: 'enc:a' } } };
+    await call({ type: 'AI_SET_WEB_ACCESS', on: false }).done;
+    expect(ctx.settings.ai).toMatchObject({ webAccess: false, keys: { anthropic: { apiKeyEnc: 'enc:a' } } });
+  });
+
+  it('AI_TEST records the last check on the active provider entry', async () => {
+    ctx.settings.ai = { provider: 'anthropic', model: 'claude-opus-5-5', keys: { anthropic: { apiKeyEnc: 'enc:k', model: 'claude-opus-5-5' } } };
+    const { responses, done } = call({ type: 'AI_TEST' });
+    await done;
+    expect(responses[0]).toMatchObject({ type: 'AI_TEST_RESULT', ok: true, model: 'claude-opus-5-5' });
+    expect(ctx.settings.ai.keys.anthropic.lastTest).toMatchObject({ ok: true, model: 'claude-opus-5-5' });
   });
 
   it('AI_CANCEL aborts the in-flight request and suppresses the error broadcast', async () => {
-    ctx.settings.ai = { provider: 'anthropic', model: 'm', apiKeyEnc: 'enc:k' };
+    ctx.settings.ai = { provider: 'anthropic', model: 'm', keys: { anthropic: { apiKeyEnc: 'enc:k' } } };
     const payload = { requestId: 'req-1', intent: 'ask' as const, lang: 'extended' as const, code: 'x', selection: null, instruction: 'go', context: {} };
     getHandler('AI_REQUEST')({ type: 'AI_REQUEST', payload }, () => {}, { isOneShot: true });
     // Let the handler reach streamCompletion (through the mocked decrypt await).
@@ -141,7 +245,7 @@ describe('handlers/ai', () => {
   });
 
   it('records provider usage and elapsed timing from an AI chat turn', async () => {
-    ctx.settings.ai = { provider: 'openai', model: 'gpt-5.2', apiKeyEnc: 'enc:k' };
+    ctx.settings.ai = { provider: 'openai', model: 'gpt-5.2', keys: { openai: { apiKeyEnc: 'enc:k' } } };
     streamChatMock.mockResolvedValue({
       durationMs: 260, providerRequests: 2, providerDurationMs: 175,
       inputTokens: 800, cachedInputTokens: 240, cacheWriteTokens: 0,
@@ -169,7 +273,7 @@ describe('handlers/ai', () => {
   it('aborts an AI chat exactly at the 45-second deadline and forwards the timeout event', async () => {
     vi.useFakeTimers();
     try {
-      ctx.settings.ai = { provider: 'openai', model: 'gpt-5.2', apiKeyEnc: 'enc:k' };
+      ctx.settings.ai = { provider: 'openai', model: 'gpt-5.2', keys: { openai: { apiKeyEnc: 'enc:k' } } };
       let signal: AbortSignal | undefined;
       streamChatMock.mockImplementation(({ signal: requestSignal, onEvent }: any) => new Promise(resolve => {
         signal = requestSignal;

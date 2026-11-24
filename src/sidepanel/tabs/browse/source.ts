@@ -157,6 +157,14 @@ export class BrowseSource {
       case 'BROWSE_TREE_DATA': {
         const cur = this.trees.get(msg.rid);
         if (!cur) return false;
+        if (msg.superseded) {
+          // Dropped for another page: a complete tree stays cached (no
+          // longer refreshing); anything less is forgotten, so the page is
+          // asked for again when it is shown.
+          if (cur.tree && cur.tree.presented !== 'loading') cur.refreshing = false;
+          else this.trees.delete(msg.rid);
+          return true;
+        }
         if (msg.ok && !msg.tree) {
           // The crumbs, ahead of the tree.
           if (!msg.crumbs) return false;

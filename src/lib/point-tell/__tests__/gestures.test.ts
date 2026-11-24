@@ -43,9 +43,14 @@ describe('a pointer', () => {
     expect(r.meaning).toBeUndefined();
   });
 
-  it('an arrow that starts on an object is still a move, and one that ends on empty space is plain', () => {
+  it('an arrow that starts on an object is still a move, and one on empty space is an arrow with no operation', () => {
     expect(read(line([330, 460], [120, 458], { hook: true, bow: 0.08 })).kind).toBe('move');
-    expect(read(line([700, 580], [900, 590], { hook: true })).kind).toBe('plain');
+    const empty = read(line([700, 580], [900, 590], { hook: true }));
+    expect(empty.kind).toBe('arrow');
+    expect(empty.targets).toEqual([]);
+    expect(empty.meaning).toBeUndefined();
+    expect(empty.reading).toBe('Arrow');
+    expect(read(line([700, 580], [900, 590])).kind).toBe('plain');
     expect(pointerTarget(scene, analyze(line([700, 580], [900, 590], { hook: true })))).toBeNull();
   });
 });

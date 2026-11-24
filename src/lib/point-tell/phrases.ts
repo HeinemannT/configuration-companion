@@ -2,7 +2,8 @@
  * Point and tell: what a mark is called when it is copied for an AI. Every mark has three parts of different
  * reliability, as plain phrases over the copy's refs:
  *
- *   drew   what is physically on the page (a fact): "circle around o3, o4", "arrow from o7 ending just after o5"
+ *   drew   what is physically on the page (a fact): "circle around o3, o4", "arrow from o7 ending just after o5",
+ *          "arrow from o2 to o4" (an arrow that asks for no operation Companion can tell)
  *   guess  what Companion thinks that means (a guess, absent when it is unsure or has no reading): "move o7 after o5"
  *   says   the user's own words (the caller adds them, unchanged)
  *
@@ -12,7 +13,8 @@ import type { PtDraft, PtGridPlace, PtMark, PtPlace, PtRawPlace, PtWidgetKind } 
 import { isDraftId } from './drafts';
 import type { RefTable } from './refs';
 
-export type MarkKind = 'note' | 'click' | 'circle' | 'pointer' | 'ink' | 'arrow' | 'pair' | 'cross' | 'underline' | 'square' | 'tab' | 'page';
+/** `arrow` is an arrow read as a move; `direction` is an arrow with no operation: from one place to another. */
+export type MarkKind = 'note' | 'click' | 'circle' | 'pointer' | 'ink' | 'arrow' | 'direction' | 'pair' | 'cross' | 'underline' | 'square' | 'tab' | 'page';
 
 export interface PhraseCtx {
   refs: RefTable;
@@ -27,6 +29,7 @@ export function kindOf(m: PtMark): MarkKind {
   if (mean?.kind === 'move') return mean.columns !== undefined ? 'pair' : 'arrow';
   if (mean?.kind === 'crossed') return 'cross';
   if (mean?.kind === 'change') return 'underline';
+  if (m.ink && m.arrow && m.reading) return 'direction';
   if (m.ink) return m.reading && m.targets.length ? (m.pointer ? 'pointer' : 'circle') : 'ink';
   return m.targets.length ? 'click' : 'note';
 }
@@ -90,6 +93,16 @@ function drewArrow(m: PtMark, c: PhraseCtx): string | undefined {
   const end = to ? (to.before ? `just before ${to.before}` : to.after ? `just after ${to.after}` : `inside ${to.into}`) : 'elsewhere';
   return `arrow from ${from} ending ${end}`;
 }
+function drewDirection(m: PtMark, c: PhraseCtx): string {
+  const a = m.arrow ?? {};
+  const from = refOf(c, a.from), to = refOf(c, a.to);
+  if (from && to) return from === to ? `arrow inside ${from}` : `arrow from ${from} to ${to}`;
+  const nr = refOf(c, a.near?.id), near = nr && a.near ? ` ${a.near.side} ${nr}` : '';
+  if (from) { const where = a.end ? whereWords(a.end, c) : ''; return `arrow from ${from} to empty space${near}${where ? ` ${where}` : ''}`; }
+  if (to) return `arrow to ${to}`;
+  const where = m.ink ? whereWords(m.ink.place, c) : '';
+  return `arrow on empty space${where ? ` ${where}` : ''}`;
+}
 function drewPair(m: PtMark, c: PhraseCtx): string | undefined {
   const from = refOf(c, m.targets[0]);
   if (!from) return undefined;
@@ -131,6 +144,7 @@ export function drewOf(m: PtMark, c: PhraseCtx): string | undefined {
     case 'circle': return drewCircle(m, c);
     case 'pointer': return drewPointer(m, c);
     case 'arrow': return drewArrow(m, c);
+    case 'direction': return drewDirection(m, c);
     case 'pair': return drewPair(m, c);
     case 'cross': return drewCross(m, c);
     case 'underline': return drewUnderline(m, c);

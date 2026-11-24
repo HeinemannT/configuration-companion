@@ -12,6 +12,8 @@ const PATHS = {
   none: '<path d="M3.5 12.5 12.5 3.5"/>',
   circle: '<circle cx="8" cy="8" r="5.5"/>',
   square: '<rect x="2.5" y="2.5" width="11" height="11" rx="3"/>',
+  upload: '<path d="M8 10V2.5"/><path d="M5 5.5l3-3 3 3"/><path d="M2.5 10v2.5a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V10"/>',
+  folderUp: '<path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.6l1.5 1.5h4.9A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z"/><path d="M8 11.2V7.4"/><path d="M6.4 9 8 7.4 9.6 9"/>',
   drop: '<path d="M11 2.2a1.6 1.6 0 0 1 2.8 1.6L12.3 5.3l-1.6-1.6z"/><path d="m9.6 4.6 1.8 1.8"/><path d="M10.4 5.6 4 12l-.6 1.6L5 13l6.4-6.4"/>',
 } as const;
 

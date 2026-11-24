@@ -66,8 +66,8 @@ function anthropicTerminalTurn(name: 'answer_user' | 'submit_change_ticket', inp
   ];
 }
 
-const DEEPSEEK: AiSettings = { provider: 'deepseek', model: 'deepseek-v4-flash', apiKeyEnc: '' };
-const ANTHROPIC: AiSettings = { provider: 'anthropic', model: 'claude-opus-4-8', apiKeyEnc: '' };
+const DEEPSEEK: AiSettings = { provider: 'deepseek', model: 'deepseek-v4-flash', keys: {} };
+const ANTHROPIC: AiSettings = { provider: 'anthropic', model: 'claude-opus-4-8', keys: {} };
 const SUBMISSION = {
   summary: 'Hide search on Open Actions',
   target: '[[object:818]]',

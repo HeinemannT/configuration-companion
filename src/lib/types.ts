@@ -551,7 +551,7 @@ export interface InspectorSettings {
 }
 
 export const DEFAULT_SETTINGS: InspectorSettings = {
-  schemaVersion: 4,
+  schemaVersion: 5,
   profiles: [],
   activeProfileId: '',
   autoDetect: true,

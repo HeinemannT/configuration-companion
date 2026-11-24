@@ -5,9 +5,9 @@
  * text on it with the nearest value where white passes). Add a color, add
  * several (pasted from a list, CSS or a brand guide, reviewed first) or a
  * scale of lighter and darker steps from a color; a new color close to one
- * already in the sets is marked. Changes stay on the page until one confirm
- * bar lists them; the write is previewed on the server, and a fresh read
- * checks it. There is no delete here: nobody has verified what BMP does to
+ * already in the sets is marked. Changes stay on the page until they are saved
+ * from the save bar (common.ts), which lists them on Review; the write is
+ * previewed on the server, and a fresh read checks it. There is no delete here: nobody has verified what BMP does to
  * objects still linked to a deleted color.
  */
 import { attrs, btn, el, icon } from '../lib/dom';
@@ -22,7 +22,7 @@ import { parsePastedColors, type FoundColor } from '../lib/colors-images/color-p
 import type { ColorSetData } from '../lib/types';
 import { readColors, writeChanges } from './api';
 import { pickFromScreenButton } from './color-pop';
-import { drawConfirmBar, readFoot, statusBlock, type ConfirmRow, type PageCtx } from './common';
+import { createSaveBar, readFoot, saveFailure, statusBlock, type ConfirmRow, type PageCtx, type SaveFailure } from './common';
 import { createPicker, type Picker } from './picker';
 
 const swatch = (hex: string, cls = 'ci-chip') => attrs(el('i', cls), { style: `background:${hex}` });
@@ -45,8 +45,10 @@ export function createColorsTab(ctx: PageCtx): Tab {
   let selSet = '';
   let selColor = '';
   let addingSet = false;
-  let saving = false;
-  let saveError = '';
+  /** While a save runs: the write, then the fresh read that checks it. */
+  let phase: 'saving' | 'checking' | null = null;
+  /** The last save that did not go through; Save tries again. */
+  let saveFailed: SaveFailure | null = null;
   let result = '';
   let resultBad = false;
   let counter = 0;
@@ -61,10 +63,10 @@ export function createColorsTab(ctx: PageCtx): Tab {
   const side = el('div', 'ci-side');
   const main = el('div', 'ci-main');
   const panel = el('div', 'ci-panel');
-  const bar = el('div', 'ci-confirm');
-  bar.hidden = true;
-  const root = el('div', 'ci-view ci-colors', side, main, panel, bar);
+  const root = el('div', 'ci-view ci-colors', side, main, panel);
   root.hidden = true;
+  const bar = createSaveBar(root);
+  root.append(bar.el);
 
   const views = (): SetView[] => (sets ? setViews(sets, draft) : []);
   const currentSet = (): SetView | undefined => views().find(v => v.id === selSet) ?? views()[0];
@@ -397,44 +399,49 @@ export function createColorsTab(ctx: PageCtx): Tab {
       strip, el('div', 'ci-scale', ...rows), el('div', 'ci-end near', addBtn));
   }
 
-  // ── the confirm bar ───────────────────────────────────────────────
+  // ── the save bar ──────────────────────────────────────────────────
 
   function drawBar(): void {
-    if (!sets || !hasChanges(draft)) { drawConfirmBar(bar, null); return; }
+    if (!sets || !hasChanges(draft)) { bar.draw(null); return; }
     const { ops, rows } = pendingChanges(sets, draft);
     const probs = problems(sets, draft);
+    // The colors are written in one script: a failure leaves every row unsaved.
     const lines: ConfirmRow[] = rows.map(r => ({
       lead: r.kind === 'change' ? el('span', 'ci-pair', swatch(r.from!), icon('i-arrow', 'ic-sm'), swatch(r.to!))
         : r.kind === 'add' ? el('span', 'ci-pair', el('span', 'ci-plus', icon('i-plus', 'ic-sm')), swatch(r.to!)) : el('span', 'ci-pair', el('span', 'ci-plus', icon('i-plus', 'ic-sm'))),
       name: r.name,
       detail: r.kind === 'change' ? r.detail : r.kind === 'add' ? `${r.id}  ·  ${r.to}` : `${r.id}  ·  new set`,
       title: r.kind === 'change' ? `${r.name}  ${r.id}` : `${r.name}  ${r.id}  ${r.detail}`,
+      ...(saveFailed ? { outcome: 'failed' as const } : {}),
     }));
     const hasChange = rows.some(r => r.kind === 'change');
     const n = changeCount(draft);
-    drawConfirmBar(bar, {
-      title: `Save ${n} change${n === 1 ? '' : 's'}`,
+    const problem = probs.size ? [...probs.values()][0] : '';
+    bar.draw({
+      count: n,
       rows: lines,
       ...(hasChange ? { note: rows.filter(r => r.kind === 'change').length === 1 ? 'Changes it everywhere it is linked.' : 'Changes them everywhere they are linked.' } : {}),
-      error: saveError || (probs.size ? [...probs.values()][0] : ''),
-      saving,
+      ...(probs.size ? { flag: `${probs.size} to fix`, blocked: problem } : {}),
+      ...(phase ? { phase } : {}),
+      failure: saveFailed,
       canSave: probs.size === 0 && ops.length > 0,
       onSave: () => { void save(); },
-      onCancel: () => { draft = emptyDraft(); saveError = ''; if (!views().some(v => v.id === selSet)) selSet = ''; drawAll(); },
+      onDiscard: () => { draft = emptyDraft(); saveFailed = null; if (!views().some(v => v.id === selSet)) selSet = ''; drawAll(); },
     });
   }
 
   async function save(): Promise<void> {
-    if (!sets || saving) return;
+    if (!sets || phase) return;
     const { ops } = pendingChanges(sets, draft);
-    saving = true; saveError = ''; drawBar();
+    phase = 'saving'; saveFailed = null; drawBar();
     try {
       const out = await ctx.work(writeChanges(ctx.environment, ops, []));
       if (!out.ok) {
-        saveError = out.outcomeUnknown ? `${out.error ?? 'No answer.'} BMP may have saved. Use Refresh to see what it holds.` : (out.error ?? 'The change was not written.');
+        saveFailed = saveFailure(changeCount(draft), 0, out.error, out.outcomeUnknown);
         return;
       }
       // A fresh read, then the check against what was sent.
+      phase = 'checking'; drawBar();
       let bad: string[] = [];
       try {
         const r = await ctx.work(readColors(true));
@@ -445,11 +452,12 @@ export function createColorsTab(ctx: PageCtx): Tab {
       }
       const n = changeCount(draft);
       draft = emptyDraft();
-      result = bad.length ? `Saved, but BMP does not hold it as sent: ${bad[0]}` : `Saved ${n} change${n === 1 ? '' : 's'}`;
+      result = bad.length ? `Saved, but BMP does not hold it as sent: ${bad[0]}` : '';
       resultBad = bad.length > 0;
+      if (!bad.length) bar.saved(`Saved ${n} change${n === 1 ? '' : 's'}`);
       if (!views().some(v => v.id === selSet)) selSet = '';
     } finally {
-      saving = false;
+      phase = null;
       drawAll();
     }
   }

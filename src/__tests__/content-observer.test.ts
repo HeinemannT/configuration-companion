@@ -100,8 +100,8 @@ describe('content observer BMP render refresh', () => {
     history.replaceState({}, '', '/?rid=999999&tabrid=222222');
     document.body.appendChild(document.createElement('div'));
     await Promise.resolve();
-    expect(sendToSW).toHaveBeenCalledWith({ type: 'BMP_PAGE_RENDER_CHANGED' });
-    expect(sendToSW).not.toHaveBeenCalledWith({ type: 'BMP_URL_CHANGED' });
+    expect(sendToSW).toHaveBeenCalledWith({ type: 'BMP_PAGE_RENDER_CHANGED', left: true });
+    expect(sendToSW).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'BMP_URL_CHANGED' }));
   });
 
   it('treats a page-owner rid update as navigation', async () => {
@@ -112,7 +112,7 @@ describe('content observer BMP render refresh', () => {
     history.replaceState({}, '', '/?rid=222222');
     document.body.appendChild(document.createElement('div'));
     await Promise.resolve();
-    expect(sendToSW).toHaveBeenCalledWith({ type: 'BMP_URL_CHANGED' });
+    expect(sendToSW).toHaveBeenCalledWith({ type: 'BMP_URL_CHANGED', left: true });
     expect(state.fiberPageContext).toBeNull();
   });
 

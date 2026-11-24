@@ -119,7 +119,9 @@ function getResolvedPageRid(): string | undefined {
   const url = extractUrlRids();
   if (url.rid) return url.rid;
   if (!s.fiberPageContext?.rid) {
-    document.dispatchEvent(new CustomEvent('crev-content', { detail: { type: 'EXTRACT_FIBERS' } }));
+    // The bound object only: this runs on every badge answer and sync, and a
+    // page without one would otherwise walk every component for objects each time.
+    document.dispatchEvent(new CustomEvent('crev-content', { detail: { type: 'EXTRACT_FIBERS', contextOnly: true } }));
   }
   return resolvePageContext(url, s.fiberPageContext).rid;
 }

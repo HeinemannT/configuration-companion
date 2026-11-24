@@ -86,8 +86,8 @@ export type LoadPageStructureResult =
  *  editing it propagates to all instances. The returned ctx carries the toggle state (editingTemplate +
  *  instanceId/templateId) so the chrome can offer [Template | This instance] and reload with
  *  `prefer='instance'` to edit just this page. */
-export async function loadPage(client: BmpClient, rid: string, prefer: 'template' | 'instance' = 'template', timings: string[] = []): Promise<LoadPageResult> {
-  const io = makeLayoutIO(client, timings);
+export async function loadPage(client: BmpClient, rid: string, prefer: 'template' | 'instance' = 'template', timings: string[] = [], signal?: AbortSignal): Promise<LoadPageResult> {
+  const io = makeLayoutIO(client, timings, LAYOUT_EC_TIMEOUT, signal);
   const ctx = await resolvePageContext(io, rid);
   if (!ctx) return null;
   if (ctx.surface === 'edit-page') {

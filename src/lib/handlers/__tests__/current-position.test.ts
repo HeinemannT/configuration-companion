@@ -8,6 +8,9 @@ vi.mock('../../tab-awareness', async importOriginal => ({
   ensureContentScript: vi.fn(async () => true),
 }));
 
+const { releaseTab } = vi.hoisted(() => ({ releaseTab: vi.fn() }));
+vi.mock('../../enrichment', async importOriginal => ({ ...(await importOriginal<typeof import('../../enrichment')>()), releaseTab }));
+
 import '../detection';
 import '../history';
 import '../objects';
@@ -133,5 +136,17 @@ describe('OPEN_BLUEPRINT_FOR', () => {
     await run({ type: 'OPEN_BLUEPRINT_FOR', rid: RID }, { senderTabId: 5, isOneShot: true });
     expect(c.blueprintActiveByWindow.get(2)).toBe(true);
     expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(5, { type: 'BLUEPRINT_SELECT', rid: RID });
+  });
+
+  it('a page or tab change drops the badge naming still queued for what the tab showed before', async () => {
+    ctx();
+    (globalThis as any).chrome.tabs = { ...(globalThis as any).chrome.tabs, get: vi.fn(), query: vi.fn() };
+    releaseTab.mockClear();
+    await run({ type: 'BMP_URL_CHANGED', left: true }, { senderTabId: 7, isOneShot: false });
+    await run({ type: 'BMP_PAGE_RENDER_CHANGED', left: true }, { senderTabId: 7, isOneShot: false });
+    expect(releaseTab.mock.calls).toEqual([[7], [7]]);
+    // A render without an address change keeps its badges, so their naming stays queued.
+    await run({ type: 'BMP_PAGE_RENDER_CHANGED' }, { senderTabId: 7, isOneShot: false });
+    expect(releaseTab).toHaveBeenCalledTimes(2);
   });
 });

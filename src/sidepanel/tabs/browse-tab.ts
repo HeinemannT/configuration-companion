@@ -32,6 +32,8 @@ import * as V from './browse/view';
 
 /** How long a page may report "no object" before its tree is cleared. */
 const PAGE_LEAVE_GRACE = 600;
+/** A page the user moved to is read once they rest on it this long: passing through pages reads none. */
+export const TREE_REST_MS = 300;
 /** Saves in a burst (a Blueprint apply, several steps) re-read the shown tree once. */
 export const TREE_REFRESH_DEBOUNCE = 500;
 
@@ -71,6 +73,7 @@ export class BrowseTab implements Tab {
   private menu: HTMLElement | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private leaveTimer: ReturnType<typeof setTimeout> | null = null;
+  private restTimer: ReturnType<typeof setTimeout> | null = null;
   private focusInput = false;
   /** A save changed the server while Browse was hidden: its trees are re-read
    *  when it is shown, not at once. */
@@ -154,6 +157,8 @@ export class BrowseTab implements Tab {
       default: {
         const changed = this.src.handle(msg);
         if (changed && msg.type === 'BROWSE_SEARCH_RESULT') this.afterLivePage();
+        // A read dropped for another page while the user came back to it.
+        if (changed && msg.type === 'BROWSE_TREE_DATA' && msg.superseded && msg.rid === this.pageRid && !this.restTimer) this.loadTree();
         return changed;
       }
     }
@@ -239,11 +244,23 @@ export class BrowseTab implements Tab {
   }
 
   private setPage(rid: string | null): void {
+    const moved = !!this.pageRid && !!rid;
     this.pageRid = rid;
     if (this.selected?.startsWith('t:')) this.selected = null;
     this.shownCurrent = null;
     this.scrollToCurrent = true;
-    if (rid) this.loadTree();
+    if (this.restTimer) { clearTimeout(this.restTimer); this.restTimer = null; }
+    if (!rid) return;
+    // The first page is read at once. A move from one page to the next waits a moment: someone
+    // clicking through pages would otherwise queue a structure read for each one, and the page
+    // they stop on would wait behind them all. A page read before shows from memory at once.
+    if (!moved || this.src.trees.has(rid)) { this.loadTree(); return; }
+    this.restTimer = setTimeout(() => {
+      this.restTimer = null;
+      if (this.pageRid !== rid) return;
+      this.loadTree();
+      if (this.mounted) this.draw();
+    }, TREE_REST_MS);
   }
 
   private loadTree(): void {

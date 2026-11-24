@@ -36,3 +36,11 @@ describe('the words of a tag', () => {
     expect(typeWords(undefined)).toBe('Object');
   });
 });
+
+describe('the tag of an arrow with no operation', () => {
+  it('says Arrow, also on empty space; without its reading it is not understood', () => {
+    expect(tagSpec(mark({ targets: ['a', 'b'], reading: 'Arrow from A to B', arrow: { from: 'a', to: 'b' }, ink }), classOf)).toEqual({ word: 'Arrow', icon: 'move' });
+    expect(tagSpec(mark({ reading: 'Arrow', arrow: {}, ink }), classOf)).toEqual({ word: 'Arrow', icon: 'move' });
+    expect(tagSpec(mark({ targets: ['a'], arrow: { from: 'a' }, ink }), classOf)).toBeNull();
+  });
+});

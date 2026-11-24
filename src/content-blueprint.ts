@@ -194,7 +194,23 @@ export function enableBlueprint(): void {
   bp.observer.observe(document.body, { childList: true, subtree: true });
   const prefer = resumePrefer ?? rememberedTarget(rid) ?? 'template';
   resumePrefer = null; // one-shot: only the resume-triggered enable inherits the saved target
-  void loadPage(rid, prefer).then((ok) => { if (!ok) disableBlueprint(); });
+  startLoad(rid, prefer);
+}
+
+/** Load `rid` for the current session. A load overtaken by a newer one (the user moved on) is not a
+ *  failure: only the current load's failure closes Blueprint. */
+function startLoad(rid: string, prefer: 'template' | 'instance'): void {
+  const gen = bp.gen;
+  void loadPage(rid, prefer).then((ok) => { if (!ok && bp.gen === gen) disableBlueprint(); });
+}
+
+/** Rest after a soft navigation before the new page's layout is read: someone clicking through pages
+ *  would otherwise start a full layout read for each one, and the page they stop on would wait behind
+ *  them. The first load when Blueprint opens is immediate. */
+export const BLUEPRINT_NAV_REST_MS = 300;
+let navRestTimer: ReturnType<typeof setTimeout> | null = null;
+function clearNavRest(): void {
+  if (navRestTimer) { clearTimeout(navRestTimer); navRestTimer = null; }
 }
 
 /** Reset the layer to the "loading…" chip — the initial shell, and what a page-change reload shows
@@ -213,16 +229,23 @@ function mountLoadingShell(): void {
 
 /** Reload the overlay for `rid` — used by the page-change handler (C) and the template/instance toggle
  *  (F, same rid, different `prefer`). Drops the stale model + any staged edits. */
-function reloadForRid(rid: string, prefer: 'template' | 'instance' = rememberedTarget(rid) ?? 'template'): void {
+function reloadForRid(rid: string, prefer: 'template' | 'instance' = rememberedTarget(rid) ?? 'template', restMs = 0): void {
   // An accepted Apply owns this overlay until BMP answers. The successful or
   // unverified outcome reloads the current URL, so a navigation that arrived
   // meanwhile is naturally picked up without orphaning the commit result.
   if (!resetModel()) return;
+  clearNavRest();                         // a reload still resting for an earlier page is dropped
   bp.loadedRid = rid;
   bp.gen += 1;                            // 1. invalidate any in-flight load/apply for the old page
   bp.layer?.classList.remove('bp-peek');
   mountLoadingShell();                    // 3. clear the old canvas to a loading chip (render() won't, with no baseline)
-  void loadPage(rid, prefer).then((ok) => { if (!ok) disableBlueprint(); }); // 4. fetch the new page
+  if (restMs <= 0) { startLoad(rid, prefer); return; } // 4. fetch the new page
+  const gen = bp.gen;
+  navRestTimer = setTimeout(() => {
+    navRestTimer = null;
+    if (!bp.active || bp.gen !== gen || bp.loadedRid !== rid) return;
+    startLoad(rid, prefer);
+  }, restMs);
 }
 
 /** Reload onto the page the URL now points at, or tear down if it left BMP entirely. Returns true when it
@@ -242,7 +265,7 @@ function handlePageNav(): boolean {
   // A soft in-portal navigation cannot be vetoed, so unsaved changes of the old page cannot be kept.
   // Never drop them silently: say how many were lost.
   const lost = hasPendingEdits() ? Math.max(1, pendingCount()) : 0;
-  reloadForRid(next);
+  reloadForRid(next, undefined, BLUEPRINT_NAV_REST_MS);
   if (lost) showToast(`Blueprint: you left the page, so ${lost} unsaved change${lost === 1 ? ' was' : 's were'} discarded.`, 'info');
   return true;
 }
@@ -271,6 +294,7 @@ export function disableBlueprint(): void {
   if (enableRetryTimer) { clearTimeout(enableRetryTimer); enableRetryTimer = null; }
   enableRetries = 0;
   if (!bp.active) return;
+  clearNavRest();
   // A confirmed Apply may already be mutating BMP. Keep its result sink and
   // review surface mounted until it settles; tearing down now would discard
   // the only authoritative outcome even though cancel() correctly no-ops.

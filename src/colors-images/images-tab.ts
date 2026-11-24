@@ -1,15 +1,22 @@
 /**
- * The Images tab: the folders of the workspace that hold image files (nested
- * as they are in BMP, with counts) on the left, the images as tiles, an
- * Adjust panel on the right with a preview. In view: color (original, one
- * color, or swap single colors of an SVG), size, padding, format. Behind
- * More: turn, a shape behind the icon, line width (line icons), trim. A
- * selected image's file can be replaced; it keeps its ID. Drop files or a
- * folder, or use "Add files": new files appear under New with IDs proposed
- * from their names. One confirm bar lists what a save adds or changes; the
- * write is previewed on the server, and a fresh read checks it. File
- * content is read only for the thumbnails in view and for the images the
- * person selects.
+ * The Images tab. The sidebar is one tree drawn like Browse's: All images,
+ * then the folders of the workspace that hold image files (nested as they are
+ * in BMP, foldable, with counts), and below a rule the Library, ready-made
+ * images that are not in BMP until added (library.ts). The main area shows a
+ * folder's images as tiles, or a library collection under a strip that says
+ * where additions go; one search finds both ("Images" and "Library").
+ * An Adjust panel on the right with a preview: color (original, one color,
+ * or swap single colors of an SVG), size, padding, format; behind More: turn, a shape behind the icon, line
+ * width (line icons), trim. A selected image's file can be replaced; it
+ * keeps its ID. Drop files or a folder, or use "Upload files" or "Upload
+ * folder" (every image in it and its subfolders), or add library images to
+ * a folder: new files appear under New with IDs proposed from their names,
+ * and a description (a library icon's licence note) that is written with
+ * them. The save bar (common.ts) counts what a save adds or changes and lists
+ * it on Review; the write is previewed on the server, and a fresh read checks
+ * it. A save that stops part way says which files went through; Save again
+ * sends only the rest. File content is read only for the thumbnails in view
+ * and for the images the person selects.
  */
 import { attrs, btn, el, icon } from '../lib/dom';
 import { normalizeHex } from '../lib/colors-images/color-math';
@@ -17,7 +24,7 @@ import {
   buildImageTree, EXTENSION_OF_MIME, folderPath, imageMime, imagesIn, totalImages, type FolderNode, type ImageFile, type ImageIndex,
 } from '../lib/colors-images/image-files';
 import {
-  buildFileOps, idProblem, isOverLimit, newImagesFor, outputName, overLimitText, verifyFiles, type NewImage,
+  buildFileOps, defaultDestination, DESCRIPTION_LIMIT, idProblem, isOverLimit, newImagesFor, outputName, overLimitText, reproposeId, verifyFiles, type NewImage,
 } from '../lib/colors-images/images-draft';
 import {
   bytesToBase64, changesDrawing, DEFAULT_ADJUST, processImage, SIZES, type AdjustSettings, type ImageOutput, type ShapeKind,
@@ -25,13 +32,15 @@ import {
 import { CURRENT_COLOR, hasStrokes, LINE_WIDTHS, svgColors } from '../lib/colors-images/svg-colors';
 import { flip, isTurned, NO_TURN, rotateBy, type Turn } from '../lib/colors-images/svg-geometry';
 import { encodeContent } from '../lib/colors-images/content-encoding';
-import { tooLargeText } from '../lib/colors-images/write-ops';
+import { tooLargeText, type FileOp } from '../lib/colors-images/write-ops';
 import { ThumbCache, type ThumbState } from '../lib/colors-images/thumb-cache';
+import { colorSuffix, WHITE, type CollectionId } from '../lib/colors-images/image-library';
 import type { ColorSetData } from '../lib/types';
 import { readColors, readImageBytes, readImages, writeChanges } from './api';
 import { closeColorPop, openColorPop } from './color-pop';
-import { drawConfirmBar, readFoot, statusBlock, type ConfirmRow, type PageCtx } from './common';
-import { filesFromDrop, filesFromInput, type PickedFile } from './dropped-files';
+import { createSaveBar, readFoot, saveFailure, statusBlock, treeRow, type ConfirmRow, type PageCtx, type SaveFailure } from './common';
+import { filesFromDrop, filesFromFolder, filesFromInput, type PickedFile } from './dropped-files';
+import { createLibrary } from './library';
 import { pageIcon } from './icons';
 import type { Tab } from './colors-tab';
 
@@ -64,14 +73,29 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
   let loadError = '';
   let loading = false;
   let selFolder: string | null = null;
+  /** The BMP folder the person last chose in the sidebar (null: All images); additions from the library go there by default. */
+  let userFolder: string | null = null;
+  /** The library collection shown in the main area, or null for the BMP folders. */
+  let libView: CollectionId | null = null;
+  /** The group of the collection to scroll to once it is drawn. */
+  let libGroup: string | null = null;
+  /** Says what the last addition from the library did ("3 images added to Status. …"). */
+  let addedNote = '';
+  let scrollToTop = false;
   let query = '';
   let news: NewImage[] = [];
   let selection = new Set<string>();
   let settings: Settings = defaults();
   let moreOpen = false;
   let counter = 0;
-  let saving = false;
-  let saveError = '';
+  /** While a save runs: the write, then the fresh read that checks it. */
+  let phase: 'saving' | 'checking' | null = null;
+  /** The last save that did not go through, and BMP's message for the file it stopped at. */
+  let saveFailed: (SaveFailure & { failedId?: string; rowMessage?: string }) | null = null;
+  /** Operations a save that stopped part way did write (as sent): Save again does not send them twice. */
+  const writtenOps = new Map<string, string>();
+  /** BMP folders folded in the sidebar. */
+  const folded = new Set<string>();
   let result = '';
   let resultBad = false;
   let note = '';
@@ -91,13 +115,31 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
   const side = el('div', 'ci-side');
   const main = el('div', 'ci-main');
   const panel = el('div', 'ci-panel');
-  const bar = el('div', 'ci-confirm');
-  bar.hidden = true;
-  const root = el('div', 'ci-view ci-images', side, main, panel, bar);
+  const root = el('div', 'ci-view ci-images', side, main, panel);
   root.hidden = true;
+  const bar = createSaveBar(root);
+  root.append(bar.el);
   const fileInput = attrs(el('input') as HTMLInputElement, { type: 'file', multiple: '', accept: 'image/*', hidden: '' });
   const replaceInput = attrs(el('input') as HTMLInputElement, { type: 'file', accept: 'image/*', hidden: '' });
-  root.append(fileInput, replaceInput);
+  // A directory input: no permission needed, the browser asks the person for the folder.
+  const folderInput = attrs(el('input') as HTMLInputElement, { type: 'file', webkitdirectory: '', multiple: '', hidden: '', 'aria-label': 'Upload folder' });
+  root.append(fileInput, replaceInput, folderInput);
+  const library = createLibrary({
+    host: root,
+    cannotAdd: () => (index ? null : loading ? 'The images are being read' : 'The images were not read'),
+    colorSets: () => colorSets,
+    needColorSets,
+    folderSelect,
+    folderName: id => index?.folders.find(f => f.id === id)?.name ?? '',
+    defaultDestination: kind => (index ? defaultDestination(index, userFolder, kind, sideOrder()) : ''),
+    onAdd: (files, folderId) => addFromLibrary(files, folderId),
+    changed: () => { drawSide(); drawGrid(); drawPanel(); },
+    folderAt: (x, y) => (document.elementFromPoint(x, y)?.closest<HTMLElement>('[data-drop-folder]')?.dataset.dropFolder ?? null),
+    dropHint: (over, dragging) => {
+      root.classList.toggle('lib-dragging', dragging);
+      for (const r of side.querySelectorAll<HTMLElement>('[data-drop-folder]')) r.classList.toggle('drop-on', r.dataset.dropFolder === over);
+    },
+  });
 
   const existing = (rid: string): ImageFile | undefined => index?.files.find(f => f.rid === rid);
   const newItem = (key: string): NewImage | undefined => news.find(n => n.key === key);
@@ -265,26 +307,76 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
 
   // ── the folders ───────────────────────────────────────────────────
 
+  /** The folders in the order the sidebar lists them (those that hold images, nested). */
+  function sideOrder(): string[] {
+    const out: string[] = [];
+    const walk = (nodes: FolderNode[]) => { for (const n of nodes) { out.push(n.id); walk(n.children); } };
+    walk(tree);
+    return out;
+  }
+
+  /** Unfold the folders that hold this one, so it shows in the sidebar. */
+  function reveal(id: string | null): void {
+    let at = id ? index?.folders.find(f => f.id === id)?.parentId : undefined;
+    for (let guard = 0; at && guard < 64; guard++) { folded.delete(at); at = index?.folders.find(f => f.id === at)?.parentId; }
+  }
+
+  /** Show a BMP folder (null: all images); leaves the library and the search. */
+  function openFolder(id: string | null): void {
+    selFolder = id; userFolder = id; libView = null; query = ''; addedNote = '';
+    library.clearSelection();
+    library.resetDestination();
+    scrollToTop = true;
+    drawAll();
+  }
+
+  /** Show a library collection (and scroll to one of its groups). */
+  function openCollection(id: CollectionId, group?: string): void {
+    libView = id; query = ''; addedNote = '';
+    libGroup = group ?? null;
+    scrollToTop = !group;
+    library.load();
+    drawAll();
+  }
+
   function drawSide(): void {
-    const head = el('div', 'ci-side-h', el('span', '', 'Folders'));
     const list = el('div', 'ci-side-list');
+    // The folders of the workspace need no heading: the tree starts with All images.
+    const bmp = attrs(el('section', 'ci-sec bmp'), { 'aria-label': 'Image folders' });
     if (index) {
-      const row = (id: string | null, label: string, n: number, depth: number, title?: string) => {
-        const b = btn(`ci-srow${selFolder === id ? ' on' : ''}`, undefined, () => { selFolder = id; query = ''; drawAll(); },
-          el('span', 'ci-srow-name', label), el('span', 'ci-n', String(n)));
-        b.style.paddingLeft = `${8 + depth * 12}px`;
-        if (title) b.title = title;
-        return b;
-      };
-      list.append(row(null, 'All images', totalImages(tree), 0));
+      // Folders that only hold new images (a library image added to an empty folder) are listed too.
+      const withNew = news.length ? buildImageTree({ folders: index.folders, files: [...index.files, ...news.map(n => ({ rid: n.key, id: n.id, name: n.fileName, folderId: n.folderId }))] }) : tree;
+      const real = new Map<string, number>();
+      const count = (nodes: FolderNode[]) => { for (const n of nodes) { real.set(n.id, n.count); count(n.children); } };
+      count(tree);
+      const newMark = (nNew: number) => (nNew ? attrs(el('span', 'ci-newn', `+${nNew}`), { title: `${nNew} new, not saved yet` }) : null);
+      bmp.append(treeRow({
+        label: 'All images', depth: 0, glyph: 'o-image', count: totalImages(tree), on: !libView && selFolder === null,
+        extra: newMark(news.length), onOpen: () => openFolder(null),
+      }));
       const walk = (nodes: FolderNode[], depth: number) => {
-        for (const n of nodes) { list.append(row(n.id, n.name, n.count, depth, folderPath(index!, n.id))); walk(n.children, depth + 1); }
+        for (const n of nodes) {
+          const kids = n.children.length > 0;
+          const open = kids && !folded.has(n.id);
+          const row = treeRow({
+            label: n.name, depth, glyph: 'o-folder', count: real.get(n.id) ?? 0, on: !libView && selFolder === n.id,
+            ...(kids ? { expanded: open, onToggle: () => { if (folded.has(n.id)) folded.delete(n.id); else folded.add(n.id); drawSide(); } } : {}),
+            extra: newMark(n.count - (real.get(n.id) ?? 0)), title: folderPath(index!, n.id), onOpen: () => openFolder(n.id),
+          });
+          row.dataset.dropFolder = n.id;
+          bmp.append(row);
+          if (open) walk(n.children, depth + 1);
+        }
       };
-      walk(tree, 0);
+      walk(withNew, 0);
+      if (!withNew.length) bmp.append(el('p', 'ci-sec-cap', 'No images yet.'));
     } else if (loading) {
-      list.append(...[72, 56, 64, 48, 60].map(w => attrs(el('div', 'ci-skel-row'), { style: `width:${w}%` })));
+      bmp.append(...[72, 56, 64].map(w => attrs(el('div', 'ci-skel-row'), { style: `width:${w}%` })));
     }
-    side.replaceChildren(head, list, readFoot(fetchedAt, () => { void load(true); }, unsaved() ? 'Save or cancel the changes first' : undefined, loading));
+    list.append(bmp, library.side(libView, (id, group) => openCollection(id, group)));
+    const top = side.querySelector('.ci-side-list')?.scrollTop ?? 0;
+    side.replaceChildren(list, readFoot(fetchedAt, () => { void load(true); }, unsaved() ? 'Save or cancel the changes first' : undefined, loading));
+    list.scrollTop = top;
   }
 
   // ── the images ────────────────────────────────────────────────────
@@ -320,7 +412,8 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
 
   function toggle(key: string): void {
     if (selection.has(key)) selection.delete(key); else selection.add(key);
-    result = '';
+    result = ''; addedNote = '';
+    library.clearSelection();
     closeColorPop();
     resetForSelection();
     prepare();
@@ -355,9 +448,19 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
 
   const badgeOf = (mime: string) => (EXTENSION_OF_MIME[mime] ?? 'png').toUpperCase();
 
+  /** Is the image as it would be written white only (an icon for a dark button)? Its thumbnail is then dark. */
+  function whiteOnly(key: string): boolean {
+    const info = svgInfo.get(key);
+    if (!info?.colors.length || !isSvgMime(sourceMime(key))) return false;
+    const c = settings.color;
+    if (selection.has(key) && c.mode === 'one') return c.hex === WHITE;
+    const to = (k: string) => (selection.has(key) && c.mode === 'swap' ? c.map[k] ?? k : k);
+    return info.colors.every(k => to(k) === WHITE);
+  }
+
   function newTile(n: NewImage): HTMLElement {
     const m = made.get(n.key);
-    const thumb = el('div', 'ci-thumb');
+    const thumb = el('div', `ci-thumb${whiteOnly(n.key) ? ' on-dark' : ''}`);
     const url = m?.url ?? (objectUrls.get(n.key) ?? (() => { const u = URL.createObjectURL(new Blob([n.bytes as BlobPart], { type: n.mime })); objectUrls.set(n.key, u); return u; })());
     thumb.append(attrs(el('img'), { src: url, alt: '', draggable: 'false' }));
     const out = m?.out;
@@ -376,7 +479,7 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
   }
 
   function dropTile(): HTMLElement {
-    return btn('ci-itile drop', 'Add files', () => fileInput.click(), el('div', 'ci-thumb', icon('i-plus')), el('div', 'ci-nm muted', 'Drop files here'));
+    return btn('ci-itile drop', 'Upload files', () => fileInput.click(), el('div', 'ci-thumb', pageIcon('upload')), el('div', 'ci-nm muted', 'Drop files here'));
   }
 
   function group(title: string, count: number, tiles: HTMLElement[]): HTMLElement {
@@ -385,13 +488,41 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
 
   function emptyBlock(title: string, withAdd: boolean): HTMLElement {
     return el('div', 'ci-empty', el('div', 'ci-empty-t', title),
-      withAdd ? el('div', 'ci-empty-s', 'Drop files or a folder here') : null,
-      withAdd ? btn('ui-btn', undefined, () => fileInput.click(), icon('i-plus', 'ic-sm'), 'Add files') : null);
+      withAdd ? el('div', 'ci-empty-s', 'Drop files or a folder here, or add ready-made images from the library.') : null,
+      withAdd ? el('div', 'ci-inl', btn('ui-btn', undefined, () => fileInput.click(), pageIcon('upload'), 'Upload files'),
+        btn('ui-btn', undefined, () => openCollection('status'), icon('o-library'), 'Browse the library')) : null);
+  }
+
+  /** The search box and the uploads, over every view. */
+  function mainHead(): HTMLElement {
+    const input = attrs(el('input', 'ci-inp') as HTMLInputElement, { placeholder: 'Search BMP and the library', 'aria-label': 'Search images in BMP and the library' });
+    input.value = query;
+    input.addEventListener('input', () => {
+      query = input.value; result = ''; addedNote = '';
+      if (query.trim()) library.load();
+      scrollToTop = true;
+      drawGrid(); drawSide(); drawPanel();
+      const i = main.querySelector<HTMLInputElement>('.ci-search input');
+      i?.focus(); i?.setSelectionRange(query.length, query.length);
+    });
+    const clear = query ? btn('ci-ib', 'Clear the search', () => { query = ''; scrollToTop = true; drawAll(); main.querySelector<HTMLInputElement>('.ci-search input')?.focus(); }, icon('i-x', 'ic-sm')) : null;
+    return el('div', 'ci-mhead', el('div', 'ci-search ui-search', icon('i-search', 'ic-sm'), input, clear),
+      attrs(btn('ui-btn ci-add ci-upfiles', undefined, () => fileInput.click(), pageIcon('upload'), el('span', 'ci-add-t', 'Upload files')), { title: 'Upload image files from this computer' }),
+      attrs(btn('ui-btn ci-add ci-folder', undefined, () => folderInput.click(), pageIcon('folderUp'), el('span', 'ci-add-t', 'Upload folder')), { title: 'Upload every image of a folder on this computer' }));
+  }
+
+  /** The BMP part of a search: matches by name or ID, or that there is none. */
+  function bmpMatches(q: string): HTMLElement {
+    const hits = index!.files.filter(f => f.name.toLowerCase().includes(q) || f.id.toLowerCase().includes(q));
+    return el('section', 'ci-sres bmp',
+      el('div', 'ci-shead', icon('o-folder'), el('span', '', 'Images'), el('span', 'ci-gn', String(hits.length))),
+      hits.length ? el('div', 'ci-igrid', ...hits.map(fileTile)) : el('p', 'ci-nomatch', `No image matches “${query.trim()}”.`));
   }
 
   function drawGrid(): void {
     const scroll = main.querySelector<HTMLElement>('.ci-scroll');
-    const top = scroll?.scrollTop ?? 0;
+    const top = scrollToTop ? 0 : scroll?.scrollTop ?? 0;
+    scrollToTop = false;
     const body = el('div', 'ci-scroll');
     if (!index) {
       if (loading) {
@@ -400,11 +531,12 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
       return;
     }
     const groups: HTMLElement[] = [];
-    if (news.length) groups.push(group('New', news.length, [...news.map(newTile), dropTile()]));
     const q = query.trim().toLowerCase();
+    if (news.length && !(libView && !q)) groups.push(group('New', news.length, [...news.map(newTile), dropTile()]));
     if (q) {
-      const hits = index.files.filter(f => f.name.toLowerCase().includes(q) || f.id.toLowerCase().includes(q));
-      groups.push(hits.length ? group('Matches', hits.length, hits.map(fileTile)) : el('div', 'ci-empty', el('div', 'ci-empty-t', 'No matches'), el('div', 'ci-empty-s', `Nothing named “${query.trim()}”`)));
+      groups.push(bmpMatches(q), library.search(query));
+    } else if (libView) {
+      groups.push(...library.view(libView));
     } else {
       const shown = imagesIn(index, tree, selFolder);
       const byFolder = new Map<string, ImageFile[]>();
@@ -419,16 +551,15 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
       else if (!news.length) groups[0].querySelector('.ci-igrid')?.append(dropTile());
     }
     body.append(...groups);
-    const head = el('div', 'ci-mhead', (() => {
-      const input = attrs(el('input', 'ci-inp') as HTMLInputElement, { placeholder: 'Name or ID', 'aria-label': 'Search images' });
-      input.value = query;
-      input.addEventListener('input', () => { query = input.value; result = ''; drawGrid(); main.querySelector<HTMLInputElement>('.ci-search input')?.focus(); });
-      return el('div', 'ci-search ui-search', icon('i-search', 'ic-sm'), input);
-    })(), btn('ui-btn ci-add', undefined, () => fileInput.click(), icon('i-plus', 'ic-sm'), 'Add files'));
     const notes = [loadError ? el('span', 'ci-warn', loadError) : null, note ? el('span', 'ci-warn', note) : null,
+      addedNote ? el('span', 'ci-result ci-added', icon('i-check', 'ic-sm'), el('span', '', addedNote)) : null,
       result ? el('span', `ci-result${resultBad ? ' bad' : ''}`, result) : null].filter((x): x is HTMLElement => !!x);
-    main.replaceChildren(head, notes.length ? el('div', 'ci-notes', ...notes) : '', body);
+    main.replaceChildren(mainHead(), notes.length ? el('div', 'ci-notes', ...notes) : '', body);
     body.scrollTop = top;
+    if (libGroup && libView && !q) {
+      const g = body.querySelector<HTMLElement>(`[data-group="${CSS.escape(libGroup)}"]`);
+      if (g) { body.scrollTop = Math.max(0, g.offsetTop - body.offsetTop - 8); libGroup = null; }
+    }
     const q2 = main.querySelector<HTMLInputElement>('.ci-search input');
     if (q2 && document.activeElement === document.body && query) { /* keep the caret where the person was typing */ q2.focus(); q2.setSelectionRange(query.length, query.length); }
   }
@@ -448,7 +579,7 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
 
   /** An empty selection starts again from the defaults. */
   function resetForSelection(): void {
-    if (selection.size === 0) settings = defaults();
+    if (selection.size === 0) { settings = defaults(); syncIds(); }
   }
 
   /** The colors to swap: of one SVG, or the union of several (at most SWAP_LIMIT); null when not offered. */
@@ -523,6 +654,7 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
     const sizeLine = anyChange && ready && before > 0 ? el('span', 'ci-pv-size', `${kb(before)} → ${kb(after)}`) : null;
     previewBox.replaceChildren(el('div', 'ci-pv-imgs', ...imgs), sizeLine ?? '', holdBtn ?? '');
     previewBox.classList.toggle('many', keys.length > 1);
+    previewBox.classList.toggle('on-dark', keys.length > 0 && keys.every(whiteOnly));
     previewBox.classList.toggle('before', holding);
     const trimNote = panel.querySelector<HTMLElement>('.ci-trim-note');
     if (trimNote) trimNote.hidden = !(settings.trim && trimSkipped);
@@ -530,6 +662,7 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
 
   function changeSettings(next: Partial<Settings>, redrawPanel = true): void {
     settings = { ...settings, ...next };
+    if (next.color) syncIds();
     result = '';
     prepare();
     if (redrawPanel) drawPanel(); else drawPreview();
@@ -554,8 +687,35 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
     return (isTurned(s.turn) ? 1 : 0) + (s.trim ? 1 : 0) + (s.shape.kind !== 'none' ? 1 : 0) + (s.line !== 'keep' ? 1 : 0);
   }
 
+  /** A picker of the BMP folders, by path: where new images go. */
+  function folderSelect(current: string, onChange: (id: string) => void, label: string): HTMLSelectElement {
+    const sel = attrs(el('select', 'ci-select') as HTMLSelectElement, { 'aria-label': label });
+    if (!index) return sel;
+    const options = index.folders.map(f => ({ id: f.id, path: folderPath(index!, f.id) })).sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true }));
+    for (const o of options) {
+      const opt = el('option', '', o.path) as HTMLOptionElement;
+      opt.value = o.id; opt.selected = o.id === current;
+      sel.append(opt);
+    }
+    sel.addEventListener('change', () => onChange(sel.value));
+    return sel;
+  }
+
+  /** The colour the Adjust panel paints new images in, as an ID ends with it; undefined when it sets none. */
+  const adjustSuffix = (): string | undefined => (settings.color.mode === 'one' ? colorSuffix(settings.color) : undefined);
+
+  /** Proposed IDs follow the folder and, for library images, the colour they are written in. A typed ID stays. */
+  function syncIds(): void {
+    if (!index) return;
+    const hex = adjustSuffix();
+    for (const n of news) if (!n.idTouched) n.id = reproposeId(n, index, news, n.library ? hex : undefined);
+  }
+
   function drawPanel(): void {
     if (!index) { panel.replaceChildren(); return; }
+    const fromLibrary = library.panel();
+    if (fromLibrary) { panel.replaceChildren(...fromLibrary); return; }
+    if (libView && !query.trim() && selection.size === 0) { panel.replaceChildren(...library.idlePanel()); return; }
     const keys = selectedKeys();
     const n = keys.length;
     if (!n) {
@@ -639,19 +799,24 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
     );
     const newSel = keys.map(newItem).filter((x): x is NewImage => !!x);
     if (newSel.length) {
-      const sel = attrs(el('select', 'ci-select') as HTMLSelectElement, { 'aria-label': 'Folder for the new files' });
-      const current = newSel[0].folderId;
-      const options = index.folders.map(f => ({ id: f.id, path: folderPath(index!, f.id) })).sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true }));
-      for (const o of options) {
-        const opt = el('option', '', o.path) as HTMLOptionElement;
-        opt.value = o.id; opt.selected = o.id === current;
-        sel.append(opt);
-      }
-      sel.addEventListener('change', () => {
-        for (const item of newSel) item.folderId = sel.value;
-        drawBar(); drawPanel();
-      });
+      const sel = folderSelect(newSel[0].folderId, id => {
+        for (const item of newSel) item.folderId = id;
+        syncIds();
+        drawAll();
+      }, 'Folder for the new files');
       rows.push(el('div', 'ci-prop', el('span', '', 'Folder'), sel));
+      // The description written with the new images: one for all selected, or each its own.
+      const desc = attrs(el('input', 'ci-inp ci-desc') as HTMLInputElement, { 'aria-label': 'Description of the new files', maxlength: String(DESCRIPTION_LIMIT) });
+      const same = newSel.every(x => x.description === newSel[0].description);
+      desc.value = same ? newSel[0].description : '';
+      desc.placeholder = same ? 'None' : 'Different for each';
+      desc.title = same ? newSel[0].description : newSel.map(x => x.description).filter(Boolean).join(' / ');
+      desc.addEventListener('input', () => {
+        for (const item of newSel) item.description = desc.value;
+        desc.placeholder = 'None';
+        drawBar();
+      });
+      rows.push(el('div', 'ci-prop stack', el('span', '', 'Description'), desc));
     }
 
     // More: turn, shape, line width, trim.
@@ -698,22 +863,32 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
       rep ? el('div', 'ci-replaced', el('span', '', `Replaced with ${rep.fileName}`), btn('ci-link', undefined, () => { replaced.delete(oneFile!.rid); svgInfo.delete(oneFile!.rid); made.delete(oneFile!.rid); prepare(); drawAll(); }, 'Undo')) : null,
       el('div', 'ci-end-row',
         oneFile ? btn('ci-link', undefined, () => replaceInput.click(), 'Replace file') : null,
-        btn('ci-link quiet', undefined, () => { selection = new Set(); settings = defaults(); closeColorPop(); drawAll(); }, 'Clear selection')));
+        btn('ci-link quiet', undefined, () => { selection = new Set(); settings = defaults(); syncIds(); closeColorPop(); drawAll(); }, 'Clear selection')));
     panel.replaceChildren(...[head, previewBox, overBox, ...rows, end].filter((x): x is HTMLElement => !!x));
 
     drawPreview();
   }
 
-  // ── the confirm bar ───────────────────────────────────────────────
+  // ── the save bar ──────────────────────────────────────────────────
+
+  const opKey = (kind: 'add' | 'change', id: string) => `${kind}:${id}`;
+
+  /** After a save that stopped part way: was this row written, is it the one BMP refused, or was it not reached? */
+  function outcomeOf(key: string): Pick<ConfirmRow, 'outcome' | 'message'> {
+    if (!saveFailed) return {};
+    if (writtenOps.has(key)) return { outcome: 'saved' };
+    if (key === saveFailed.failedId) return { outcome: 'failed', ...(saveFailed.rowMessage ? { message: saveFailed.rowMessage } : {}) };
+    return { outcome: 'not-saved' };
+  }
 
   function drawBar(): void {
-    if (!index) { drawConfirmBar(bar, null); return; }
+    if (!index) { bar.draw(null); return; }
     const changed = changedExisting();
-    if (!news.length && !changed.length) { drawConfirmBar(bar, null); return; }
+    if (!news.length && !changed.length) { bar.draw(null); return; }
     const rows: ConfirmRow[] = [];
-    const thumbImg = (url: string | undefined, fallback?: ThumbState) => {
+    const thumbImg = (url: string | undefined, fallback?: ThumbState, dark = false) => {
       const src = url ?? (fallback?.state === 'ready' ? fallback.url : undefined);
-      return src ? attrs(el('img', 'ci-pthumb'), { src, alt: '' }) : el('span', 'ci-pthumb');
+      return src ? attrs(el('img', `ci-pthumb${dark ? ' on-dark' : ''}`), { src, alt: '' }) : el('span', 'ci-pthumb');
     };
     let problem = '';
     for (const n of news) {
@@ -721,8 +896,9 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
       const p = idProblem(n, index, news);
       if (p && !problem) problem = p;
       rows.push({
-        lead: el('span', 'ci-pair', el('span', 'ci-plus', icon('i-plus', 'ic-sm')), thumbImg(m?.url ?? objectUrls.get(n.key))), name: outputName(n.fileName, m?.out?.mime ?? n.mime),
-        detail: `${n.id}  in ${folderPath(index, n.folderId) || n.folderId}`, ...(p ? { problem: p } : {}),
+        lead: el('span', 'ci-pair', el('span', 'ci-plus', icon('i-plus', 'ic-sm')), thumbImg(m?.url ?? objectUrls.get(n.key), undefined, whiteOnly(n.key))), name: outputName(n.fileName, m?.out?.mime ?? n.mime),
+        detail: `${n.id}  in ${folderPath(index, n.folderId) || n.folderId}${n.description.trim() ? `  ·  ${n.description.trim()}` : ''}`, ...(p ? { problem: p } : {}),
+        ...outcomeOf(opKey('add', n.id)),
       });
     }
     for (const f of changed) {
@@ -733,6 +909,7 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
         lead: el('span', 'ci-pair', thumbImg(undefined, thumbs.peek(f.rid)), icon('i-arrow', 'ic-sm'), thumbImg(m?.url)),
         name, detail: [f.id, rep ? `file replaced with ${rep.fileName}` : '', name !== f.name ? `was ${f.name}` : ''].filter(Boolean).join('  ·  '),
         ...(m?.error ? { problem: m.error } : {}),
+        ...outcomeOf(opKey('change', f.id)),
       });
     }
     const nChanges = news.length + changed.length;
@@ -745,16 +922,22 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
         news.map(n => ({ item: n, out: made.get(n.key)!.out! })), changed.map(f => ({ file: f, out: made.get(f.rid)!.out! })), bytesToBase64);
       if (tooLarge.length) { skipped = `Left out: ${tooLargeText(tooLarge)}`; writable -= tooLarge.length; }
     }
-    drawConfirmBar(bar, {
-      title: writable > 0 || !skipped ? `Save ${writable} change${writable === 1 ? '' : 's'}` : 'Nothing to save',
+    const toFix = rows.filter(r => r.problem).length;
+    const leftOut = nChanges - writable;
+    const flag = [toFix ? `${toFix} to fix` : '', leftOut ? `${leftOut} left out` : ''].filter(Boolean).join(', ');
+    const firstProblem = problem || rows.find(r => r.problem)?.problem || '';
+    bar.draw({
+      count: writable,
       rows,
       ...(skipped ? { skipped } : {}),
       ...(changed.length ? { note: changed.length === 1 ? 'Changes it everywhere it is linked.' : 'Changes them everywhere they are linked.' } : {}),
-      error: saveError || problem,
-      saving,
-      canSave: ready && writable > 0 && !problem && !rows.some(r => r.problem),
+      ...(flag ? { flag } : {}),
+      ...(firstProblem ? { blocked: firstProblem } : !ready ? { blocked: 'The files are being prepared' } : {}),
+      ...(phase ? { phase } : {}),
+      failure: saveFailed,
+      canSave: ready && writable > 0 && !firstProblem,
       onSave: () => { void save(); },
-      onCancel: () => { discard(); },
+      onDiscard: () => { discard(); },
     });
   }
 
@@ -771,28 +954,38 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
 
   function discard(): void {
     forgetWork();
-    saveError = ''; note = '';
+    saveFailed = null; writtenOps.clear(); note = '';
     drawAll();
   }
 
   async function save(): Promise<void> {
-    if (!index || saving) return;
+    if (!index || phase) return;
     const changed = changedExisting();
     const newOut: Array<{ item: NewImage; out: ImageOutput }> = [];
     const changeOut: Array<{ file: ImageFile; out: ImageOutput }> = [];
     for (const n of news) { const o = made.get(n.key)?.out; if (!o) return; newOut.push({ item: n, out: o }); }
     for (const f of changed) { const o = made.get(f.rid)?.out; if (!o) return; changeOut.push({ file: f, out: o }); }
     const { ops, tooLarge } = buildFileOps(newOut, changeOut, bytesToBase64);
-    if (!ops.length) { saveError = tooLarge.length ? tooLargeText(tooLarge) : 'Nothing to save.'; drawBar(); return; }
-    saving = true; saveError = ''; drawBar();
+    if (!ops.length) return;
+    // After a save that stopped part way, what it wrote (exactly as now) is not sent again.
+    const keyOf = (op: FileOp) => opKey(op.kind, op.id);
+    const send = ops.filter(op => writtenOps.get(keyOf(op)) !== JSON.stringify(op));
+    phase = 'saving'; saveFailed = null; drawBar();
     try {
-      const out = await ctx.work(writeChanges(ctx.environment, [], ops));
+      const out = send.length ? await ctx.work(writeChanges(ctx.environment, [], send)) : { ok: true, written: 0 };
+      for (const op of send.slice(0, out.written)) writtenOps.set(keyOf(op), JSON.stringify(op));
       if (!out.ok) {
-        saveError = (out.outcomeUnknown ? `${out.error ?? 'No answer.'} BMP may have saved. Use Refresh to see what it holds.` : (out.error ?? 'The change was not written.'))
-          + (out.written ? ` ${out.written} of ${ops.length} were written; Refresh to see them.` : '');
+        const stopped = send[out.written];
+        const prefix = stopped ? `${stopped.name}: ` : '';
+        const message = out.error?.startsWith(prefix) ? out.error.slice(prefix.length) : out.error;
+        const done = ops.filter(op => writtenOps.get(keyOf(op)) === JSON.stringify(op)).length;
+        const f = saveFailure(ops.length, done, out.error, out.outcomeUnknown);
+        // BMP's message goes on the row of the file it stopped at; with no answer at all it stays above the list.
+        saveFailed = stopped && !out.outcomeUnknown ? { sentence: f.sentence, failedId: keyOf(stopped), ...(message ? { rowMessage: message } : {}) } : f;
         return;
       }
       // A fresh read of the list, then of the files that were changed.
+      phase = 'checking'; drawBar();
       let bad: string[] = [];
       try {
         const r = await ctx.work(readImages(true));
@@ -812,26 +1005,44 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
         bad = [`The list could not be read again: ${e instanceof Error ? e.message : String(e)}`];
       }
       const n = ops.length;
-      result = bad.length ? `Saved, but BMP does not hold it as sent: ${bad[0]}`
-        : `Saved ${n} change${n === 1 ? '' : 's'}${tooLarge.length ? `. ${tooLargeText(tooLarge)}` : ''}`;
+      result = bad.length ? `Saved, but BMP does not hold it as sent: ${bad[0]}` : '';
+      if (tooLarge.length) note = tooLargeText(tooLarge);
       resultBad = bad.length > 0;
+      if (!bad.length) bar.saved(`Saved ${n} change${n === 1 ? '' : 's'}`);
+      writtenOps.clear();
       forgetWork();
     } finally {
-      saving = false;
+      phase = null;
       drawAll();
     }
   }
 
   // ── adding and replacing ──────────────────────────────────────────
 
-  async function add(files: PickedFile[]): Promise<void> {
+  /** Library images to a folder: the view goes to that folder, with them selected under New. */
+  function addFromLibrary(files: PickedFile[], folderId: string): void {
     if (!index) return;
-    const folder = targetFolder();
+    // A selection with unsaved changes to existing images stays; otherwise the new images are the selection.
+    if (!changedExisting().length) { selection = new Set(); settings = defaults(); closeColorPop(); }
+    selFolder = folderId; libView = null; query = '';
+    reveal(folderId);
+    scrollToTop = true;
+    const before = news.length;
+    add(files, folderId);
+    const n = news.length - before;
+    if (n) addedNote = `${n} image${n === 1 ? '' : 's'} added to ${index.folders.find(f => f.id === folderId)?.name ?? folderId}. Save to write ${n === 1 ? 'it' : 'them'} to BMP.`;
+    drawAll();
+  }
+
+  function add(files: PickedFile[], folderId?: string): void {
+    if (!index) return;
+    const folder = folderId ?? targetFolder();
     if (!folder) { note = 'This workspace has no folder to add files to.'; drawGrid(); return; }
     const { added, skipped } = newImagesFor(files, folder, index, news, () => `n${++counter}`);
     note = skipped.length ? `${skipped.length} file${skipped.length === 1 ? ' is' : 's are'} not an image and ${skipped.length === 1 ? 'was' : 'were'} left out.` : '';
     if (!added.length) { drawGrid(); return; }
-    news = [...news, ...added];
+    // The newest first, under New.
+    news = [...added, ...news];
     for (const a of added) selection.add(a.key);
     result = '';
     prepare();
@@ -864,6 +1075,11 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
     if (list?.length) void filesFromInput(list).then(add);
     fileInput.value = '';
   });
+  folderInput.addEventListener('change', () => {
+    const list = folderInput.files;
+    if (list?.length) void filesFromFolder(list).then(add);
+    folderInput.value = '';
+  });
   replaceInput.addEventListener('change', () => {
     const list = replaceInput.files;
     const rid = [...selection][0];
@@ -887,9 +1103,10 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
     root,
     show() {
       root.hidden = false;
+      library.load();
       if (!index && !loading) void load(false); else drawAll();
     },
     hasUnsaved: unsaved,
-    selectFolder(id) { selFolder = id; if (index) drawAll(); },
+    selectFolder(id) { selFolder = id; userFolder = id; libView = null; reveal(id); if (index) drawAll(); },
   };
 }

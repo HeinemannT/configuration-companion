@@ -267,6 +267,23 @@ describe('Blueprint target resolution on standalone edit routes', () => {
     expect(scans).toBe(1);
   });
 
+  it('a page without a URL rid asks the page for its bound object only, not for the walk over every component', async () => {
+    await loadContent();
+    const asked: unknown[] = [];
+    const lifetime = new AbortController();
+    document.addEventListener('crev-content', ((event: CustomEvent) => {
+      if (event.detail?.type === 'EXTRACT_FIBERS') asked.push(event.detail);
+    }) as EventListener, { signal: lifetime.signal });
+    try {
+      (window as any).__crevBpResolver();
+      (window as any).__crevBpResolver();
+      expect(asked.length).toBeGreaterThan(0);
+      expect(asked.every(d => (d as { contextOnly?: boolean }).contextOnly === true)).toBe(true);
+    } finally {
+      lifetime.abort();
+    }
+  });
+
   it('keeps the ModelPage RID when an EditPage is only nested in a CreateObjectView', async () => {
     extractUrlRids.mockReturnValue({ rid: '7145523037880784711' });
     document.body.innerHTML = '<div class="edit-page-main-container"></div>';

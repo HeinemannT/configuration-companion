@@ -82,8 +82,9 @@ describe('reading one stroke', () => {
     expect(r.place.over).toContain('tbl_open_risks');
   });
 
-  it('a line from nowhere, a short line and a tap stay plain', () => {
-    expect(read(line([600, 560], [800, 580], { hook: true })).kind).toBe('plain');
+  it('a line from nowhere, a short line and a tap stay plain; with a head it is an arrow', () => {
+    expect(read(line([600, 560], [800, 580])).kind).toBe('plain');
+    expect(read(line([600, 560], [800, 580], { hook: true })).kind).toBe('arrow');
     expect(read(line([150, 450], [185, 478], { bow: 0 })).kind).toBe('plain');
     expect(read([[300, 460], [302, 461]]).kind).toBe('plain');
   });
@@ -284,5 +285,19 @@ describe('which strokes belong together: arrows and crosses', () => {
     const first = { left: 268, top: 442, width: 160, height: 36 };
     const second = { left: 268, top: 442, width: 160, height: 36 };
     expect(joinsGroup({ box: first, endedAt: 1000 }, second, 1000 + 3000)).toBe(true);
+  });
+});
+
+describe('which strokes belong together: a big head', () => {
+  const shaft = { left: 400, top: 60, width: 400, height: 240 };
+  const ends: PtPoint[] = [[800, 60], [425, 300]];
+  it('a big V drawn over an end of a long shaft after a pause joins it', () => {
+    const head = { left: 385, top: 276, width: 65, height: 76 };
+    expect(joinsGroup({ box: shaft, endedAt: 1000, ends }, head, 1000 + 2800)).toBe(true);
+    expect(joinsGroup({ box: shaft, endedAt: 1000, ends }, head, 1000 + 4200)).toBe(false);
+  });
+  it('a big stroke that touches the shaft away from its ends waits no longer than usual', () => {
+    expect(joinsGroup({ box: shaft, endedAt: 1000, ends }, { left: 600, top: 290, width: 90, height: 90 }, 1000 + 2800)).toBe(false);
+    expect(joinsGroup({ box: shaft, endedAt: 1000 }, { left: 385, top: 276, width: 65, height: 76 }, 1000 + 2800)).toBe(false);
   });
 });

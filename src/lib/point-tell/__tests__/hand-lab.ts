@@ -95,6 +95,14 @@ ARROWS.push(['a short arrow (60-100 px) onto a button', n => cases(n, r => {
   const tip = inRect(r, rectOf('btn_export'), 0.25), a = between(r, 0, 6.28), l = between(r, 60, 100);
   return { strokes: arrow([tip[0] + Math.cos(a) * l, tip[1] + 30 + Math.abs(Math.sin(a)) * l], tip, r, { head: pick(r, REAL_HEADS) }), want: x => x.kind === 'select' && x.targets[0] === 'btn_export' };
 }), 0.8]);
+ARROWS.push(['an arrow on empty space is an arrow with no objects, every head', n => cases(n, r => ({
+  strokes: arrow([600, 560], [between(r, 760, 900), between(r, 560, 620)], r, { head: pick(r, REAL_HEADS) }),
+  want: x => x.kind === 'arrow' && x.targets.length === 0 && !!x.arrow && !x.arrow.from && !x.arrow.to,
+})), 0.85]);
+ARROWS.push(['an arrow from a button to empty space is an arrow from it, every head', n => cases(n, r => ({
+  strokes: arrow(inRect(r, rectOf('btn_export'), 0.2), [between(r, 600, 900), between(r, 540, 640)], r, { head: pick(r, REAL_HEADS) }),
+  want: x => (x.kind === 'arrow' && x.arrow?.from === 'btn_export' && !x.arrow.to) || (x.kind === 'move' && x.targets[0] === 'btn_export'),
+})), 0.85]);
 ARROWS.push(['the tip is the arrow point (within 14 px), every head', n => cases(n, r => {
   const head = pick(r, REAL_HEADS), tail = inRect(r, rectOf('btn_export'), 0.2);
   const tip: PtPoint = [between(r, 520, 900), between(r, 520, 640)];
@@ -163,7 +171,7 @@ const FALSE: Lab[] = [
   ['an underline stays a change', n => cases(n, (r, i) => ({ strokes: [line([110, 412 + between(r, -3, 3)], [110 + between(r, 150, 330), 414], { bow: 0.01, seed: i + 1 })], want: x => x.kind === 'change' && x.targets[0] === 'txt_info' })), 1],
   ['a scratch-out over the chart stays crossed', n => cases(n, (r, i) => ({ strokes: [zigzag(790, 130, between(r, 240, 280), between(r, 130, 160), 6, { seed: i + 1 })], want: crossedOn('chart_by_status') })), 1],
   ['a wave over an object is not a move', n => cases(n, (r, i) => ({ strokes: [wave(120, 150, between(r, 100, 180), between(r, 4, 8), between(r, 16, 26), { seed: i + 3 })], want: x => x.kind !== 'move' && x.kind !== 'crossed' })), 1],
-  ['a line from nowhere to nowhere stays plain', n => cases(n, r => ({ strokes: arrow([600, 560], [between(r, 760, 900), between(r, 560, 620)], r, { head: pick(r, HEAD_STYLES) }), want: plainAnd })), 1],
+  ['a line from nowhere to nowhere stays plain', n => cases(n, r => ({ strokes: arrow([600, 560], [between(r, 760, 900), between(r, 560, 620)], r, { head: 'line' }), want: plainAnd })), 1],
   ['table, bars and text sketches stay adds', n => cases(Math.min(n, 30), (r, i) => {
     const k = i % 3;
     const s = k === 0 ? tableSketch(560, 520, 380, 120, 3, 2, 20 + i) : k === 1 ? barsSketch(560, 520, 300, 140, [0.5, 0.8, 0.3, 0.9], 30 + i) : textLines(560, 520, [200, 160, 180], 18, 50 + i);

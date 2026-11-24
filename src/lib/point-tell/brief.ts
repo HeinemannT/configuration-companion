@@ -169,6 +169,16 @@ function describe(m: PtMark, c: Ctx): { drew?: string; guess?: string; name?: bo
       const to = mean?.kind === 'move' ? placeOf(c, mean.to) : '';
       return { drew: `Arrow from ${refOf(c, m.targets[0])}${to ? ` to ${to}` : ''}`, ...(to ? { guess: 'move it there' } : {}) };
     }
+    case 'direction': {
+      // An arrow that asks for no operation Companion can tell: where it starts and where it points, kept as drawn.
+      const a = m.arrow ?? {};
+      if (a.from && a.to) return { drew: a.from === a.to ? `Arrow inside ${refOf(c, a.from)}` : `Arrow from ${refOf(c, a.from)} to ${refOf(c, a.to)}` };
+      const near = a.near ? ` ${a.near.side} ${refOf(c, a.near.id)}` : '';
+      if (a.from) { const where = a.end ? gridOf(c, a.end) : ''; return { drew: `Arrow from ${refOf(c, a.from)} to empty space${near}${where ? `, ${where}` : ''}` }; }
+      if (a.to) return { drew: `Arrow to ${refOf(c, a.to)}` };
+      const where = m.ink ? gridOf(c, m.ink.place) : '';
+      return { drew: `Arrow on empty space${where ? ` ${where}` : ''}${near ? `, pointing to the space${near}` : ''}` };
+    }
     case 'pair': {
       const where = m.ink ? gridOf(c, m.ink.place) : '';
       const wide = mean?.kind === 'move' && mean.columns ? `, about ${plural(mean.columns, 'column')} wide` : '';
@@ -213,7 +223,7 @@ export function markLine(m: PtMark, c: Ctx, num: number = m.n, fix?: { sketch: n
   // Marks that can be read as a delete, with nothing said: the agent asks first.
   const kind = kindOf(m);
   if (!words && kind === 'cross') parts.push(CROSS_NO_WORDS);
-  else if (!words && kind === 'ink') parts.push(INK_NO_WORDS);
+  else if (!words && (kind === 'ink' || kind === 'direction')) parts.push(INK_NO_WORDS);
   return { text: `${num}. ${lead}${parts.join(' ')}`, guessed: !!d.guess };
 }
 

@@ -60,7 +60,9 @@ import type { BrowseTree, ObjectHit } from './browse-tree';
 /** What set a tab's current position (lib/current-position.ts). */
 export type PositionSource = 'badge' | 'contextmenu' | 'window' | 'picker';
 import type { JsonShape } from './json-shape';
-import type { AiCustomProvider, AiProviderId, AiRequestPayload, AiChatTurn, AiChatEvent, AiChatQuote, AiContextEnvelope, AiContextSource } from './ai/types';
+import type { AiCustomProvider, AiProviderId, AiRequestPayload, AiChatTurn, AiChatEvent, AiChatQuote, AiContextEnvelope, AiContextSource, AiSettings } from './ai/types';
+import type { BuiltinProviderId } from './ai/providers';
+import type { ProviderErrorKind } from './ai/provider-errors';
 import type { AiChangeProposal } from './ai/change-ticket';
 import type { LModel, PlanNote, NodeStyle, FlowNode } from './layout/types';
 import type { StylePreset } from './style-presets';
@@ -86,11 +88,13 @@ export type PageMessage =
   // SW forwards by re-running sendPageInfoToPanel so the Page tab's widget
   // list refreshes — without this, post-route widgets show grey "?" until
   // the user clicks Refresh or switches panel tabs.
-  | { type: 'BMP_URL_CHANGED' }
+  // `left`: the tab's address changed, so its badges were dropped and are asked for again; badge
+  // naming still queued for what the tab showed before is no longer wanted.
+  | { type: 'BMP_URL_CHANGED'; left?: true }
   // The rendered page changed without changing its owner/route (React mounted,
   // widgets were replaced, or an in-page tab switched). Refresh visible page
   // information, but preserve the user's explicit object selection.
-  | { type: 'BMP_PAGE_RENDER_CHANGED' }
+  | { type: 'BMP_PAGE_RENDER_CHANGED'; left?: true }
   | { type: 'GET_CONTEXT_RID' }
   // The panel's bar: drop the object the user pointed at; the position follows the page again.
   | { type: 'CLEAR_CONTEXT_RID' }
@@ -178,7 +182,9 @@ export type CacheMessage =
   // tree), the page's own rows (tree.presented 'loading' while a data
   // object's presenting template is read), then the whole tree.
   | { type: 'BROWSE_TREE'; rid: string; typeHint?: string }
-  | { type: 'BROWSE_TREE_DATA'; rid: string; environment: string; ok: boolean; tree?: BrowseTree; crumbs?: import('./browse-tree').BrowseCrumb[]; error?: string; errorKind?: import('./error-kind').BmpErrorKind }
+  /** `superseded`: the read was dropped because the panel asked for another
+   *  page; the panel forgets the entry and asks again when the page is shown. */
+  | { type: 'BROWSE_TREE_DATA'; rid: string; environment: string; ok: boolean; tree?: BrowseTree; crumbs?: import('./browse-tree').BrowseCrumb[]; error?: string; errorKind?: import('./error-kind').BmpErrorKind; superseded?: boolean }
   // Exact RID or business ID typed into the search: one read or one EC lookup.
   | { type: 'BROWSE_RESOLVE'; query: string; gen: number }
   | { type: 'BROWSE_RESOLVE_RESULT'; query: string; gen: number; ok: boolean; object?: ObjectHit; error?: string }
@@ -1021,18 +1027,26 @@ export type PagePrefsMessage =
 export type AiMessage =
   | { type: 'AI_GET_CONFIG' }
   | { type: 'AI_CONFIG_DATA'; configured: boolean; provider?: AiProviderId; model?: string; customProvider?: AiCustomProvider }
+  // Make a provider active with a model. A key is stored for that provider
+  // only; the other providers keep theirs.
   | { type: 'AI_SAVE_CONFIG'; provider: AiProviderId; model: string; apiKey?: string }
+  // Setup check: list the models with the key, preselect one, send one tiny
+  // generation. A key that lists models is stored for its provider.
+  | { type: 'AI_CHECK_KEY'; provider: BuiltinProviderId; apiKey?: string; model?: string }
+  | { type: 'AI_KEY_CHECKED'; provider: BuiltinProviderId; ok: boolean; models?: string[]; model?: string; ms?: number; error?: string; kind?: ProviderErrorKind; detail?: string; configured?: boolean; customProvider?: AiCustomProvider; ai?: AiSettings }
   | { type: 'AI_SAVE_CUSTOM_PROVIDER'; json: string }
-  | { type: 'AI_REMOVE_CONFIG' }
-  | { type: 'AI_CONFIG_SAVED'; ok: boolean; configured: boolean; provider?: AiProviderId; model?: string; customProvider?: AiCustomProvider; error?: string }
+  | { type: 'AI_REMOVE_KEY'; provider: AiProviderId }
+  | { type: 'AI_SET_WEB_ACCESS'; on: boolean }
+  // `ai` is the redacted configuration: keys appear only as 'set'.
+  | { type: 'AI_CONFIG_SAVED'; ok: boolean; configured: boolean; provider?: AiProviderId; model?: string; customProvider?: AiCustomProvider; error?: string; ai?: AiSettings }
   // Broadcast (SW → all pages) whenever the stored AI config changes, so
   // already-open editor / studio surfaces can show or hide the assistant live
   // (zero-footprint: removing the key must disable it without a reload).
-  | { type: 'AI_CONFIG_CHANGED'; configured: boolean; provider?: AiProviderId; model?: string; customProvider?: AiCustomProvider }
+  | { type: 'AI_CONFIG_CHANGED'; configured: boolean; provider?: AiProviderId; model?: string; customProvider?: AiCustomProvider; ai?: AiSettings }
   | { type: 'AI_TEST' }
-  | { type: 'AI_TEST_RESULT'; ok: boolean; model?: string; ms?: number; error?: string }
+  | { type: 'AI_TEST_RESULT'; ok: boolean; model?: string; ms?: number; error?: string; kind?: ProviderErrorKind }
   | { type: 'AI_LIST_MODELS'; provider: AiProviderId }
-  | { type: 'AI_MODELS_RESULT'; ok: boolean; models?: string[]; error?: string }
+  | { type: 'AI_MODELS_RESULT'; ok: boolean; provider?: AiProviderId; models?: string[]; model?: string; error?: string; kind?: ProviderErrorKind }
   | { type: 'AI_REQUEST'; payload: AiRequestPayload }
   | { type: 'AI_CHUNK'; requestId: string; delta: string }
   | { type: 'AI_DONE'; requestId: string }
