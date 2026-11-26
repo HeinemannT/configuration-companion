@@ -189,11 +189,13 @@ const phosphorWords = (name) => {
   need(m, `${name}: not in the Phosphor metadata`);
   return uniq([...m.tags.filter((t) => !t.startsWith('*')), ...m.categories]).filter((w) => !name.split('-').includes(w));
 };
+// Words a whole group answers to, where Phosphor's tags do not say it (its sparkle is tagged "star", not "AI").
+const BUTTON_GROUP_WORDS = { AI: ['ai', 'artificial intelligence', 'ki', 'künstliche intelligenz', 'assistant', 'assistent', 'agent', 'copilot', 'model', 'generate', 'smart', 'automation'] };
 const seen = new Set();
 const buttons = subset.groups.map((g) => [g.name, g.icons.map((name) => {
   need(!seen.has(name), `${name} is listed twice`);
   seen.add(name);
-  return [name, inner(name, 'regular'), inner(name, 'fill'), phosphorWords(name)];
+  return [name, inner(name, 'regular'), inner(name, 'fill'), uniq([...phosphorWords(name), ...(BUTTON_GROUP_WORDS[g.name] ?? [])])];
 })]);
 
 mkdirSync(out, { recursive: true });

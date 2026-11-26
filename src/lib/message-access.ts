@@ -146,6 +146,12 @@ export const MESSAGE_ACCESS: Readonly<Record<string, Allowed>> = {
   NUMERIC_IDS_RUN: [F],
   // Opened from the side panel only.
   OPEN_TRANSPORT: [],
+  // Atlas: opened from the object window too; its page (a tab of its own) sends the rest
+  OPEN_ATLAS: [F],
+  ATLAS_MODEL: [],
+  ATLAS_OBJECT: [],
+  ATLAS_ROUTE: [],
+  ATLAS_OPEN: [],
   BROWSE_SEARCH: [F],
   BROWSE_RESOLVE: [F],
   OBJECT_SEARCH: [F],

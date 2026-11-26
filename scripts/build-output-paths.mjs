@@ -8,6 +8,7 @@ export const GENERATED_ROOT_FILES = Object.freeze([
 export const GENERATED_ROOT_DIRECTORIES = Object.freeze([
   'access',
   'assets',
+  'atlas',
   'chunks',
   'claude-setup',
   'codesearch',

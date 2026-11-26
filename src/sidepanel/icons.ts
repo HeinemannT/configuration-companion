@@ -10,6 +10,7 @@ import { mountSprites } from './tabs/browse/view';
 const SHELL_SPRITE = `<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
 <symbol id="s-pointtell" viewBox="0 0 16 16"><path d="M3.5 3h9A1.5 1.5 0 0 1 14 4.5v5A1.5 1.5 0 0 1 12.5 11H9l-2.5 2.5V11h-3A1.5 1.5 0 0 1 2 9.5v-5A1.5 1.5 0 0 1 3.5 3z"/><path d="M6 5.2v3.6l1.2-1.1.8 1.6.7-.3-.8-1.5H9.7z" stroke-width="1.2"/></symbol>
 <symbol id="s-codesearch" viewBox="0 0 16 16"><path d="M2.5 3.8h6.5M2.5 7h3.5M2.5 10.2h3"/><circle cx="10" cy="9.5" r="2.8"/><path d="M12.1 11.6l1.9 1.9"/></symbol>
+<symbol id="s-atlas" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2"/><circle cx="3" cy="3.8" r="1.5"/><circle cx="13" cy="3.8" r="1.5"/><circle cx="12.5" cy="12.5" r="1.5"/><path d="M4.2 4.8 6.3 6.6M11.8 4.8 9.7 6.6M11.4 11.4 9.6 9.6"/></symbol>
 <symbol id="s-transport" viewBox="0 0 16 16"><path d="M2.5 5.2 7 3l4.5 2.2v4.6L7 12 2.5 9.8zM2.5 5.2 7 7.5l4.5-2.3M7 7.5V12"/><path d="M12.5 8.5h2M13.7 7.5l1 1-1 1" stroke-width="1.3"/></symbol>
 <symbol id="s-numids" viewBox="0 0 16 16"><path d="M2.3 5.5 3.6 4.4v7.2M6.3 5.3a1.6 1.4 0 0 1 3 .5c0 1.2-3 2.6-3 5.8h3.1M11.4 4.8h2.4l-1.2 2.2a1.8 1.8 0 1 1-1.4 2.7"/></symbol>
 <symbol id="s-palette" viewBox="0 0 16 16"><path d="M8 2.5a5.5 5.5 0 1 0 0 11c.9 0 1.3-.6 1.1-1.3-.3-.8.2-1.5 1-1.5H12a2 2 0 0 0 1.5-2A5.5 5.5 0 0 0 8 2.5z"/><path d="M5.2 7.5v.01M8 5.3v.01M10.8 6.8v.01"/></symbol>

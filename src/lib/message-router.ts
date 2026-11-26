@@ -64,6 +64,7 @@ import './handlers/code-refs';
 import './handlers/code-search';
 import './handlers/transport';
 import './handlers/transport-window';
+import './handlers/atlas';
 import './handlers/bmp-goto';
 import './handlers/layout';
 import './handlers/site-access';

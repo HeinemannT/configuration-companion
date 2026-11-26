@@ -16,8 +16,6 @@ Configuration Companion includes the components below. Each licence text follows
 | tldts, tldts-core | Copyright (c) 2017 Thomas Parisot, 2018 Rémi Berson | MIT |
 | tough-cookie | Copyright (c) 2015, Salesforce.com, Inc. | BSD-3-Clause |
 | Phosphor Icons (icons) | Copyright (c) 2023 Phosphor Icons | MIT |
-| Feather (icons) | Copyright (c) 2013-2023 Cole Bemis | MIT |
-| Lucide (icons) | Copyright (c) 2026 Lucide Icons and Contributors | ISC |
 | Inter (font) | Copyright 2016 The Inter Project Authors (https://github.com/rsms/inter) | SIL OFL 1.1 |
 | JetBrains Mono (font) | Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono) | SIL OFL 1.1 |
 

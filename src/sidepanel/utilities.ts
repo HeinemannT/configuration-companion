@@ -7,7 +7,7 @@
 
 import type { InspectorMessage } from '../lib/types';
 
-export type UtilityId = 'code-search' | 'transport' | 'numeric-ids' | 'access' | 'colors' | 'images' | 'claude-desktop';
+export type UtilityId = 'code-search' | 'atlas' | 'transport' | 'numeric-ids' | 'access' | 'colors' | 'images' | 'claude-desktop';
 
 export interface UtilityEntry {
   id: UtilityId;
@@ -37,6 +37,7 @@ export const UTILITIES: readonly UtilityEntry[] = [
   { id: 'code-search', name: 'Code Search', line: 'Search the Extended Code of this server', icon: 's-codesearch', message: { type: 'OPEN_CODE_SEARCH' }, needsServer: false },
   { id: 'transport', name: 'Transport', line: 'Move objects between servers', icon: 's-transport', message: { type: 'OPEN_TRANSPORT' }, tag: 'Beta', titleName: 'Transport (beta)', needsServer: false },
   { id: 'numeric-ids', name: 'Numeric IDs', line: 'Change numbers used as IDs', icon: 's-numids', message: { type: 'OPEN_TRANSPORT', tab: 'numeric' }, tag: 'Beta', titleName: 'Numeric IDs (a tab of Transport, beta)', needsServer: false },
+  { id: 'atlas', name: 'Atlas', line: 'Types, references and routes', icon: 's-atlas', message: { type: 'OPEN_ATLAS' }, needsServer: true },
   { id: 'access', name: 'Access', line: 'Roles, policies and access tests', icon: 'i-shield', message: { type: 'OPEN_ACCESS_WORKSPACE' }, needsServer: true },
   { id: 'colors', name: 'Colors', line: 'Add and change colors', icon: 's-palette', message: { type: 'OPEN_COLORS_IMAGES', tab: 'colors' }, needsServer: true },
   { id: 'images', name: 'Images', line: 'Add and change image files', icon: 'i-image', message: { type: 'OPEN_COLORS_IMAGES', tab: 'images' }, needsServer: true },
@@ -45,7 +46,7 @@ export const UTILITIES: readonly UtilityEntry[] = [
 
 export const UTILITY_GROUPS: readonly UtilityGroup[] = [
   { id: 'page', label: 'Over the BMP page', opens: 'Opens over the BMP page', ids: ['code-search', 'transport', 'numeric-ids'] },
-  { id: 'tab', label: 'In a browser tab', opens: 'Opens in a browser tab', ids: ['access', 'colors', 'images', 'claude-desktop'] },
+  { id: 'tab', label: 'In a browser tab', opens: 'Opens in a browser tab', ids: ['atlas', 'access', 'colors', 'images', 'claude-desktop'] },
 ];
 
 export const CHOOSE_SERVER_FIRST = 'Choose a server first';

@@ -25,14 +25,14 @@ const parse = (text: string) => new DOMParser().parseFromString(text, 'image/svg
 describe('what the library ships', () => {
   const all = lib.collections.flatMap(c => itemsOf(c).flatMap(i => Object.entries(i.svg).map(([v, svg]) => ({ c: c.id, key: i.key, v, svg }))));
 
-  it('holds the decided images: 77 status symbols, 16 GRC metaphors in three styles, 192 Phosphor icons in two weights', () => {
+  it('holds the decided images: 77 status symbols, 16 GRC metaphors in three styles, 197 Phosphor icons in two weights', () => {
     expect(itemsOf(coll(lib, 'status'))).toHaveLength(77);
     expect(itemsOf(coll(lib, 'grc')).map(i => i.code)).toEqual(['R1', 'R2', 'R5', 'C1', 'C2', 'C5', 'M1', 'M2', 'M3', 'M4', 'M5', 'P1', 'P2', 'P3', 'P4', 'P5']);
     expect(coll(lib, 'grc').variants.map(v => v.label)).toEqual(['Line', 'Two-tone', 'Tile']);
-    expect(itemsOf(coll(lib, 'buttons'))).toHaveLength(192);
-    expect(coll(lib, 'buttons').groups).toHaveLength(18);
+    expect(itemsOf(coll(lib, 'buttons'))).toHaveLength(197);
+    expect(coll(lib, 'buttons').groups).toHaveLength(19);
     expect(coll(lib, 'buttons').variants.map(v => v.id)).toEqual(['regular', 'fill']);
-    expect(all).toHaveLength(77 + 16 * 3 + 192 * 2);
+    expect(all).toHaveLength(77 + 16 * 3 + 197 * 2);
     // No triangles; dots and squares in all colours and glyphs.
     expect(itemsOf(coll(lib, 'status')).some(i => i.key.includes('triangle'))).toBe(false);
     expect(coll(lib, 'status').groups.map(g => g.name)).toEqual(['Status dots', 'Status squares', 'Control effectiveness', 'Progress', 'Trend', 'Risk level', 'Approval', 'Traffic light', 'Harvey balls']);
@@ -261,5 +261,18 @@ describe('into the draft', () => {
     expect(ops.map(o => (o.kind === 'add' ? o.description : null))).toEqual([PHOSPHOR_NOTE, undefined, undefined]);
     expect(buildFileWriteEc(ops[0])).toMatch(/^t\.icons\.add\(FileResource, id := "icon_plus_fill_ffffff", name := "plus-fill\.svg", description := "Phosphor Icons \(MIT License\), phosphoricons\.com", content := "plus-fill\.svg;image\/svg\+xml;/);
     expect(buildFileWriteEc(ops[1])).not.toContain('description');
+  });
+});
+
+describe('the AI group', () => {
+  it('has five icons and is found by "ai", "ki" and "agent"', async () => {
+    const lib = await loadLibrary();
+    const all = lib.collections.flatMap(c => c.groups.flatMap(g => g.items));
+    const ai = all.filter(i => i.group === 'AI');
+    expect(ai.map(i => i.label).sort()).toEqual(['brain', 'cpu', 'head-circuit', 'robot', 'sparkle']);
+    for (const q of ['ai', 'ki', 'agent']) {
+      const hits = searchLibrary(all, q).filter(i => i.group === 'AI');
+      expect(hits).toHaveLength(5);
+    }
   });
 });

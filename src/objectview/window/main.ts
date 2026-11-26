@@ -414,6 +414,7 @@ function boot(): void {
     toOrigin: origin => backToSearch(origin),
     findReferences: (obj, from) => sendFireForget({ type: 'OPEN_CODE_SEARCH', mode: 'refs', target: obj, ...(from ? { context: from } : {}) }),
     searchCode: (obj, under) => sendFireForget({ type: 'OPEN_CODE_SEARCH', mode: 'text', ...(obj ? { context: obj } : {}), ...(obj && under ? { scope: obj } : {}) }),
+    atlas: obj => sendFireForget({ type: 'OPEN_ATLAS', rid: obj.rid, ...(obj.name ? { name: obj.name } : {}), ...(obj.type ? { objectType: obj.type } : {}) }),
     requestFields: obj => controller.requestFields(obj),
     needTemplate: rid => controller.ensureTemplate(rid),
     edit: (rid, prop, value, base) => controller.edit(rid, prop, value, base),

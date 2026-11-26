@@ -41,6 +41,7 @@ import { buildHoverResolveEc } from '../handlers/objects';
 import { buildIdentityEc } from '../handlers/code-search';
 import { buildStudioChildrenEc } from '../handlers/studio';
 import { buildImageIndexEc } from '../colors-images/image-files';
+import { buildAtlasCountEc, buildAtlasHeldEc, buildAtlasObjectEc, buildAtlasPropertiesEc, buildAtlasRouteRowsEc } from '../atlas/atlas-ec';
 import { buildColorWriteEc, buildFileWriteEc } from '../colors-images/write-ops';
 import { buildContextQueryEc } from '../handlers/ai-tools';
 import { buildSuggestEc, buildSuggestPartEc } from '../compare-read';
@@ -118,6 +119,9 @@ const ENTRIES: Entry[] = [
   { fn: 'buildAccessSubjectsEc', kind: 'constant', a: () => buildAccessSubjectsEc() },
   { fn: 'buildColorSetsEc', kind: 'constant', a: () => buildColorSetsEc() },
   { fn: 'buildImageIndexEc', kind: 'constant', a: () => buildImageIndexEc() },
+  // Atlas: the reference properties (fixed); one object's name and class (the object is the context).
+  { fn: 'buildAtlasPropertiesEc', kind: 'constant', a: () => buildAtlasPropertiesEc() },
+  { fn: 'buildAtlasObjectEc', kind: 'constant', a: () => buildAtlasObjectEc() },
   { fn: 'buildContextReadEc', kind: 'constant', a: () => buildContextReadEc(KNOWN_CODE_PROPS.ButtonInput) },
   { fn: 'buildContextRefResolveEc', kind: 'constant', a: () => buildContextRefResolveEc() },
   { fn: 'buildInboundEc', kind: 'constant', a: () => buildInboundEc(CONTEXT_OBJECT) },
@@ -149,6 +153,11 @@ const ENTRIES: Entry[] = [
   { fn: 'buildEditPageFetchEc', kind: 'constant', a: () => buildEditPageFetchEc(CONTEXT_OBJECT) },
   { fn: 'buildFlowRefListEc', kind: 'constant', a: () => [buildFlowRefListEc('InputSet'), buildFlowRefListEc('EditPage')] },
   { fn: 'buildObjectTypeListEc', kind: 'constant', a: () => buildObjectTypeListEc() },
+  // The class and its references are in the text: the same few texts per server on every read.
+  { fn: 'buildAtlasHeldEc', kind: 'varying', a: () => buildAtlasHeldEc('CeRiskAssessment', ['controls', 'accountable_owner']) },
+  { fn: 'buildAtlasCountEc', kind: 'varying', a: () => buildAtlasCountEc('User') },
+  // The way is in the text: one short text per way the user picks.
+  { fn: 'buildAtlasRouteRowsEc', kind: 'varying', a: () => buildAtlasRouteRowsEc('CeRiskAssessment', [{ dir: 'out', prop: 'controls' }, { dir: 'in', prop: 'subject' }]) },
   { fn: 'buildFlowSettingsEc', kind: 'varying', a: () => buildFlowSettingsEc('9007837798074769804', 'ReferenceInput') },
   { fn: 'buildObjectTypeSiblingsEc', kind: 'varying', a: () => buildObjectTypeSiblingsEc(['1463796860208468677', '6935556136354115450']) },
   // The object is the context; the text varies only with the reference

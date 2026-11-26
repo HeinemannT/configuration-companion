@@ -20,6 +20,7 @@ dist/
 /sidepanel/
 /studio/
 /transport/
+/atlas/
 
 # Local working material
 /.tmp/

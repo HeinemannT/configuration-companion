@@ -93,6 +93,10 @@ Browse shows the structure of the current page in the side panel and finds objec
   <img src=".github/readme/compare.png" width="880" alt="Compare: an object next to its template">
 </p>
 
+### Atlas
+
+Atlas opens in a browser tab and shows the types of a workspace and the reference properties between them. All types is a grid of which type references which. One type shows its references and how many objects fill each. Route lists the routes between two types, with their objects and the Extended Code that reads them.
+
 ### Transport (beta)
 
 Transport moves configuration objects from one workspace to another. Find the objects by ID, name, change date or by browsing the tree, and take single objects or a folder with everything under it. Companion compares them with the target and shows what would be added, changed, moved or deleted. Apply runs a dry run first and writes nothing if the target changed since the comparison. The last apply can be undone, except for deletes. For a workspace that is not connected, Transport gives you the scripts to run there yourself.

@@ -11,6 +11,7 @@
  * exactly as dropped files do, with IDs proposed from their names, and stay
  * adjustable there. The data loads once (its own chunk); nothing here writes.
  */
+import { libraryIcon } from './icons';
 import { attrs, btn, el, icon } from '../lib/dom';
 import { normalizeHex } from '../lib/colors-images/color-math';
 import { DEFAULT_ADJUST } from '../lib/colors-images/image-process';
@@ -145,7 +146,7 @@ export function createLibrary(h: LibraryHost): LibraryView {
 
   function side(current: CollectionId | null, open: (id: CollectionId, group?: string) => void): HTMLElement {
     const sec = attrs(el('section', 'ci-sec lib'), { 'aria-label': 'Library' });
-    sec.append(el('div', 'ci-sec-h', el('span', 'ci-tglyph', icon('o-library')), el('span', 'ci-sec-t', 'Library')),
+    sec.append(el('div', 'ci-sec-h', el('span', 'ci-tglyph', libraryIcon()), el('span', 'ci-sec-t', 'Library')),
       el('p', 'ci-sec-cap', 'Not in BMP yet'));
     if (lib) {
       for (const c of lib.collections) {
@@ -183,7 +184,7 @@ export function createLibrary(h: LibraryHost): LibraryView {
         if (Math.hypot(ev.clientX - x0, ev.clientY - y0) < 6) return;
         if (!selection.has(item.key)) { select([item], true); h.changed(); }
         const n = selection.size;
-        ghost = el('div', 'ci-dragghost', icon('o-library'), el('span', '', `${n} image${n === 1 ? '' : 's'}`));
+        ghost = el('div', 'ci-dragghost', libraryIcon(), el('span', '', `${n} image${n === 1 ? '' : 's'}`));
         // Positioned inline: the drag follows the pointer above everything.
         ghost.style.cssText = 'position:fixed;left:0;top:0;z-index:2147483000;pointer-events:none';
         document.body.append(ghost);
@@ -215,7 +216,7 @@ export function createLibrary(h: LibraryHost): LibraryView {
     const on = selection.has(item.key);
     const thumb = el('div', `ci-thumb${on && white() ? ' on-dark' : ''}`,
       attrs(el('img'), { src: svgUrl(shown(item)), alt: '', draggable: 'false' }),
-      attrs(el('span', 'ci-libmark', icon('o-library')), { title: 'From the library, not in BMP' }));
+      attrs(el('span', 'ci-libmark', libraryIcon()), { title: 'From the library, not in BMP' }));
     if (on) thumb.append(el('span', 'ci-ck', icon('i-check', 'ic-sm')));
     const label = item.code ? `${item.code} ${item.label}` : item.label;
     const pick = btn('ci-itile-pick', `${label}, from the library`, () => {
@@ -258,7 +259,7 @@ export function createLibrary(h: LibraryHost): LibraryView {
       return [loadError ? el('div', 'ci-state', el('span', '', `The library could not be loaded. ${loadError}`)) : el('div', 'ci-scroll', el('div', 'ci-skel-bar'))];
     }
     const strip = el('div', 'ci-libstrip',
-      el('div', 'ci-libstrip-t', icon('o-library'), el('b', '', 'Library'), el('span', 'ci-libstrip-c', c.name)),
+      el('div', 'ci-libstrip-t', libraryIcon(), el('b', '', 'Library'), el('span', 'ci-libstrip-c', c.name)),
       el('div', 'ci-libstrip-s', 'Not in BMP until you add them. Select images, then add them to a folder or drag them onto one.'),
       el('div', 'ci-libstrip-r',
         c.variantLabel ? el('span', 'ci-inl', el('span', 'ci-lab-in', c.variantLabel),
@@ -268,7 +269,7 @@ export function createLibrary(h: LibraryHost): LibraryView {
   }
 
   function search(query: string): HTMLElement {
-    const head = (n: number | null, extra?: HTMLElement) => el('div', 'ci-shead', icon('o-library'), el('span', '', 'Library'),
+    const head = (n: number | null, extra?: HTMLElement) => el('div', 'ci-shead', libraryIcon(), el('span', '', 'Library'),
       n === null ? null : el('span', 'ci-gn', String(n)), extra ?? null);
     if (!lib) {
       return el('section', 'ci-sres lib', head(null), loadError ? el('p', 'ci-warn', `The library could not be loaded. ${loadError}`) : el('div', 'ci-skel-bar short'));
@@ -400,13 +401,13 @@ export function createLibrary(h: LibraryHost): LibraryView {
     if (why) add.title = why;
     drawPreview();
     return [
-      el('div', 'ci-ph', icon('o-library'), el('span', 'ci-title', `${n} selected from the library`)), previewBox, ...rows,
+      el('div', 'ci-ph', libraryIcon(), el('span', 'ci-title', `${n} selected from the library`)), previewBox, ...rows,
       el('div', 'ci-end near', add, el('p', 'ci-hint', 'Added to the draft under New. Nothing is written to BMP until you save.'),
         el('div', 'ci-end-row', btn('ci-link quiet', undefined, () => { select(items, false); h.changed(); }, 'Clear selection')))];
   }
 
   function idlePanel(): HTMLElement[] {
-    return [el('div', 'ci-ph', icon('o-library'), el('span', 'ci-title', 'Add from the library')),
+    return [el('div', 'ci-ph', libraryIcon(), el('span', 'ci-title', 'Add from the library')),
       el('p', 'ci-hint', 'Select images, or a whole group with Select all. Then add them to a BMP folder, or drag them onto a folder on the left.'),
       el('p', 'ci-hint ci-hint-gap', 'They are added to the draft under New, where you can still adjust them. Nothing is written to BMP until you save.')];
   }

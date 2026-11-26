@@ -269,6 +269,8 @@ export interface ViewHandlers {
   /** Compare: with the template (side B), or with an object picked in the
    *  Compare window. The object is side A. */
   compare(kind: 'pick' | 'template', obj: FullObject): void;
+  /** Atlas on this object: what it holds and what points at it. */
+  atlas?(obj: { rid: string; name?: string; type?: string }): void;
   access(obj: FullObject): void;
   /** Open the colour-link picker; `apply` stages the picked bid. */
   pickColor?(anchor: HTMLElement, currentBid: string | null, apply: (bid: string) => void): void;
@@ -1035,6 +1037,7 @@ export class ObjectWindowView {
     if (who) {
       items.push(['i-search', 'Search code under this object', () => this.handlers.searchCode?.(who, true)]);
       items.push(['i-refs', 'Used in code', () => this.handlers.findReferences?.(who, who)]);
+      if (this.handlers.atlas) items.push(['i-share', 'Show in Atlas', () => this.handlers.atlas?.(who)]);
     }
     items.push(['i-search', 'Search code everywhere…', () => this.handlers.searchCode?.(who, false)]);
     for (const [ic, label, go] of items) {

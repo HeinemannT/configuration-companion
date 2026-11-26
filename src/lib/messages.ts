@@ -606,6 +606,27 @@ export type CodeSearchMessage =
 // running or queued one (its result then says `cancelled`). A result that
 // refused before anything was read (page sender, not connected, another
 // environment, a bad root, start, day or RID) says `refused`.
+// ── Atlas ────────────────────────────────────────────────────────
+// Reads only (handlers/atlas.ts). The model is a dated copy per server,
+// read on the first open and when `force`.
+export type AtlasMessage =
+  // Open Atlas in its own tab for the sender's server, or bring that tab forward; on an object or a type when given.
+  | { type: 'OPEN_ATLAS'; rid?: string; name?: string; objectType?: string }
+  | { type: 'ATLAS_MODEL'; force?: boolean; environment?: string }
+  | { type: 'ATLAS_MODEL_DATA'; ok: boolean; environment: string; model?: import('./atlas/model').AtlasModel; fetchedAt?: number; error?: string }
+  // One object's own ID, name and class.
+  | { type: 'ATLAS_OBJECT'; rid: string; environment: string }
+  | { type: 'ATLAS_OBJECT_DATA'; ok: boolean; rid: string; object?: import('./atlas/model').AtlasObjectRef; error?: string }
+  // The objects along a route: from the first objects of `cls`, or from the object `rid`.
+  | { type: 'ATLAS_ROUTE'; key: string; environment: string; classes: string[]; steps: import('./atlas/model').AtlasStep[]; rid?: string }
+  // `total`: the rows read, when more than the ones sent.
+  | { type: 'ATLAS_ROUTE_DATA'; ok: boolean; key: string; rows?: import('./atlas/model').AtlasObjectRef[][]; total?: number; error?: string }
+  // An open Atlas page is told where to go (sent by the worker to that tab's page).
+  | { type: 'ATLAS_NAVIGATE'; tabId: number; environment: string; rid?: string; name?: string; objectType?: string }
+  // From the Atlas page: open an object, or the Extended Code window with `code`, on a BMP page of this server.
+  | { type: 'ATLAS_OPEN'; environment: string; tab?: number; rid?: string; name?: string; objectType?: string; businessId?: string; code?: string }
+  | { type: 'ATLAS_OPEN_RESULT'; ok: boolean; error?: string };
+
 export type TransportMessage =
   // Open the Transport window on the active tab of the panel's window.
   | { type: 'OPEN_TRANSPORT'; tab?: 'numeric' }
@@ -1119,6 +1140,6 @@ export type InspectorMessage =
   | DetectionMessage | ActivityMessage
   | HistoryMessage | FavoritesMessage | ContextMenuMessage
   | ObjectViewMessage | ObjectPaneMessage
-  | CompareMessage | CodeSearchMessage | TransportMessage | ScriptHistoryMessage | ColorsImagesMessage
+  | CompareMessage | CodeSearchMessage | TransportMessage | AtlasMessage | ScriptHistoryMessage | ColorsImagesMessage
   | ColorMessage | NotificationMessage | LayoutMessage | StylePresetMessage | PagePrefsMessage
   | AiMessage;

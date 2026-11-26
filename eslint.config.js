@@ -70,6 +70,7 @@ export default tseslint.config(
       'codesearch/',
       'studio/',
       'transport/',
+      'atlas/',
     ],
   },
   js.configs.recommended,

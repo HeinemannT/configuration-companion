@@ -134,8 +134,6 @@ const GLYPHS = {
   token: '<circle cx="5.5" cy="10.5" r="2.5"/><path d="M7.3 8.7 13 3M10.5 5.5 12 7M12 4l1.5 1.5"/>',
   progress: '<rect x="2" y="6" width="12" height="4" rx="2"/><path d="M4.5 8h4"/>',
 
-  // Companion's own collections
-  library: '<rect x="2.5" y="2.5" width="3" height="11" rx=".8"/><rect x="6.5" y="2.5" width="3" height="11" rx=".8"/><path d="m10.4 3.6 2.3-.6 2.1 9.8-2.3.6z"/>',
 } as const;
 
 export type GlyphName = keyof typeof GLYPHS;

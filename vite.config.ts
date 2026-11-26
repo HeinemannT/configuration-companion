@@ -141,6 +141,7 @@ function extensionPlugin(): Plugin {
         { dir: 'codesearch', file: 'codesearch' },
         { dir: 'colors-images', file: 'colors-images' },
         { dir: 'transport', file: 'transport' },
+        { dir: 'atlas', file: 'atlas' },
         { dir: 'claude-setup', file: 'claude-setup' },
         { dir: 'studio', file: 'studio' },
         { dir: 'studio', file: 'sandbox' },
@@ -244,6 +245,7 @@ export default defineConfig({
         'codesearch/codesearch': resolve(import.meta.dirname, 'src/codesearch/codesearch.html'),
         'colors-images/colors-images': resolve(import.meta.dirname, 'src/colors-images/colors-images.html'),
         'transport/transport': resolve(import.meta.dirname, 'src/transport/transport.html'),
+        'atlas/atlas': resolve(import.meta.dirname, 'src/atlas/atlas.html'),
         'claude-setup/claude-setup': resolve(import.meta.dirname, 'src/claude-setup/claude-setup.html'),
         'studio/studio': resolve(import.meta.dirname, 'src/studio/studio.html'),
         // Sandboxed page (manifest sandbox.pages) — runs arbitrary CVO code.

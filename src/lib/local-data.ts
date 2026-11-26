@@ -31,6 +31,7 @@ import { clearFeeds } from './code-feed';
 import { nameCatalogs } from './object-search';
 import { forgetProfileColorSets } from './color-set-cache';
 import { forgetProfileImageIndex } from './image-index-cache';
+import { forgetProfileAtlasModel } from './atlas/atlas-cache';
 import { forgetProfile as forgetProfileSchemas } from './type-schema-cache';
 
 /** What a purge does with one key family. */
@@ -88,6 +89,7 @@ export const STORED_KEYS: readonly StoredKey[] = [
   // Server caches.
   { key: 'crev_color_sets_v2', match: 'exact', area: 'local', onProfile: 'entries', onReset: 'remove', what: 'colour-set cache (by environment)' },
   { key: 'crev_image_index_v1', match: 'exact', area: 'local', onProfile: 'entries', onReset: 'remove', what: 'image file list cache (by environment)' },
+  { key: 'crev_atlas_model_v1', match: 'exact', area: 'local', onProfile: 'entries', onReset: 'remove', what: 'Atlas type relationships (by environment)' },
   { key: 'crev_schema_cache_v2', match: 'exact', area: 'local', onProfile: 'server-id-entries', onReset: 'remove', what: 'type schema cache' },
   { key: 'crev_root_category_cache_v1', match: 'exact', area: 'local', onProfile: 'server-id-entries', onReset: 'remove', what: 'root category cache' },
   { key: 'crev_script_ledger:', match: 'prefix', area: 'local', onProfile: 'server-url-key', onReset: 'remove', what: 'script ledger of a server' },
@@ -308,6 +310,7 @@ export async function clearProfileLocalData(
   // later write-back cannot restore them.
   await forgetProfileColorSets(profileId).catch(e => log.swallow('localData:colorSets', e));
   await forgetProfileImageIndex(profileId).catch(e => log.swallow('localData:imageIndex', e));
+  await forgetProfileAtlasModel(profileId).catch(e => log.swallow('localData:atlasModel', e));
   await forgetProfileSchemas(profileId).catch(e => log.swallow('localData:schemas', e));
   await purgeArea('local', (entry, key, value) => profilePurge(entry, key, value, scope));
   await purgeArea('session', (entry, key, value) => profilePurge(entry, key, value, scope));
@@ -330,6 +333,7 @@ export async function clearAllLocalData(_profileIds: readonly string[] = []): Pr
   nameCatalogs.clear();
   await forgetProfileColorSets().catch(e => log.swallow('localData:colorSets', e));
   await forgetProfileImageIndex().catch(e => log.swallow('localData:imageIndex', e));
+  await forgetProfileAtlasModel().catch(e => log.swallow('localData:atlasModel', e));
   const reset = (entry: StoredKey) => entry.onReset === 'remove' ? { remove: true as const } : null;
   await purgeArea('local', reset);
   await purgeArea('session', reset);

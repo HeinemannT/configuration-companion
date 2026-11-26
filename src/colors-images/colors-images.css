@@ -439,3 +439,8 @@ button:disabled { cursor: default; }
 @media (prefers-reduced-motion: reduce) {
   .ci-spin, .skel { animation: none; }
 }
+/* The library's mark is a solid quiet grey shape wherever it shows (the folders keep line icons). */
+.ui .ic.ci-libic { fill: currentColor; stroke: none; color: var(--text-helper); }
+.ci-sec-h .ci-tglyph .ci-libic, .ci-libstrip-t .ci-libic, .ci-sres.lib .ci-shead .ci-libic, .ci-ph .ci-libic { color: var(--text-helper); }
+.ci-dragghost .ci-libic { color: #fff; }
+.ci-thumb.on-dark .ci-libmark .ci-libic { color: #C9CED6; }

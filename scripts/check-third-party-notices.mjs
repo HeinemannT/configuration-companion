@@ -49,7 +49,7 @@ const DESKTOP_NOT_BUNDLED = {
   'ajv': ['require-from-string'],
 };
 // Assets that are not npm packages: icon sets and fonts in src/.
-const ASSETS = ['Phosphor Icons', 'Feather', 'Lucide', 'Inter', 'JetBrains Mono'];
+const ASSETS = ['Phosphor Icons', 'Inter', 'JetBrains Mono'];
 const LICENCE_HEADINGS = { MIT: 'MIT License', 'BSD-3-Clause': 'BSD 3-Clause License', ISC: 'ISC License', OFL: 'SIL Open Font License 1.1' };
 
 const problems = [];

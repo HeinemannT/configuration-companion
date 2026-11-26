@@ -41,7 +41,7 @@ import { closeColorPop, openColorPop } from './color-pop';
 import { createSaveBar, readFoot, saveFailure, statusBlock, treeRow, type ConfirmRow, type PageCtx, type SaveFailure } from './common';
 import { filesFromDrop, filesFromFolder, filesFromInput, type PickedFile } from './dropped-files';
 import { createLibrary } from './library';
-import { pageIcon } from './icons';
+import { pageIcon, libraryIcon } from './icons';
 import type { Tab } from './colors-tab';
 
 type Format = 'auto' | 'svg' | 'png';
@@ -490,7 +490,7 @@ export function createImagesTab(ctx: PageCtx): Tab & { selectFolder(id: string |
     return el('div', 'ci-empty', el('div', 'ci-empty-t', title),
       withAdd ? el('div', 'ci-empty-s', 'Drop files or a folder here, or add ready-made images from the library.') : null,
       withAdd ? el('div', 'ci-inl', btn('ui-btn', undefined, () => fileInput.click(), pageIcon('upload'), 'Upload files'),
-        btn('ui-btn', undefined, () => openCollection('status'), icon('o-library'), 'Browse the library')) : null);
+        btn('ui-btn', undefined, () => openCollection('status'), libraryIcon(), 'Browse the library')) : null);
   }
 
   /** The search box and the uploads, over every view. */

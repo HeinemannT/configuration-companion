@@ -43,6 +43,8 @@ const SEEDS: Seed[] = [
     afterDelete: 'rewritten', kept: { [ENV2]: { version: 2, fetchedAt: NOW, sets: [] } }, afterReset: 'removed' },
   { area: 'local', key: 'crev_image_index_v1', value: { [ENV1]: { version: 1, fetchedAt: NOW, index: { folders: [], files: [] } }, [ENV2]: { version: 1, fetchedAt: NOW, index: { folders: [], files: [] } } },
     afterDelete: 'rewritten', kept: { [ENV2]: { version: 1, fetchedAt: NOW, index: { folders: [], files: [] } } }, afterReset: 'removed' },
+  { area: 'local', key: 'crev_atlas_model_v1', value: { [ENV1]: { version: 2, fetchedAt: NOW, model: { types: {}, edges: [], reverses: [], sample: 200, unread: [] } }, [ENV2]: { version: 2, fetchedAt: NOW, model: { types: {}, edges: [], reverses: [], sample: 200, unread: [] } } },
+    afterDelete: 'rewritten', kept: { [ENV2]: { version: 2, fetchedAt: NOW, model: { types: {}, edges: [], reverses: [], sample: 200, unread: [] } } }, afterReset: 'removed' },
   { area: 'local', key: 'crev_schema_cache_v2', value: {
     [`${ENV1}::risk`]: { serverId: ENV1, className: 'Risk', fetchedAt: NOW, props: [] },
     [`${ENV2}::risk`]: { serverId: ENV2, className: 'Risk', fetchedAt: NOW, props: [] },

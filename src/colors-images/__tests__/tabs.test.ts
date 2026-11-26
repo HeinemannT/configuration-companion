@@ -505,7 +505,7 @@ describe('Images tab: adding a folder and from the library', () => {
     expect(side(tab).querySelector('.ci-sec.lib .ci-sec-cap')?.textContent).toBe('Not in BMP yet');
     const glyphs = (sel: string) => [...side(tab).querySelectorAll(`${sel} .ci-tglyph use`)].map(u => u.getAttribute('href'));
     expect(glyphs('.ci-sec.bmp')).toEqual(['#o-image', '#o-folder']);
-    expect(side(tab).querySelector('.ci-sec-h use')?.getAttribute('href')).toBe('#o-library');
+    expect(side(tab).querySelector('.ci-sec-h .ci-libic path')).not.toBeNull();
     expect(glyphs('.ci-sec.lib .ci-trow')).toEqual(['#o-status', '#o-control', '#o-button']);
     expect([...side(tab).querySelectorAll('.ci-sec.lib .ci-srow-name')].map(e => e.textContent)).toEqual(['Status symbols', 'GRC object icons', 'Button icons']);
     // Collections are folded until one is shown.
