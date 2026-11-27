@@ -71,3 +71,18 @@ describe('"In code" coverage', () => {
     expect(notSearchedReason(null)).toBe('no answer about the code copy');
   });
 });
+
+describe('the local copy: why it did not start or stopped', () => {
+  const kinds = ['overload', 'unavailable', 'too-large', 'not-listed', 'busy', 'failed'] as const;
+  it('every kind has a title and a plain sentence; the raw reason stays behind Details', async () => {
+    const { copyProblemView } = await import('../copy-status-text');
+    for (const kind of kinds) {
+      const v = copyProblemView({ kind, detail: 'java.lang.RuntimeException: boom', sources: ['Portal'] }, Date.now());
+      expect(v.title.length).toBeGreaterThan(0);
+      expect(v.sentence).not.toContain('java.lang');
+      expect(v.sentence).not.toMatch(/—|\bindex\b/i);
+      expect(['server', 'computer']).toContain(v.where);
+      if (kind !== 'busy') expect(v.detail).toBe('java.lang.RuntimeException: boom');
+    }
+  });
+});

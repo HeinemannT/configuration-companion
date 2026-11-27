@@ -72,6 +72,31 @@ describe('the script gauge: Companion\'s window of the server\'s 2,000-entry par
     expect(scriptSentence(g.scriptLoad())).toMatch(/noCache option is on/);
   });
 
+  it('never refuses background work the user asked for (a copy): it keeps the overload stop', () => {
+    const c = clock();
+    const g = new LoadGovernor({ now: c.now });
+    for (const t of texts(SCRIPT_COST.backgroundEntries)) g.start('user', post(t), 0);
+    expect(g.scriptLoad().backgroundStopped).toBe(true);
+    expect(g.admit('background', post('a new one'))).toBe(-2);
+    // Make a copy, Resume: asked by the user.
+    expect(g.admit('background', post('a new one'), true)).toBe(0);
+    // Still background work: an overload cool-down stops it.
+    g.noteOverload('HTTP 503');
+    c.advance(10);
+    expect(g.admit('background', post('a new one'), true)).toBe(-1);
+  });
+
+  it('the mark "asked" rides along: low priority keeps it, a shared probe inherits it, other work never has it', async () => {
+    const { backgroundSignal, inheritClass, isAskedByUser, lowPrioritySignal, requestClassOf } = await import('../request-class');
+    const asked = backgroundSignal({ asked: true });
+    expect(requestClassOf(asked)).toMatchObject({ requestClass: 'background', asked: true });
+    expect(isAskedByUser(lowPrioritySignal(asked))).toBe(true);
+    expect(isAskedByUser(inheritClass(asked))).toBe(true);
+    expect(isAskedByUser(backgroundSignal())).toBe(false);
+    expect(isAskedByUser(inheritClass(backgroundSignal()))).toBe(false);
+    expect(isAskedByUser(undefined)).toBe(false);
+  });
+
   it('refuses background posts past the memory budget too', () => {
     const g = new LoadGovernor({ now: clock().now });
     g.start('user', post('x'.repeat(SCRIPT_COST.backgroundBytes / SCRIPT_COST.bytesPerChar)), 0);
@@ -221,5 +246,31 @@ describe('the script gauge: Companion\'s window of the server\'s 2,000-entry par
     await transport.sendStreamingCommand(makeExtendedExecuteCommand('"same" + 1'), 'read').catch(() => {});
     await transport.sendStreamingCommands([makeExtendedExecuteCommand('"same" + 1'), makeExtendedExecuteCommand('"other"')], 'read').catch(() => {});
     expect(transport.governor.scriptLoad()).toMatchObject({ distinct: 2, distinctChars: 10 + 7, repeats: 1 });
+  });
+
+  it('the transport sends a copy the user asked for past the script budget, and refuses other background work', async () => {
+    registerBmpTypes();
+    const w = new JavaWriter();
+    w.writeStreamHeader();
+    w.writeString('END');
+    const bytes = w.toBytes();
+    const fetched = vi.fn(async () => new Response(bytes as unknown as BodyInit, { status: 200, headers: { 'Content-Type': 'application/x-java-serialized-object' } }));
+    vi.stubGlobal('fetch', fetched);
+    const auth = {
+      sessionEpoch: 0,
+      getLoginTicket: vi.fn().mockResolvedValue('t'),
+      refreshLoginTicket: vi.fn(),
+      rejectCommandAuthentication: vi.fn(),
+      fetchCommand: vi.fn(async (_t: string, init: RequestInit, consume: (r: Response) => Promise<unknown>) => consume(await fetch('https://bmp.asked.test/cs/command', init))),
+    };
+    const transport = new BmpTransport('https://bmp.asked.test/', auth as never);
+    for (const t of texts(SCRIPT_COST.backgroundEntries)) transport.governor.start('user', post(t), 0);
+    expect(transport.governor.scriptBudgetUsed()).toBe(true);
+    const { backgroundSignal } = await import('../request-class');
+    const refused = await transport.sendStreamingCommand(makeExtendedExecuteCommand('"new for nobody"'), 'read', backgroundSignal()).then(() => null, (e: Error) => e);
+    expect(refused?.message).toMatch(/^Background work paused/);
+    expect(fetched).not.toHaveBeenCalled();
+    await transport.sendStreamingCommand(makeExtendedExecuteCommand('"new for the copy"'), 'read', backgroundSignal({ asked: true })).catch(() => {});
+    expect(fetched).toHaveBeenCalledTimes(1);
   });
 });

@@ -25,10 +25,19 @@
  * one free signal is the change feed's pack counter (tree-events.ts), which
  * every TreeEventCommand answer carries and which starts again when the
  * server restarts: an id below the largest one seen (`mark`) means the
- * server restarted, and the window is emptied (`noteServerCounter`). It is
- * seen only while the code search's feed runs; a restart the counter has
- * already passed again by then goes unseen. So the totals are an estimate
- * since the server was last seen restarting (or since the ledger started).
+ * server restarted, and the window is emptied (`noteServerCounter`). The
+ * counter is read whenever the code search's feed runs, and on its own
+ * (BmpClient.checkServerRestart: one feed read from '-1', one small
+ * read-only post without Extended Code) once at the start of every command
+ * session (connect, reconnect, a new worker) and, at most once per five
+ * minutes per server, when the count holds background work back or a code
+ * search status reports it. A restart is missed when the counter has passed
+ * the stored mark again before the next read: the server ran as many packs
+ * since its restart as it had before it (a long session that stays
+ * connected through the restart, or the feed or check never running for a
+ * long time). The Log's "Server was restarted" stays as the manual
+ * fallback. So the totals are an estimate since the server was last seen
+ * restarting (or since the ledger started).
  */
 
 import type { ScriptKey } from './load-governor';

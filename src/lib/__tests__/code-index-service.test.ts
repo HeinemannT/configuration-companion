@@ -86,6 +86,9 @@ describe('starting a build', () => {
     const during = await svc.indexStatus(env);
     expect(during.state).toBe('building');
     expect(during.progress).toBeDefined();
+    // What the progress component shows: when it started.
+    expect(during.progress!.startedAt).toBeTypeOf('number');
+    expect(during.problem).toBeUndefined();
     held.release();
     const after = await settled(env);
     expect(after).toMatchObject({ state: 'ready', objects: 4, pending: 0, last: { first: true } });
@@ -116,17 +119,28 @@ describe('one job at a time', () => {
   });
 
   it('two profiles on one server: the second waits, it does not run in parallel', async () => {
-    const { svc, settled } = await load();
+    const { svc, settled, sent } = await load();
     const s = heldServer(sim());
     const held = s.holdReads();
     const env1 = (await svc.startIndexSync(true, true, undefined, ctxFor('p1', URL_1, s.client)))!;
     await held.reached;
     const env2 = (await svc.startIndexSync(true, true, undefined, ctxFor('p2', URL_1, s.client)))!;
     expect(env2).toBe(`p2@${URL_1}`);
-    expect((await svc.indexStatus(env2)).state).toBe('none');
+    // Not silent: the second profile's window says why nothing started.
+    expect(await svc.indexStatus(env2)).toMatchObject({ state: 'none', problem: { kind: 'busy' } });
+    sent.length = 0;
     held.release();
     await settled(env1);
-    expect((await svc.indexStatus(env2)).state).toBe('none');
+    // The second profile's window is told without asking again.
+    await vi.waitFor(() => expect(sent.some(m => m.type === 'CODE_INDEX_STATUS' && m.status.environment === env2 && !m.status.problem)).toBe(true));
+    const after = await svc.indexStatus(env2);
+    expect(after.state).toBe('none');
+    expect(after.problem).toBeUndefined();
+    // The other profile's copy of the same server is on this computer: shown, removable.
+    expect(after.others).toEqual([expect.objectContaining({ environment: env1, objects: 4, profile: 'another server profile' })]);
+    await svc.removeCodeCopy(env1);
+    expect((await svc.indexStatus(env2)).others).toBeUndefined();
+    expect((await svc.indexStatus(env1)).state).toBe('none');
   });
 
   it('two servers build independently, each into its own index', async () => {
@@ -181,6 +195,31 @@ describe('stop and resume', () => {
   });
 });
 
+describe('the script count in the status', () => {
+  it('past the limit the status asks the client for a restart check; a restart seen sends every window a status without the count', async () => {
+    const { svc, sent } = await load();
+    const { LoadGovernor, scriptKey } = await import('../load-governor');
+    const { SCRIPT_COST } = await import('../script-ledger');
+    const g = new LoadGovernor();
+    await g.noteServerCounter('500');
+    for (let i = 0; i < SCRIPT_COST.backgroundEntries; i++) g.start('user', { commands: 1, fullReads: 0, scripts: [scriptKey(`s ${i}`)] }, 0);
+    const checkServerRestart = vi.fn();
+    const ctx = ctxFor('p1', URL_1, { ...heldServer(sim()).client, governor: g, checkServerRestart });
+    const env = (await svc.startIndexSync(false, false, undefined, ctx))!;
+    expect((await svc.indexStatus(env, ctx)).serverScripts).toMatchObject({ entries: SCRIPT_COST.backgroundEntries });
+    expect(checkServerRestart).toHaveBeenCalledWith('limit');
+    sent.length = 0;
+    await g.noteServerCounter('20');
+    await vi.waitFor(() => expect(sent.filter(m => m.type === 'CODE_INDEX_STATUS')).toHaveLength(1));
+    const st = sent.find(m => m.type === 'CODE_INDEX_STATUS') as Extract<InspectorMessage, { type: 'CODE_INDEX_STATUS' }>;
+    expect(st.status.environment).toBe(env);
+    expect(st.status.serverScripts).toBeUndefined();
+    checkServerRestart.mockClear();
+    await svc.indexStatus(env, ctx);
+    expect(checkServerRestart).not.toHaveBeenCalled();
+  });
+});
+
 describe('a server that cannot or will not answer', () => {
   it('an overloaded server stops the build with a failure that says so, and marks overload', async () => {
     const { svc, settled, store } = await load();
@@ -191,6 +230,9 @@ describe('a server that cannot or will not answer', () => {
     expect(st.state).toBe('failed');
     expect(st.overload).toBe(true);
     expect(st.error).toMatch(/overloaded/);
+    // A kind, not a sentence: the window words it and says until when.
+    expect(st.problem?.kind).toBe('overload');
+    expect(st.problem!.until!).toBeGreaterThan(Date.now() + 25 * 60_000);
     // Reads stop at the first overloaded answer.
     expect(s.client.posts.flat().filter(c => c.includes(READ_CODE))).toHaveLength(1);
     // Stored so a worker restart keeps the cool-down.
@@ -201,7 +243,37 @@ describe('a server that cannot or will not answer', () => {
     const { svc, settled } = await load();
     const ctx = ctxFor('p1', URL_1, heldServer(sim(), { lookup: false }).client);
     const env = (await svc.startIndexSync(true, true, undefined, ctx))!;
-    expect((await settled(env)).state).toBe('unavailable');
+    const st = await settled(env);
+    expect(st.state).toBe('unavailable');
+    expect(st.problem?.kind).toBe('unavailable');
+  });
+
+  it('names why a sync ended from the error class, not from the sentence or a refusal of other work', async () => {
+    const { svc } = await load();
+    const { CopyIncompleteError } = await import('../code-copy');
+    const { ServerOverloadError } = await import('../index-budget');
+    // A cool-down the governor holds (another post was refused) does not make another failure an overload.
+    expect(svc.problemOf(new Error('x'), { until: 9_000, why: 'overloaded' }, 5_000)).toMatchObject({ kind: 'failed', detail: 'x' });
+    expect(svc.problemOf(new Error('overloaded'), null, 5_000)).toMatchObject({ kind: 'failed' });
+    // An overload lasts until the governor's own cool-down ends; without one, a full cool-down from now.
+    expect(svc.problemOf(new ServerOverloadError('x'), { until: 9_000, why: 'overloaded' }, 5_000)).toEqual({ kind: 'overload', until: 9_000, detail: 'x' });
+    expect(svc.problemOf(new ServerOverloadError('x'), null, 5_000)).toEqual({ kind: 'overload', until: 5_000 + 30 * 60_000, detail: 'x' });
+    expect(svc.problemOf(new ServerOverloadError('x'), { until: 9_000, why: 'slow' }, 5_000)).toEqual({ kind: 'overload', until: 5_000 + 30 * 60_000, detail: 'x' });
+    expect(svc.problemOf(new CopyIncompleteError('m', 'too-large', ['Organisation A']), null)).toMatchObject({ kind: 'too-large', sources: ['Organisation A'] });
+    expect(svc.problemOf(new CopyIncompleteError('m', 'not-listed', ['Portal']), null)).toMatchObject({ kind: 'not-listed', sources: ['Portal'] });
+  });
+
+  it('a copy refused during a cool-down that began before it: overload until that cool-down ends, nothing stored', async () => {
+    const { svc, settled, store } = await load();
+    const until = Date.now() + 10 * 60_000;
+    // The governor went into its cool-down 20 minutes ago (another post met the overload).
+    const governor = { backgroundBlocked: () => ({ until, why: 'overloaded' as const }), state: () => ({ state: 'overloaded', until }), scriptBudgetUsed: () => false, onRestart: () => () => {} };
+    const s = heldServer(sim(), { overload: code => code.includes(READ_CODE) });
+    const env = (await svc.startIndexSync(true, true, undefined, ctxFor('p1', URL_1, { ...s.client, governor })))!;
+    const st = await settled(env);
+    expect(st.problem).toMatchObject({ kind: 'overload', until });
+    expect(st.error).toMatch(/for 10 minutes\.$/);
+    expect((await store.getMeta(env))?.overloadAt).toBeUndefined();
   });
 });
 
@@ -258,6 +330,39 @@ describe('clearing', () => {
     expect((await svc.indexStatus(env2)).state).toBe('ready');
     await svc.clearCodeIndex();
     expect(await store.getMeta(env2)).toBeNull();
+  });
+
+  it('Remove with a named copy removes only that copy of the window’s server; a name of another server removes nothing', async () => {
+    const { svc, settled, store } = await load();
+    await import('../handlers/code-search');
+    const { getHandler } = await import('../handler-registry');
+    const env1 = (await svc.startIndexSync(true, true, undefined, ctxFor('p1', URL_1, heldServer(sim()).client)))!;
+    await settled(env1);
+    const win = ctxFor('p2', URL_1, heldServer(sim()).client);
+    const own = (await svc.startIndexSync(true, true, undefined, win))!;
+    await settled(own);
+    const env3 = (await svc.startIndexSync(true, true, undefined, ctxFor('p3', URL_2, heldServer(sim()).client)))!;
+    await settled(env3);
+    const remove = async (environment?: string) => {
+      const replies: InspectorMessage[] = [];
+      try {
+        await getHandler('CODE_INDEX_REMOVE')!({ type: 'CODE_INDEX_REMOVE', ...(environment != null ? { environment } : {}) } as never, r => replies.push(r), { isOneShot: true, ctx: win });
+      } catch (e) { return { error: (e as Error).message }; }
+      return { replies };
+    };
+    // Another server's copy: refused, and the window's own copy stays.
+    expect(await remove(env3)).toEqual({ error: expect.stringMatching(/not of this server/) });
+    expect(await remove('nonsense')).toEqual({ error: expect.stringMatching(/not of this server/) });
+    expect(await store.getMeta(env3)).not.toBeNull();
+    expect(await store.getMeta(own)).not.toBeNull();
+    // Another profile's copy of the same server: only that one goes.
+    await remove(env1);
+    expect(await store.getMeta(env1)).toBeNull();
+    expect(await store.getMeta(own)).not.toBeNull();
+    // Without a name: the window's own copy.
+    await remove();
+    expect(await store.getMeta(own)).toBeNull();
+    expect(await store.getMeta(env3)).not.toBeNull();
   });
 });
 

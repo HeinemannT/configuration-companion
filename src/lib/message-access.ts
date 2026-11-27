@@ -111,6 +111,7 @@ export const MESSAGE_ACCESS: Readonly<Record<string, Allowed>> = {
   CODE_INDEX_ESTIMATE: [F],
   CODE_INDEX_CANCEL: [F],
   CODE_INDEX_REMOVE: [F],
+  RESET_SCRIPT_COUNT: [],
   CODE_SEARCH_START: [F],
   CODE_SEARCH_STOP: [F],
   CODE_SEARCH_STATUS: [F],
@@ -201,7 +202,6 @@ export const MESSAGE_ACCESS: Readonly<Record<string, Allowed>> = {
   GET_DETECTION: [],
   GET_PAGE_INFO: [],
   GET_SERVER_LOAD: [], // diagnostics hook: the test rig reads the load governor through it
-  RESET_SCRIPT_COUNT: [],
   LOCATE_ON_PAGE: [],
   SET_INSPECT_STATE: [],
   TOGGLE_INSPECT: [],

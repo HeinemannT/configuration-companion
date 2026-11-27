@@ -11,10 +11,11 @@ const STORAGE_KEY = 'crev_atlas_model_v1';
 /** 2: the model carries object counts and how many objects fill each reference. */
 const VERSION = 2;
 
-interface Entry { version: typeof VERSION; fetchedAt: number; model: AtlasModel }
+/** `readMs`: how long the read took (absent on a copy stored before it was kept). */
+interface Entry { version: typeof VERSION; fetchedAt: number; readMs?: number; model: AtlasModel }
 type Store = Record<string, Entry>;
 
-export interface AtlasModelLoad { model: AtlasModel; fetchedAt: number; source: 'cache' | 'network' | 'stale-fallback'; error?: string }
+export interface AtlasModelLoad { model: AtlasModel; fetchedAt: number; readMs?: number; source: 'cache' | 'network' | 'stale-fallback'; error?: string }
 
 const mem = new Map<string, Entry>();
 const pending = new Map<string, Promise<AtlasModelLoad>>();
@@ -39,10 +40,10 @@ async function persist(): Promise<void> {
   try { await chrome.storage.local.set({ [STORAGE_KEY]: store }); } catch (e) { log.swallow('atlasModel:persist', e); }
 }
 
-export async function getAtlasModel(environment: string): Promise<{ model: AtlasModel; fetchedAt: number } | null> {
+export async function getAtlasModel(environment: string): Promise<{ model: AtlasModel; fetchedAt: number; readMs?: number } | null> {
   await load();
   const entry = mem.get(environment);
-  return entry ? { model: entry.model, fetchedAt: entry.fetchedAt } : null;
+  return entry ? { model: entry.model, fetchedAt: entry.fetchedAt, ...(entry.readMs != null ? { readMs: entry.readMs } : {}) } : null;
 }
 
 /** The stored copy; a read only on the first miss or when `force`. Callers
@@ -55,13 +56,15 @@ export async function loadAtlasModel(environment: string, fetcher: () => Promise
   const requested = generation;
   const request = (async (): Promise<AtlasModelLoad> => {
     try {
+      const started = Date.now();
       const model = await fetcher();
       if (generation !== requested) throw new Error('Atlas read invalidated during environment change');
       const fetchedAt = Date.now();
+      const readMs = fetchedAt - started;
       await load();
-      mem.set(environment, { version: VERSION, fetchedAt, model });
+      mem.set(environment, { version: VERSION, fetchedAt, readMs, model });
       await persist();
-      return { model, fetchedAt, source: 'network' };
+      return { model, fetchedAt, readMs, source: 'network' };
     } catch (e) {
       if (cached) return { ...cached, source: 'stale-fallback', error: e instanceof Error ? e.message : String(e) };
       throw e;

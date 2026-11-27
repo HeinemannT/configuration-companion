@@ -11,6 +11,7 @@
 import type { BmpObject, HistoryEntry, InspectorMessage } from '../../../lib/types';
 import type { BrowseCrumb, BrowseTree, ObjectHit } from '../../../lib/browse-tree';
 import type { SendFn } from '../tab-types';
+import type { LocateAnswer, LocateTab } from '../../../lib/locate-plan';
 import { emptyLive, isIdLike, isRidQuery, type LiveState } from './state';
 
 /** Live search page size. quickSearch drops sub-objects without a page of
@@ -56,8 +57,8 @@ export class BrowseSource {
   /** Query of the last GET_CACHE; other answers are dropped. */
   private wantCache = '';
   private resolveGen = 0;
-  /** Called with (requested rid, found rid or null) when a locate answers. */
-  onLocated: ((rid: string, found: string | null) => void) | null = null;
+  /** Called with the requested rid and the page's answer when a locate answers. */
+  onLocated: ((rid: string, answer: LocateAnswer) => void) | null = null;
 
   constructor(private readonly send: SendFn) {}
 
@@ -131,8 +132,10 @@ export class BrowseSource {
     this.send({ type: 'BROWSE_SEARCH', query: l.query, gen: this.gen, page: l.page + 1, pageSize: LIVE_PAGE_SIZE });
   }
 
-  locate(rids: string[]): void {
-    if (rids.length) this.send({ type: 'LOCATE_ON_PAGE', rids });
+  /** Ring the first shown of `rids` on the page; `tabs` (outermost first)
+   *  are opened first when it is not shown. */
+  locate(rids: string[], tabs: LocateTab[] = []): void {
+    if (rids.length) this.send({ type: 'LOCATE_ON_PAGE', rids, ...(tabs.length ? { tabs } : {}) });
   }
 
   reset(): void {
@@ -243,7 +246,7 @@ export class BrowseSource {
         this.history = msg.entries;
         return true;
       case 'LOCATE_RESULT':
-        this.onLocated?.(msg.rid, msg.found);
+        this.onLocated?.(msg.rid, { found: msg.found, tab: msg.tab, switched: msg.switched, why: msg.why });
         return false;
       default:
         return false;

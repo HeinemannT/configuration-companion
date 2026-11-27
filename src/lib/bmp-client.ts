@@ -483,6 +483,9 @@ export function onClientRetired(fn: (client: BmpClient) => void): () => void {
   return () => retiredListeners.delete(fn);
 }
 
+/** A restart check is one small read (BmpClient.checkServerRestart). */
+const RESTART_CHECK_TIMEOUT_MS = 10_000;
+
 export class BmpClient {
   readonly auth: BmpAuth;
   private transport: BmpTransport;
@@ -639,6 +642,7 @@ export class BmpClient {
   ) {
     this.auth = new BmpAuth(bmpUrl, bmpUser, bmpPass, profileId, authMode, credentialRevision);
     this.transport = new BmpTransport(bmpUrl, this.auth);
+    this.transport.setRestartCheck(why => this.checkServerRestart(why));
     // Dynamic-dispatch wrappers (not `.bind()`) so tests that monkey-patch
     // `client.executeEc` / `client.resolveRef` on the instance after
     // construction still intercept calls made through the service.
@@ -688,14 +692,47 @@ export class BmpClient {
   /** The change feed (tree-events.ts): every pack after `lastPackId`
    *  ('-1': one empty pack with a fresh watermark). One small read-only
    *  post, no Extended Code. A transport failure throws. */
-  async readTreeEvents(lastPackId: string, signal?: AbortSignal, timeoutMs = 15_000): Promise<TreeEventAnswer> {
+  async readTreeEvents(lastPackId: string, signal?: AbortSignal, timeoutMs = 15_000, feature?: 'restart-check'): Promise<TreeEventAnswer> {
     registerTreeEventCommand();
-    const objects = await this.transport.sendStreamingCommands([makeTreeEventCommand(lastPackId)], 'read', signal, timeoutMs);
+    // Every feed read is a restart check (checkServerRestart).
+    this.counterReadEpoch = this.auth.sessionEpoch;
+    this.transport.governor.claimRestartCheck(true);
+    const objects = await this.transport.sendStreamingCommands([makeTreeEventCommand(lastPackId)], 'read', signal, timeoutMs, feature);
     const answer = decodeTreeEvents(objects);
     // The pack counter starts again when the server restarts: the script
     // gauge learns of a restart from it, at no extra post.
     if (answer.ok && answer.packs.length) void this.transport.governor.noteServerCounter(answer.packs.reduce((w, p) => laterPackId(w, p.packId), answer.packs[0].packId));
     return answer;
+  }
+
+  /** The command session in which the change feed was last read. */
+  private counterReadEpoch: number | null = null;
+  /** A check failed on this connection (a server without the change feed, or
+   *  one that did not answer): it is not asked again until the next connect. */
+  private restartCheckFailed = false;
+
+  /** Did the server restart? (script-ledger.ts) One change-feed read from
+   *  '-1': one small read-only post, no Extended Code, answered with one
+   *  empty pack whose id the governor compares with the stored mark; a
+   *  restart empties the script count. Fire-and-forget: it never blocks the
+   *  caller and a failure changes nothing. It goes as background work (the
+   *  overload cool-down refuses it; it carries no script, so the script
+   *  count never does). `session`: the first answer of a command session
+   *  (connect, reconnect, a new worker), unless the feed was read in it
+   *  already. `refused` / `limit`: the count holds background work back or
+   *  a status reports it; at most one per GOVERNOR.restartCheckMs per
+   *  server. */
+  checkServerRestart(why: 'session' | 'refused' | 'limit'): void {
+    if ((globalThis as { __crevTestNoRestartCheck?: boolean }).__crevTestNoRestartCheck) return;
+    if (why === 'session' && this.counterReadEpoch === this.auth.sessionEpoch) return;
+    if (this.restartCheckFailed) return;
+    if (!this.transport.governor.claimRestartCheck(why === 'session')) return;
+    this.readTreeEvents('-1', backgroundSignal(), RESTART_CHECK_TIMEOUT_MS, 'restart-check')
+      .then(a => { if (!a.ok) this.restartCheckFailed = true; }, (e: unknown) => {
+        // Only a check that was sent and failed counts; one held back (an overload cool-down) is asked again later.
+        const sent = e instanceof Error && e.name === 'BmpTransportError' && (e as { attempts?: number }).attempts !== 0 && (e as { kind?: string }).kind !== 'cancelled';
+        if (sent) this.restartCheckFailed = true;
+      });
   }
 
   /** ID, type and tree text of objects by RID: TreeItemCommands, up to

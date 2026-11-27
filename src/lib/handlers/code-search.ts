@@ -4,7 +4,7 @@
  */
 
 import { register } from '../handler-registry';
-import { ctxOf, type SwContext } from '../sw-context';
+import { boundContexts, ctxOf, type SwContext } from '../sw-context';
 import { errorMessage } from '../logger';
 import { errorKindOf } from '../error-kind';
 import { ENVIRONMENT_CHANGED_ERROR, environmentToken } from '../environment';
@@ -12,7 +12,7 @@ import { buildRowEc, identityRow, parseDelimitedRow } from '../ec-row-codec';
 import { openCodeSearchWindow } from '../codesearch-launcher';
 import { resolveFrameTargetTabId } from '../frame-launcher';
 import { reportFrameOpenFailure } from '../frame-open-failure';
-import { cancelIndexSync, clearCodeIndex, currentEnvironment, estimateServerCopy, indexStatus, searchEnvironment, serverRoots, serverScanSource, startIndexSync } from '../code-index-service';
+import { cancelIndexSync, clearCodeIndex, currentEnvironment, estimateServerCopy, indexStatus, removeCodeCopy, searchEnvironment, serverRoots, serverScanSource, startIndexSync } from '../code-index-service';
 import { KNOWN_CODE_PROPS } from '../code-index-sync';
 import { buildCodeScopeEcs, parseCodeScopeLog, type CodeScope } from '../code-search-scope';
 import { CONTEXT_OBJECT, createEcFrame, mergeFramedLogs } from '../ec-parser';
@@ -56,7 +56,7 @@ register('OPEN_CODE_SEARCH', async (msg, _respond, meta) => {
 register('CODE_INDEX_GET_STATUS', async (_msg, respond, meta) => {
   const env = currentEnvironment(ctxOf(meta));
   if (!env) { respond({ type: 'CODE_INDEX_STATUS', status: { environment: '', state: 'none', syncedAt: null, builtAt: null, objects: 0, bytes: 0, pending: 0, version: 0, error: 'Not connected' } }); return; }
-  respond({ type: 'CODE_INDEX_STATUS', status: await indexStatus(env) });
+  respond({ type: 'CODE_INDEX_STATUS', status: await indexStatus(env, ctxOf(meta)) });
 });
 
 register('CODE_INDEX_SYNC', async (msg, respond, meta) => {
@@ -66,17 +66,30 @@ register('CODE_INDEX_SYNC', async (msg, respond, meta) => {
   // The index of the window's own server (the page it is mounted in).
   const env = await startIndexSync(msg.force === true, msg.force === true || msg.user === true, roots, ctxOf(meta));
   if (!env) { respond({ type: 'CODE_INDEX_STATUS', status: { environment: '', state: 'none', syncedAt: null, builtAt: null, objects: 0, bytes: 0, pending: 0, version: 0, error: 'Not connected' } }); return; }
-  respond({ type: 'CODE_INDEX_STATUS', status: await indexStatus(env) });
+  respond({ type: 'CODE_INDEX_STATUS', status: await indexStatus(env, ctxOf(meta)) });
 });
 
-/** "Server was restarted" (a Log entry of the script pause): the script
- *  count of that entry's server only starts again. Sends nothing. */
-register('RESET_SCRIPT_COUNT', async (msg) => {
-  const profile = typeof msg.profileId === 'string' ? scopeFor(msg.profileId) : null;
-  await profile?.ctx.client?.governor.resetScriptCount();
+/** "Server was restarted" (a Log entry of the script pause, extension
+ *  pages only): the script count of that profile's server only starts
+ *  again. Sends nothing. The answer is the status of that server's copy,
+ *  without the note now; open code search windows get it too
+ *  (code-index-service rememberGovernor). */
+register('RESET_SCRIPT_COUNT', async (msg, respond) => {
+  const ctx = typeof msg.profileId === 'string' ? scopeFor(msg.profileId)?.ctx ?? null : null;
+  await ctx?.client?.governor.resetScriptCount();
+  const env = ctx ? currentEnvironment(ctx) : null;
+  if (env) respond({ type: 'CODE_INDEX_STATUS', status: await indexStatus(env, ctx!) });
 });
 
-register('CODE_INDEX_CANCEL', (_msg, _respond, meta) => { cancelIndexSync(ctxOf(meta)); });
+/** Stop copying. With `environment` (Atlas), the copy of that server only:
+ *  the context whose server it is now; none, nothing stops. Without it, the
+ *  copy of the window's own server. */
+register('CODE_INDEX_CANCEL', (msg, _respond, meta) => {
+  const own = ctxOf(meta);
+  if (typeof msg.environment !== 'string') { cancelIndexSync(own); return; }
+  const ctx = [own, ...boundContexts()].find(c => currentEnvironment(c) === msg.environment);
+  if (ctx) cancelIndexSync(ctx);
+});
 
 /** Diagnostics hook: the load governor of the current server (state,
  *  counters, the last posts). No extension page sends it; the live test rig
@@ -94,10 +107,19 @@ register('GET_SERVER_LOAD', (_msg, respond, meta) => {
 
 /** "Remove index": the local copy of this profile's server is deleted and
  *  nothing is built again until the user asks. */
-register('CODE_INDEX_REMOVE', async (_msg, respond, meta) => {
+register('CODE_INDEX_REMOVE', async (msg, respond, meta) => {
   const env = currentEnvironment(ctxOf(meta));
-  await clearCodeIndex(env ? env.slice(0, env.indexOf('@')) : undefined);
-  respond(env ? { type: 'CODE_INDEX_STATUS', status: await indexStatus(env) } : { type: 'CODE_INDEX_STATUS', status: { environment: '', state: 'none', syncedAt: null, builtAt: null, objects: 0, bytes: 0, pending: 0, version: 0 } });
+  // A named copy (the window lists the copies of its server for other
+  // profiles): only that one goes, and only when it is of the window's own
+  // server; otherwise nothing is removed. Without a name the window's own
+  // copy goes. Without a server of its own the window removes nothing.
+  if (typeof msg.environment === 'string') {
+    const named = msg.environment;
+    if (!env || named.slice(named.indexOf('@') + 1) !== env.slice(env.indexOf('@') + 1)) throw new Error('That copy is not of this server. Nothing was removed.');
+    if (named === env) await clearCodeIndex(env.slice(0, env.indexOf('@')));
+    else await removeCodeCopy(named);
+  } else if (env) await clearCodeIndex(env.slice(0, env.indexOf('@')));
+  respond(env ? { type: 'CODE_INDEX_STATUS', status: await indexStatus(env, ctxOf(meta)) } : { type: 'CODE_INDEX_STATUS', status: { environment: '', state: 'none', syncedAt: null, builtAt: null, objects: 0, bytes: 0, pending: 0, version: 0 } });
 });
 
 /** The roots of the server with their names and the organisations: one

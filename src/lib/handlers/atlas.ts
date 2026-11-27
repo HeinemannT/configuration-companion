@@ -20,6 +20,7 @@ import { environmentMatches, environmentMismatchError, environmentToken } from '
 import { openObjectViewWindow } from '../objectview-launcher';
 import { openExtendedWindow } from '../editor';
 import { errorMessage } from '../logger';
+import { sendFireForget } from '../messaging';
 import { getContextRid } from '../context-rid';
 import { loadAtlasModel } from '../atlas/atlas-cache';
 import {
@@ -28,6 +29,7 @@ import {
   type AtlasHeldCounts,
 } from '../atlas/atlas-ec';
 import type { AtlasModel, AtlasObjectRef, AtlasStep } from '../atlas/model';
+import { progressReporter, type AtlasReadProgress } from '../atlas/progress';
 
 const RID = /^-?\d{1,20}$/;
 const CLASS_NAME = /^[A-Za-z][A-Za-z0-9]{0,63}$/;
@@ -87,12 +89,20 @@ register('OPEN_ATLAS', async (msg, _respond, meta) => {
   } catch (e) { ctx.toast(errorMessage(e), 'error'); }
 });
 
-/** Read the model: the reference properties, then per class what they hold. */
-export async function readAtlasModel(client: Pick<Client, 'executeEc'>): Promise<AtlasModel> {
+/**
+ * Read the model: the reference properties, then per class what they hold,
+ * then the objects of the classes that are only referenced. `onProgress`
+ * hears each step, and how many of the step's classes are done.
+ */
+export async function readAtlasModel(client: Pick<Client, 'executeEc'>, onProgress?: (p: AtlasReadProgress) => void): Promise<AtlasModel> {
+  const startedAt = Date.now();
+  onProgress?.({ step: 'properties', done: 0, total: 0, startedAt });
   const first = await client.executeEc(buildAtlasPropertiesEc());
   if (!first.ok) throw new Error(first.error || first.log || 'The reference properties could not be read');
   const properties = parseAtlasProperties(first.log ?? '');
   const requests = heldRequests(properties);
+  let heldDone = 0;
+  onProgress?.({ step: 'held', done: 0, total: requests.length, startedAt });
   const held: Record<string, Record<string, string[]>> = {};
   const unread: string[] = [];
   const counts: Record<string, AtlasHeldCounts> = {};
@@ -117,18 +127,21 @@ export async function readAtlasModel(client: Pick<Client, 'executeEc'>): Promise
       // What was counted before a script of the class failed still stands.
       if (count.count != null) counts[cls] = count;
       if (failed) unread.push(cls);
+      onProgress?.({ step: 'held', done: ++heldDone, total: requests.length, startedAt });
     }
   };
   await Promise.all(Array.from({ length: Math.min(HELD_PARALLEL, requests.length) }, worker));
   // The classes that are only referenced have no read of their own: count them, a few at a time.
   const asked = new Set(requests.map(r => r.cls));
   const targets = [...new Set([...properties.flatMap(p => p.types), ...Object.values(held).flatMap(h => Object.values(h).flat())])].filter(c => CLASS_NAME.test(c) && !asked.has(c)).sort();
-  let at = 0;
+  let at = 0, counted = 0;
+  if (targets.length) onProgress?.({ step: 'counts', done: 0, total: targets.length, startedAt });
   const counter = async () => {
     for (let i = at++; i < targets.length; i = at++) {
       const r = await client.executeEc(buildAtlasCountEc(targets[i]));
       const c = r.ok ? parseAtlasHeldCounts(r.log ?? '') : null;
       if (c?.count != null) counts[targets[i]] = c;
+      onProgress?.({ step: 'counts', done: ++counted, total: targets.length, startedAt });
     }
   };
   await Promise.all(Array.from({ length: Math.min(HELD_PARALLEL, targets.length) }, counter));
@@ -142,9 +155,11 @@ register('ATLAS_MODEL', async (msg, respond, meta) => {
   if (!client) { respond({ type: 'ATLAS_MODEL_DATA', ok: false, environment, error: 'Not connected' }); return; }
   if (msg.environment != null && !environmentMatches(ctx, msg.environment)) { respond({ type: 'ATLAS_MODEL_DATA', ok: false, environment, error: environmentMismatchError(ctx, msg.environment) }); return; }
   try {
-    const loaded = await loadAtlasModel(environment, () => readAtlasModel(client), msg.force === true);
+    // The open Atlas page of this server hears how far the read is (ATLAS_PROGRESS).
+    const report = progressReporter(progress => { sendFireForget({ type: 'ATLAS_PROGRESS', environment, progress }); });
+    const loaded = await loadAtlasModel(environment, () => readAtlasModel(client, report), msg.force === true);
     if (environmentToken(ctx) !== environment) { respond({ type: 'ATLAS_MODEL_DATA', ok: false, environment, error: 'The connection changed' }); return; }
-    respond({ type: 'ATLAS_MODEL_DATA', ok: true, environment, model: loaded.model, fetchedAt: loaded.fetchedAt, ...(loaded.error ? { error: loaded.error } : {}) });
+    respond({ type: 'ATLAS_MODEL_DATA', ok: true, environment, model: loaded.model, fetchedAt: loaded.fetchedAt, ...(loaded.readMs != null ? { readMs: loaded.readMs } : {}), ...(loaded.error ? { error: loaded.error } : {}) });
   } catch (e) {
     respond({ type: 'ATLAS_MODEL_DATA', ok: false, environment, error: errorMessage(e) });
   }

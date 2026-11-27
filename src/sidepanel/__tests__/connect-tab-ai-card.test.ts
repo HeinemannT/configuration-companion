@@ -46,7 +46,7 @@ vi.mock('../../lib/version-check', () => ({
   })),
 }));
 
-import { ConnectTab, settingsWithoutProfile, firstRunCandidate } from '../tabs/connect-tab';
+import { ConnectTab, PREF_HELP, settingsWithoutProfile, firstRunCandidate } from '../tabs/connect-tab';
 import { S as shared } from '../state';
 
 // Minimal chrome surface the render path touches (update banner version).
@@ -722,5 +722,35 @@ describe('Connect tab: first run', () => {
     expect(firstRunCandidate('https://bmp.test/Ws/web/x?rid=1', null)).toBe('https://bmp.test/Ws/');
     expect(firstRunCandidate('https://bmp.test/Ws/', false)).toBeNull();
     expect(firstRunCandidate('chrome://extensions', true)).toBeNull();
+  });
+});
+
+describe('Preferences: a "?" on each row', () => {
+  it('every preference explains itself behind a "?", in plain words, and the rows stay one line', () => {
+    shared.settings = freshSettings();
+    const { el } = renderTab();
+    const prefs = el.querySelector('details[data-sec="prefs"]')!;
+    const qs = [...prefs.querySelectorAll<HTMLButtonElement>('button.help-q')];
+    expect(qs.map(q => q.getAttribute('aria-label'))).toEqual([
+      'About Auto-detect server from page URL', 'About Include non-widget objects', 'About Voice comments',
+      'About Voice language', 'About Local inspection data',
+    ]);
+    expect(qs.map(q => q.dataset.help)).toEqual(Object.values(PREF_HELP));
+    for (const text of Object.values(PREF_HELP)) {
+      expect(text).not.toMatch(/—/);
+      expect(text.split(/(?<=\.)\s/).length).toBeLessThanOrEqual(2);
+    }
+    // The permanent sentences moved into the "?"; the stored size stays (it changes).
+    for (const id of ['auto-detect', 'enrich-all', 'voice-on']) {
+      const row = prefs.querySelector(`#${id}`)!.closest('.setting-row')!;
+      expect(row.querySelector('.setting-hint')).toBeNull();
+      expect(prefs.querySelector<HTMLInputElement>(`#${id}`)!.getAttribute('aria-label')).toBe(row.querySelector('.setting-name')!.firstChild!.textContent);
+    }
+    expect(prefs.querySelector('.connect-local-data .setting-hint')).not.toBeNull();
+    // A click on a "?" opens the tip and leaves the toggle alone.
+    const before = prefs.querySelector<HTMLInputElement>('#auto-detect')!.checked;
+    qs[0].click();
+    expect(document.getElementById('crev-help-tip')!.hidden).toBe(false);
+    expect(prefs.querySelector<HTMLInputElement>('#auto-detect')!.checked).toBe(before);
   });
 });

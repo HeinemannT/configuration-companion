@@ -21,6 +21,7 @@ const SCANNED = [
   'src/codesearch', 'src/sidepanel',
   'src/lib/code-index-service.ts', 'src/lib/code-copy.ts', 'src/lib/code-index-store.ts', 'src/lib/used-in-code.ts',
   'src/lib/coverage-line.ts', 'src/lib/object-search.ts', 'src/lib/object-search-sources.ts', 'src/lib/object-picker.ts',
+  'src/lib/copy-status-text.ts', 'src/lib/copy-progress.ts',
 ];
 
 /** Strings with the word that no one reads as a word, with why. */

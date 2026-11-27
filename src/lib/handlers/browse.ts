@@ -8,7 +8,8 @@
  *    fall back to the object and its direct children.
  *  - BROWSE_RESOLVE: an exact RID or business ID typed into the search.
  *  - LOCATE_ON_PAGE: ring an object's element on the page of the panel's
- *    window (the content script answers with the rid it found).
+ *    window (the content script answers with the rid it found, after
+ *    switching to the object's page tab when needed; lib/locate-plan.ts).
  */
 
 import { readSummaries } from '../object-summaries';
@@ -19,11 +20,12 @@ import type { InspectorMessage } from '../types';
 import { errorMessage } from '../logger';
 import { environmentMatches, environmentToken, ENVIRONMENT_CHANGED_ERROR } from '../environment';
 import { isRidShaped } from '../validate-inbound';
+import { cleanLocateAnswer, cleanLocateTabs, layoutTabs, type LocateTab } from '../locate-plan';
 import { readObjectRoot } from './object-window';
 import { typeInfo } from '../object-window-table';
 import type { ObjectRootPayload } from '../object-window';
 import {
-  browsePlan, buildAncestorsEc, flattenTree, idLookupPlan, isLookupableId, parseAncestors,
+  browsePlan, withTemplate, buildAncestorsEc, flattenTree, idLookupPlan, isLookupableId, parseAncestors,
   type BrowseCrumb, type BrowseTree,
 } from '../browse-tree';
 import { OBJECT_RELATION_EC_TIMEOUT } from '../constants';
@@ -167,7 +169,18 @@ async function browseTree(
 
   let presented: ObjectRootPayload | null = null;
   let fallback = false;
-  const plan = browsePlan(root);
+  let plan = browsePlan(root);
+  if (plan.selected) {
+    // The object picks its template by expression: the `template` reference
+    // is not the one BMP presents it with. One small read says which it is;
+    // when that read fails the reference stays as the best guess.
+    try {
+      const resolved = await client.resolveTemplate(msg.rid);
+      posts++;
+      if (signal.aborted) return;
+      plan = withTemplate(root, plan, resolved.templateRid && isRidShaped(resolved.templateRid) ? resolved.templateRid : null);
+    } catch { /* keep the reference */ }
+  }
   let presentedState: BrowseTree['presented'] = plan.presented;
   const templateRid = plan.templateRid;
   if (plan.children) {
@@ -322,11 +335,24 @@ register('LOCATE_ON_PAGE', async (msg, respond, meta) => {
   const tabId = meta.senderTabId ?? (meta.panelWindowId != null
     ? (await chrome.tabs.query({ active: true, windowId: meta.panelWindowId }))[0]?.id
     : (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0]?.id);
-  if (tabId == null || !rids.length) { respond({ type: 'LOCATE_RESULT', rid: first, found: null }); return; }
+  if (!rids.length) { respond({ type: 'LOCATE_RESULT', rid: first, found: null, why: 'not-shown' }); return; }
+  if (tabId == null) { respond({ type: 'LOCATE_RESULT', rid: first, found: null, why: 'no-page' }); return; }
+  const tabs = cleanLocateTabs(msg.tabs, isRidShaped);
   try {
-    const r = await chrome.tabs.sendMessage(tabId, { type: 'LOCATE_ON_PAGE', rids }) as { found?: string | null } | undefined;
-    respond({ type: 'LOCATE_RESULT', rid: first, found: typeof r?.found === 'string' ? r.found : null });
+    // The page may switch its tab and wait for the object (about 3 s at most).
+    let answer = cleanLocateAnswer(await chrome.tabs.sendMessage(tabId, { type: 'LOCATE_ON_PAGE', rids, ...(tabs.length ? { tabs } : {}) }));
+    // Not shown and no tab known from the tree: an enterprise template's
+    // widget sits on a tab of the page's layout. Ask the server where, then
+    // let the page open that tab.
+    const client = ctxOf(meta).client;
+    if (!answer.found && !tabs.length && !answer.tab && answer.why === 'not-shown' && client) {
+      const read = async (list: string[]) => (await client.readFullObjects(list.filter(isRidShaped).slice(0, 24))).objects;
+      const fromLayout = await layoutTabs(read, rids).catch(() => [] as LocateTab[]);
+      if (fromLayout.length) answer = cleanLocateAnswer(await chrome.tabs.sendMessage(tabId, { type: 'LOCATE_ON_PAGE', rids, tabs: fromLayout }));
+    }
+    respond({ type: 'LOCATE_RESULT', rid: first, ...answer });
   } catch {
-    respond({ type: 'LOCATE_RESULT', rid: first, found: null });
+    // No content script answers: the tab in front is not a BMP page with Companion on it.
+    respond({ type: 'LOCATE_RESULT', rid: first, found: null, why: 'no-page' });
   }
 });

@@ -29,6 +29,8 @@ import {
   tokens, visibleTree, type Entry, type Results, type Scope, type TypeFilter,
 } from './browse/state';
 import * as V from './browse/view';
+import { announce } from '../announce';
+import { locateLine, locateRequest, type LocateAnswer } from '../../lib/locate-plan';
 
 /** How long a page may report "no object" before its tree is cleared. */
 const PAGE_LEAVE_GRACE = 600;
@@ -36,6 +38,13 @@ const PAGE_LEAVE_GRACE = 600;
 export const TREE_REST_MS = 300;
 /** Saves in a burst (a Blueprint apply, several steps) re-read the shown tree once. */
 export const TREE_REFRESH_DEBOUNCE = 500;
+/** A locate still waiting after this long shows its row as working (a tab switch). */
+export const LOCATE_BUSY_AFTER_MS = 200;
+/** The row stops waiting for an answer after this long: layout reads, the
+ *  page's 3 s wait for a tab and its 0.9 s settle fit in it. */
+const LOCATE_GIVE_UP_MS = 12_000;
+/** A note at the row stays this long. */
+export const LOCATE_NOTE_MS = 8000;
 
 export class BrowseTab implements Tab {
   private readonly src: BrowseSource;
@@ -79,10 +88,17 @@ export class BrowseTab implements Tab {
    *  when it is shown, not at once. */
   private treesStale = false;
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The locate under way: its rid, the row it was asked from, and whether the row shows it is working. */
+  private locating: { rid: string; key: string | null; busy: boolean; timers: Array<ReturnType<typeof setTimeout>> } | null = null;
+  /** What the last locate said at its row, until `until`. */
+  private locNote: { key: string; text: string; until: number } | null = null;
+  private locNoteTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The rid of the last locate asked for: answers for any other are late and dropped. */
+  private lastLocate: string | null = null;
 
   constructor(private readonly send: SendFn, private readonly onOpen: (rid: string) => void) {
     this.src = new BrowseSource(send);
-    this.src.onLocated = (rid, found) => this.located(rid, found);
+    this.src.onLocated = (rid, answer) => this.located(rid, answer);
     this.shell = V.buildShell();
     this.wire();
   }
@@ -339,6 +355,7 @@ export class BrowseTab implements Tab {
 
   private afterDraw(): void {
     const s = this.shell;
+    this.paintLocate();
     // A redraw under a resting pointer: the new row is hovered at once.
     let hovered: HTMLElement | null = null;
     try { hovered = s.scroll.querySelector<HTMLElement>('.bw-row:hover'); } catch { /* no :hover support */ }
@@ -564,17 +581,68 @@ export class BrowseTab implements Tab {
     return row?.textContent ?? '';
   }
 
-  private locate(rid: string): void {
-    const nodes = this.nodes();
-    const chain = nodes?.some(n => n.rid === rid) ? [rid, ...ancestorsOf(nodes, rid)] : [rid];
-    this.src.locate(chain);
+  /** Ring `rid` on the page. The request names the page tabs on its path,
+   *  so the page can open the right tab first (lib/locate-plan.ts). `key`
+   *  is the row it was asked from: a slow answer shows there as working,
+   *  and a locate that changed nothing on the page says why there. */
+  private locate(rid: string, key: string | null = null): void {
+    const req = locateRequest(this.nodes(), rid);
+    this.endLocating();
+    this.locNote = null;
+    const timers = [
+      setTimeout(() => { if (this.locating?.rid === rid) { this.locating.busy = true; this.paintLocate(); } }, LOCATE_BUSY_AFTER_MS),
+      setTimeout(() => { if (this.locating?.rid === rid) { this.endLocating(); this.paintLocate(); } }, LOCATE_GIVE_UP_MS),
+    ];
+    this.locating = { rid, key, busy: false, timers };
+    this.lastLocate = rid;
+    this.paintLocate();
+    this.src.locate(req.rids, req.tabs);
   }
 
-  private located(rid: string, found: string | null): void {
-    if (!found) { statusFlash('Not visible on this page'); return; }
-    if (found === rid) { statusFlash('Located on the page'); return; }
-    const holder = this.nodes()?.find(n => n.rid === found);
-    statusFlash(`Located its widget${holder?.name ? `, ${holder.name}` : ''}`);
+  private endLocating(): void {
+    for (const t of this.locating?.timers ?? []) clearTimeout(t);
+    this.locating = null;
+  }
+
+  private located(rid: string, answer: LocateAnswer): void {
+    // A late answer for an object located before: a newer locate speaks.
+    if (rid !== this.lastLocate) return;
+    const key = this.locating?.rid === rid ? this.locating.key : null;
+    if (this.locating?.rid === rid) this.endLocating();
+    const holder = answer.found && answer.found !== rid ? this.nodes()?.find(n => n.rid === answer.found) : undefined;
+    const line = locateLine(rid, answer, holder?.name || holder?.businessId);
+    if (line.where === 'status' || !key) {
+      statusFlash(line.text);
+      if (line.where === 'row') announce(line.text);
+    } else {
+      this.locNote = { key, text: line.text, until: Date.now() + LOCATE_NOTE_MS };
+      if (this.locNoteTimer) clearTimeout(this.locNoteTimer);
+      this.locNoteTimer = setTimeout(() => { this.locNote = null; this.paintLocate(); }, LOCATE_NOTE_MS);
+      announce(line.text);
+    }
+    this.paintLocate();
+  }
+
+  /** The working row and the row note, on the rows drawn now. */
+  private paintLocate(): void {
+    const box = this.shell.scroll;
+    for (const n of box.querySelectorAll('.bw-locnote')) n.remove();
+    for (const r of box.querySelectorAll('.bw-row.locating')) {
+      r.classList.remove('locating');
+      r.querySelector('[data-act="locate"]')?.removeAttribute('aria-busy');
+    }
+    const rowOf = (key: string) => box.querySelector<HTMLElement>(`[data-key="${CSS.escape(key)}"]`);
+    if (this.locating?.busy && this.locating.key) {
+      const row = rowOf(this.locating.key);
+      row?.classList.add('locating');
+      row?.querySelector('[data-act="locate"]')?.setAttribute('aria-busy', 'true');
+    }
+    const noted = this.locNote && this.locNote.until > Date.now() ? rowOf(this.locNote.key) : null;
+    if (noted && this.locNote) {
+      const note = V.locateNote(this.locNote.text);
+      note.style.setProperty('--d', noted.style.getPropertyValue('--d') || '0');
+      noted.after(note);
+    }
   }
 
   private reveal(rid: string): void {
@@ -720,7 +788,7 @@ export class BrowseTab implements Tab {
         case 'open': e.stopPropagation(); this.open(rid); return;
         case 'copy': e.stopPropagation(); this.copy(rid, (e as MouseEvent).shiftKey, a); return;
         case 'copyid': e.stopPropagation(); this.copy(rid, (e as MouseEvent).shiftKey, a); return;
-        case 'locate': e.stopPropagation(); this.locate(rid); return;
+        case 'locate': e.stopPropagation(); this.locate(rid, a.closest<HTMLElement>('[data-key]')?.dataset.key ?? null); return;
         case 'reveal': e.stopPropagation(); this.reveal(rid); return;
         case 'row': {
           this.selected = a.dataset.key ?? null;
@@ -821,7 +889,7 @@ export class BrowseTab implements Tab {
         const rid = this.selected.slice(this.selected.indexOf(':') + 1);
         if (!/^-?\d+$/.test(rid)) return;
         e.preventDefault();
-        if (id === 'browse.locate') this.locate(rid);
+        if (id === 'browse.locate') this.locate(rid, this.selected);
         else this.copy(rid, id === 'browse.copyRid');
         return;
       }

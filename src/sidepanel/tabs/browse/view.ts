@@ -284,6 +284,12 @@ export function note(text: string, opts: { link?: { act: string; text: string } 
   );
 }
 
+/** What a locate that changed nothing on the page says, under its row
+ *  (indented like the row; the tab sets `--d`). Spoken through the live region. */
+export function locateNote(text: string): HTMLElement {
+  return attrs(el('div', 'bw-locnote', icon('i-info', 'ic-sm'), el('span', '', text)), { 'aria-hidden': 'true' });
+}
+
 export function status(text: string): HTMLElement {
   return attrs(el('div', 'bw-status', el('span', 'bw-spin'), text), { role: 'status' });
 }

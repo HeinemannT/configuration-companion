@@ -394,6 +394,9 @@ function createConnection(getCtx: () => SwContext) {
         return;
       }
       if (outcome.error.kind === 'cancelled') return;
+      // The restart check is an extra question of Companion's own: a server
+      // that does not answer it is not a failed connection.
+      if (outcome.feature === 'restart-check') return;
       // A permission response (and other non-5xx HTTP rejection) proves the
       // command channel is alive. It is an operation result, not a connection
       // failure, so a denied edit must not turn the global status red.

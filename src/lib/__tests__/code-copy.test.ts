@@ -18,10 +18,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { estimateCopy, syncCopy, type CopyOptions, type CopyRoots } from '../code-copy';
 import { indexSource, resetListTimes, runCodeSearch, serverSource, storeReader, type ScanSource } from '../code-search';
 import { codeReadCache, READ_ALL_CHARS, LISTING_REUSE_MS } from '../code-scope-read';
-import { KNOWN_CODE_PROPS, syncCodeIndex } from '../code-index-sync';
+import { KNOWN_CODE_PROPS, syncCodeIndex, type SyncProgress } from '../code-index-sync';
 import { MemoryCodeIndexStore, type IndexedObject } from '../code-index-store';
 import { Pacer } from '../index-budget';
-import { isLowPriority, requestClassOf } from '../request-class';
+import { isAskedByUser, isLowPriority, requestClassOf } from '../request-class';
 import { resetFeeds, setFeedClock } from '../code-feed';
 import type { EcResult } from '../bmp-client';
 import { goldenWorld } from './code-search-world';
@@ -83,7 +83,15 @@ describe('the copy is the search\'s read', () => {
     const { objects, orgs } = world();
     const client = server(objects, { orgs, context: true });
     const store = new MemoryCodeIndexStore();
-    const res = await syncCopy(client, opts(store));
+    const seen: SyncProgress[] = [];
+    const res = await syncCopy(client, opts(store, { onProgress: p => seen.push({ ...p }) }));
+    // The progress the window shows: listing, then n of m read, with the
+    // requests sent so far (never fewer than before).
+    expect(seen.some(p => p.phase === 'listing')).toBe(true);
+    expect(seen.some(p => p.phase === 'reading' && p.toRead > 0 && p.read <= p.toRead)).toBe(true);
+    const posts = seen.map(p => p.posts ?? 0);
+    expect(posts.every((n, i) => !i || n >= posts[i - 1])).toBe(true);
+    expect(Math.max(...posts)).toBeGreaterThan(0);
     // The engine's own read of the same place, in another cache.
     const engine = server(objects, { orgs, context: true });
     const read = await serverSource(engine, { env: 'engine', sources: SOURCES, map: MAP }).readAll(new AbortController().signal);
@@ -300,7 +308,7 @@ describe('Refresh', () => {
  */
 function timed(client: ReturnType<typeof server>, rowMs: number, perCommandMs = 0) {
   const POST_MS = 30;
-  const log: Array<{ at: number; ms: number; commands: number; cls: string; low: boolean }> = [];
+  const log: Array<{ at: number; ms: number; commands: number; cls: string; low: boolean; asked: boolean }> = [];
   const rawBatch = client.executeEcBatch.bind(client);
   const rawPairs = client.executeEcPairs!.bind(client);
   const rawEach = client.executeEcEach!.bind(client);
@@ -314,7 +322,7 @@ function timed(client: ReturnType<typeof server>, rowMs: number, perCommandMs = 
       const out = await run();
       const ms = POST_MS + rows(results(out)) * rowMs + commands * perCommandMs;
       t += ms;
-      log.push({ at, ms, commands, cls: requestClassOf(signal).requestClass, low: isLowPriority(signal) });
+      log.push({ at, ms, commands, cls: requestClassOf(signal).requestClass, low: isLowPriority(signal), asked: isAskedByUser(signal) });
       return out;
     } finally { depth--; }
   };
@@ -364,6 +372,9 @@ describe('the load on a slow server (1 s per command)', () => {
     await syncCodeIndex(oldClient, new MemoryCodeIndexStore(), ENV, { signal: new AbortController().signal, now, pacer: clockPacer() });
 
     for (const log of [copyLog, oldLog]) expect(new Set(log.map(p => p.cls))).toEqual(new Set(['background']));
+    // Started only by the user: the script gauge never refuses these posts
+    // (load-governor rule 6); pacing, budgets and the overload stop stay.
+    for (const log of [copyLog, oldLog]) expect(log.every(p => p.asked)).toBe(true);
     // The pacer's rule holds for the copy: after each post a pause as long as
     // it took (at least 500 ms), so the server works at most half the time.
     for (let k = 1; k < copyLog.length; k++) {
@@ -391,9 +402,14 @@ describe('a server too large to read in one go', () => {
     expect(est.readAll).toBe(false);
     expect(est.perSource).toBeDefined();
     const store = new MemoryCodeIndexStore();
-    const res = await syncCopy(client, opts(store));
+    const seen: SyncProgress[] = [];
+    const res = await syncCopy(client, opts(store, { onProgress: p => seen.push({ ...p }) }));
     expect(res.meta.builtAt).toBeTypeOf('number');
     expect(res.meta.copy?.perSource).toBe(true);
+    // The progress names the place being read and its number.
+    const places = seen.filter(p => p.place);
+    expect(places.length).toBeGreaterThan(0);
+    expect(places.every(p => p.sources === SOURCES.length && p.source! >= 1 && p.source! <= SOURCES.length)).toBe(true);
     expect((await stored(store)).map(o => o.rid).sort()).toEqual(objects.map(o => o.rid).sort());
     codeReadCache.clear();
   });

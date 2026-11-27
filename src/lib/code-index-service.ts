@@ -9,6 +9,11 @@
  *   building → failed (with the reason) · unavailable (no bulk read)
  * The stored meta is written after every committed post; `builtAt` is set
  * only when a sync reached its end, so a partial index is never ready.
+ * A press never ends in silence: a sync that did not start (another profile
+ * copies the same server) or did not finish names why as a kind (`problem`:
+ * overload with its cool-down, the script gauge, too large, not listed,
+ * unavailable, failed), and while one runs the load governor's waits are in
+ * the status (`wait`, checked each second). The window words them.
  *
  * Nothing starts on install, connect, search or opening a window: the copy
  * is opt-in per server profile ("Keep a copy on this computer"), and once
@@ -28,10 +33,11 @@ import { typeLabel } from './object-window-table';
 import { indexSource, serverSource, storeReader, type CodeSearchSource, type ScanSource, type ServerFeed } from './code-search';
 import { codeReadCache } from './code-scope-read';
 import { bindFeed, clientKey, holdFeed, markFeedDirty, onProfileForgotten, releaseFeed, setFeedListener, type FeedClient } from './code-feed';
-import { applySavedCode, estimateCopy, syncCopy, type CopyEstimate, type CopyRoots } from './code-copy';
+import { applySavedCode, CopyIncompleteError, estimateCopy, syncCopy, type CopyEstimate, type CopyRoots } from './code-copy';
 import { sendFireForget } from './messaging';
 import { errorMessage, log } from './logger';
-import type { CodeIndexStatus } from './messages';
+import type { CodeCopyProblem, CodeIndexStatus } from './messages';
+import { GOVERNOR, type LoadGovernor } from './load-governor';
 
 interface EnvState {
   sync: Promise<void> | null;
@@ -44,6 +50,13 @@ interface EnvState {
   unavailable?: boolean;
   /** The last sync stopped on an overloaded server. */
   overload?: boolean;
+  /** Why the last sync did not start or did not finish (the window words it). */
+  problem?: CodeCopyProblem;
+  /** When the running sync started. */
+  startedAt?: number;
+  /** The load governor of the server the running sync posts to: its waits
+   *  are shown while they last. */
+  governor?: LoadGovernor;
 }
 
 const states = new Map<string, EnvState>();
@@ -100,13 +113,77 @@ function notCovered(meta: CodeIndexMeta | null): string[] {
   return out;
 }
 
-export async function indexStatus(env: string): Promise<CodeIndexStatus> {
-  const s = stateOf(env);
+/** What the governor holds the running sync back for, now (null: nothing). */
+function waitOf(s: EnvState, now = Date.now()): CodeIndexStatus['wait'] | null {
+  if (!s.sync || !s.governor) return null;
+  const st = s.governor.state();
+  if (st.state === 'waiting' && st.waitMs >= 1_000) return { kind: 'budget', until: now + st.waitMs };
+  if (st.state === 'slow') return { kind: 'slow', until: st.until };
+  return null;
+}
+
+/** Why a sync ended without a result, as a kind (not a sentence), from the
+ *  sync's own error. An overload is a ServerOverloadError (the Pacer's, also
+ *  for the sync's own post refused during a cool-down); a refusal of other
+ *  work at the same time is not its reason. `blocked` is the governor's
+ *  background stop now: an overload lasts until the cool-down it holds. */
+export function problemOf(e: unknown, blocked: ReturnType<LoadGovernor['backgroundBlocked']>, now = Date.now()): CodeCopyProblem {
+  const detail = errorMessage(e).split('\n')[0].slice(0, 300);
+  if (e instanceof IndexUnavailableError) return { kind: 'unavailable', detail };
+  if (e instanceof ServerOverloadError) return { kind: 'overload', until: blocked?.why === 'overloaded' ? blocked.until : now + BUDGET.cooldownMs, detail };
+  if (e instanceof CopyIncompleteError) return { kind: e.reason, sources: [...e.sources], detail };
+  return { kind: 'failed', detail };
+}
+
+/** Stored copies of the server of `env` for other server profiles. */
+async function otherCopies(env: string): Promise<NonNullable<CodeIndexStatus['others']>> {
+  const store = codeIndexStore();
+  if (!store.envs) return [];
+  const server = serverOf(env);
+  const envs = (await store.envs()).filter(e => e !== env && serverOf(e) === server);
+  if (!envs.length) return [];
+  let profiles: ReadonlyArray<{ id: string; label: string }> = [];
+  try { profiles = getCtx().settings?.profiles ?? []; } catch { /* tests */ }
+  const out: NonNullable<CodeIndexStatus['others']> = [];
+  for (const e of envs) {
+    const m = await store.getMeta(e);
+    if (!m) continue;
+    const id = e.slice(0, e.indexOf('@'));
+    out.push({ environment: e, profile: profiles.find(p => p.id === id)?.label || 'another server profile', objects: m.objects, bytes: m.bytes, syncedAt: m.syncedAt, builtAt: m.builtAt });
+  }
+  return out;
+}
+
+/** The status of the copy of `env`. `ctx`, when the caller has it (the
+ *  window's request), names the server's load governor for the script note. */
+export async function indexStatus(env: string, ctx?: SwContext): Promise<CodeIndexStatus> {
+  const live = stateOf(env);
+  const client = ctx?.client as { governor?: LoadGovernor; checkServerRestart?: (why: 'limit') => void } | null | undefined;
+  const own = client?.governor;
+  if (own) rememberGovernor(env, own);
+  // "Another profile is copying this server" lasts only while it does.
+  if (live.problem?.kind === 'busy' && !busyServers.has(serverOf(env))) live.problem = undefined;
+  // The running sync's fields as they are now, read once: the awaits below
+  // must not mix a state from before them with progress from after them.
+  const s: EnvState = { ...live, ...(live.progress ? { progress: { ...live.progress } } : {}) };
+  const checkedAt = Date.now();
+  const wait = waitOf(s, checkedAt);
   let meta: CodeIndexMeta | null = null;
   try { meta = await codeIndexStore().getMeta(env); } catch (e) { log.swallow('codeIndex:meta', e); }
   const state = indexState(meta, s);
   const props = meta?.codeProps ? Object.values(meta.codeProps).reduce((n, p) => n + p.length, 0) : 0;
   const nc = notCovered(meta);
+  let others: NonNullable<CodeIndexStatus['others']> = [];
+  try { others = await otherCopies(env); } catch (e) { log.swallow('codeIndex:others', e); }
+  // An overload seen by an earlier worker life: the cool-down it started.
+  const overloadUntil = meta?.overloadAt ? meta.overloadAt + BUDGET.cooldownMs : 0;
+  const problem = s.problem ?? (!s.sync && overloadUntil > checkedAt ? { kind: 'overload' as const, until: overloadUntil } : undefined);
+  const g = governorOf(env);
+  const scripts = g?.scriptBudgetUsed() ? g.ledger.totals() : null;
+  // Past the limit: if the server restarted since, a check (at most one per
+  // five minutes per server) empties the count and the window is sent a
+  // status without it (rememberGovernor).
+  if (scripts) client?.checkServerRestart?.('limit');
   return {
     environment: env, state,
     syncedAt: meta?.syncedAt ?? null, builtAt: meta?.builtAt ?? null,
@@ -115,17 +192,52 @@ export async function indexStatus(env: string): Promise<CodeIndexStatus> {
     version: meta?.revision ?? 0,
     ...(meta?.codeProps ? { codeTypes: Object.keys(meta.codeProps).length, codeProps: props } : {}),
     ...(nc.length ? { notCovered: nc } : {}),
-    ...(s.sync && s.progress ? { progress: { phase: s.progress.phase, read: s.progress.read, toRead: s.progress.toRead } } : {}),
+    ...(s.sync && s.progress ? { progress: progressOf(s.progress, s.startedAt) } : {}),
+    ...(s.sync && !s.progress && s.startedAt ? { progress: { phase: 'listing' as const, read: 0, toRead: 0, startedAt: s.startedAt } } : {}),
     ...(!s.sync && meta && !meta.builtAt && meta.pending ? { progress: { phase: 'reading' as const, read: Math.max(0, meta.objects - meta.pending), toRead: meta.objects } } : {}),
     ...(s.last ? { last: s.last } : {}),
     ...(s.error && !s.stopped ? { error: s.error } : {}),
     ...(meta?.roots ? { roots: (meta.rootOrder ?? Object.keys(meta.roots)).filter(k => meta!.roots![k]).map(k => ({ key: k, ...meta!.roots![k] })) } : {}),
     ...(meta?.orgs ? { orgs: meta.orgs } : {}),
     ...(meta?.stage ? { stage: meta.stage } : {}),
-    ...(s.overload || (meta?.overloadAt && Date.now() - meta.overloadAt < BUDGET.cooldownMs) ? { overload: true } : {}),
+    ...(s.overload || (meta?.overloadAt && checkedAt - meta.overloadAt < BUDGET.cooldownMs) ? { overload: true } : {}),
     ...(meta?.copy ? { copy: true } : {}),
     ...(s.stopped && !s.sync && meta?.builtAt ? { stopped: true } : {}),
+    ...(wait ? { wait } : {}),
+    ...(problem && !s.sync ? { problem } : {}),
+    ...(scripts ? { serverScripts: { entries: scripts.entries, bytes: scripts.estimatedServerBytes, since: scripts.since ?? null, restartSeen: scripts.restartSeen } } : {}),
+    ...(others.length ? { others } : {}),
   };
+}
+
+/** The progress as the window gets it: only the fields that are known. */
+function progressOf(p: SyncProgress, startedAt: number | undefined): NonNullable<CodeIndexStatus['progress']> {
+  return {
+    phase: p.phase, read: p.read, toRead: p.toRead,
+    ...(p.listed != null ? { listed: p.listed } : {}), ...(p.source != null ? { source: p.source } : {}), ...(p.sources != null ? { sources: p.sources } : {}),
+    ...(p.place ? { place: p.place } : {}), ...(p.chars != null ? { chars: p.chars } : {}), ...(p.posts != null ? { posts: p.posts } : {}),
+    ...(startedAt ? { startedAt } : {}),
+  };
+}
+
+/** The governor of the server of `env` once a sync was asked for there
+ *  (its script gauge is kept across worker restarts). */
+const governors = new Map<string, LoadGovernor>();
+function governorOf(env: string): LoadGovernor | undefined {
+  return governors.get(serverOf(env));
+}
+/** Statuses carry the script count: when it starts again (a restart seen,
+ *  or the Log's "Server was restarted"), every window of that server gets
+ *  a fresh status. */
+const watchedGovernors = new WeakSet<LoadGovernor>();
+function rememberGovernor(env: string, g: LoadGovernor): void {
+  const server = serverOf(env);
+  governors.set(server, g);
+  if (watchedGovernors.has(g)) return;
+  watchedGovernors.add(g);
+  g.onRestart(() => {
+    for (const e of states.keys()) if (serverOf(e) === server && governors.get(server) === g) void broadcast(e);
+  });
 }
 
 async function broadcast(env: string): Promise<void> {
@@ -146,16 +258,37 @@ export async function startIndexSync(force = false, user = force, roots?: readon
   const client = ctx.client;
   if (!env || !client) return null;
   const s = stateOf(env);
-  if (!user || s.sync || busyServers.has(serverOf(env))) return env;
+  const governor = (client as { governor?: LoadGovernor }).governor;
+  if (governor) rememberGovernor(env, governor);
+  if (!user) return env;
+  // Already running for this profile: the answer is its status (progress).
+  if (s.sync) return env;
+  // Running for another profile of the same server: one job per server.
+  // The window says so instead of looking as if nothing happened.
+  if (busyServers.has(serverOf(env))) { s.problem = { kind: 'busy' }; return env; }
   let meta: CodeIndexMeta | null = null;
   try { meta = await codeIndexStore().getMeta(env); } catch (e) { log.swallow('codeIndex:meta', e); }
-  if (s.sync || busyServers.has(serverOf(env))) return env;
+  if (s.sync) return env;
+  if (busyServers.has(serverOf(env))) { s.problem = { kind: 'busy' }; return env; }
   const controller = new AbortController();
   s.controller = controller;
   s.error = undefined;
   s.stopped = false;
   s.overload = false;
+  s.problem = undefined;
+  s.progress = undefined;
+  const startedAt = Date.now();
+  s.startedAt = startedAt;
+  s.governor = governor;
   busyServers.add(serverOf(env));
+  // The governor's waits do not come with progress: the window learns of
+  // them (and of their end) from a check each second while the sync runs.
+  let waitKey = '';
+  const waitTimer = setInterval(() => {
+    const w = waitOf(s);
+    const key = w ? `${w.kind}:${Math.round(w.until / 5_000)}` : '';
+    if (key !== waitKey) { waitKey = key; void broadcast(env); }
+  }, 1_000);
   let lastSent = 0;
   let lastStage: string | undefined;
   let version = '0';
@@ -192,24 +325,39 @@ export async function startIndexSync(force = false, user = force, roots?: readon
       };
       log.info('codeIndex:sync', `${res.changed} read, ${res.removed} removed, ${res.posts} posts, ${res.bytes} bytes, ${res.ms} ms; ${res.stages.map(x => `${x.stage} ${x.posts} posts ${x.ms} ms`).join('; ')}`);
     } catch (e) {
+      const blocked = governor?.backgroundBlocked() ?? null;
+      if (!controller.signal.aborted) s.problem = problemOf(e, blocked);
       if (controller.signal.aborted) s.stopped = true;
       else if (e instanceof IndexUnavailableError) s.unavailable = true;
-      else if (e instanceof ServerOverloadError) {
+      else if (s.problem?.kind === 'overload') {
         // Stop at once; nothing automatic until the cooldown has passed.
         s.overload = true;
-        s.error = `The server answered like an overloaded one (${e.message.split('\n')[0].slice(0, 160)}). Copying stopped and does not start again by itself for ${Math.round(BUDGET.cooldownMs / 60_000)} minutes.`;
-        try {
-          const m = await codeIndexStore().getMeta(env);
-          if (m) await codeIndexStore().putMeta({ ...m, overloadAt: Date.now() });
-        } catch (x) { log.swallow('codeIndex:overload', x); }
+        const minutes = Math.max(1, Math.round(((s.problem.until ?? Date.now()) - Date.now()) / 60_000));
+        s.error = `The server answered like an overloaded one (${errorMessage(e).split('\n')[0].slice(0, 160)}). Copying stopped and does not start again by itself for ${minutes} minute${minutes === 1 ? '' : 's'}.`;
+        // Stored (a worker restart keeps the cool-down) only for an overload
+        // met during this sync, not for its post refused during a cool-down
+        // that began before it.
+        const earlier = blocked?.why === 'overloaded' && blocked.until - GOVERNOR.cooldownMs < startedAt;
+        if (!earlier) {
+          try {
+            const m = await codeIndexStore().getMeta(env);
+            if (m) await codeIndexStore().putMeta({ ...m, overloadAt: Date.now() });
+          } catch (x) { log.swallow('codeIndex:overload', x); }
+        }
       } else s.error = errorMessage(e);
       log.swallow('codeIndex:sync', e);
     } finally {
+      clearInterval(waitTimer);
       s.sync = null;
       s.controller = null;
       s.progress = undefined;
+      s.startedAt = undefined;
+      s.governor = undefined;
       busyServers.delete(serverOf(env));
       if (states.get(env) === s) void broadcast(env);
+      // Windows of other profiles of this server that were told "another
+      // profile is copying" learn that it ended.
+      for (const [other, o] of states) if (other !== env && o.problem?.kind === 'busy' && serverOf(other) === serverOf(env)) void broadcast(other);
     }
   })();
   void broadcast(env);
@@ -310,6 +458,18 @@ export async function clearCodeIndex(profileId?: string): Promise<void> {
   try { await codeIndexStore().clear(profileId ? { profileId } : {}); }
   catch (e) { log.swallow('codeIndex:clear', e); }
   for (const env of cleared) void broadcast(env);
+}
+
+/** Delete one stored copy (a copy of the same server for another profile,
+ *  listed in the window). A running sync of it is stopped and awaited first. */
+export async function removeCodeCopy(env: string): Promise<void> {
+  const s = states.get(env);
+  s?.controller?.abort();
+  if (s?.sync) await s.sync.catch(() => undefined);
+  states.delete(env);
+  try { await codeIndexStore().clear({ env }); }
+  catch (e) { log.swallow('codeIndex:clear', e); }
+  void broadcast(env);
 }
 
 /** The server's roots (names) and organisations, read once per

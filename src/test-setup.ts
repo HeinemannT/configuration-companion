@@ -11,6 +11,11 @@ import { STATIC_EC_FRAME } from './lib/ec-parser';
 // record the pauses without waiting.
 (globalThis as { __crevTestPacerSleep?: (ms: number) => Promise<void> }).__crevTestPacerSleep = () => Promise.resolve();
 
+// A client checks once per command session whether the server restarted
+// (BmpClient.checkServerRestart), one extra post after its first answer.
+// Tests that count posts do not expect it; tests of the check delete this.
+(globalThis as { __crevTestNoRestartCheck?: boolean }).__crevTestNoRestartCheck = true;
+
 // Every test starts with fresh load-governor budgets (lib/load-governor.ts):
 // one test's time-out must not stop another test's background posts.
 import { afterEach, beforeEach } from 'vitest';

@@ -29,6 +29,9 @@ html, body { height: 100%; margin: 0; background: var(--bg); }
 .cs-go { height: 24px; padding: 0 10px; font-size: var(--ui-fs-sm); margin-left: 4px; }
 .cs-prog { height: 2px; background: var(--layer-hover); margin-top: var(--space-2); border-radius: 1px; overflow: hidden; }
 .cs-prog i { display: block; height: 100%; background: var(--brand); transition: width 200ms; }
+.cs-prog.ind i { width: 30%; animation: cs-prog-band 1.2s ease-in-out infinite alternate; }
+@keyframes cs-prog-band { from { transform: translateX(0); } to { transform: translateX(233%); } }
+@media (prefers-reduced-motion: reduce) { .cs-prog.ind i { animation: none; opacity: .6; } }
 .cs-scope { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: var(--space-2); font-size: var(--ui-fs-sm); }
 .cs-scope .sl { color: var(--text-helper); font-size: var(--ui-fs-xs); margin-right: 2px; }
 .cs-scope .gap { width: var(--space-3); }
@@ -197,6 +200,33 @@ html, body { height: 100%; margin: 0; background: var(--bg); }
 .cs-instant h3 { margin: 0 0 var(--space-1); font-size: var(--ui-fs-sm); }
 .cs-instant p { margin: 0 0 var(--space-2); color: var(--text-secondary); font-size: var(--ui-fs-sm); }
 .cs-instant-row { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-1); font-size: var(--ui-fs-sm); }
+
+/* The copy's slot under the query area: progress (copy-progress.css), the
+ * notice when a copy stopped, and the block (copy-panel.ts). */
+.cs-copy { flex: none; display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2) var(--inset) 0; max-height: 50vh; overflow: auto; }
+.cs-copy[hidden] { display: none; }
+.cs-copy-rest { display: flex; flex-direction: column; gap: var(--space-2); }
+.cs-copy-rest:empty { display: none; }
+.cs-copy .cs-instant, .cs-copy .cs-note { margin: 0; }
+.cs-cp-head { display: flex; align-items: center; gap: var(--space-2); }
+.cs-cp-head h3 { margin: 0; }
+.cs-cp-facts { display: grid; grid-template-columns: max-content 1fr; column-gap: var(--space-3); row-gap: 2px; margin: var(--space-2) 0; font-size: var(--ui-fs-sm); line-height: 18px; }
+.cs-cp-row { display: contents; }
+.cs-cp-k { color: var(--text-helper); }
+.cs-cp-v { color: var(--text-primary); min-width: 0; }
+.cs-cp-more { display: inline; }
+.cs-cp-more summary { display: inline; cursor: pointer; color: var(--text-brand); font-size: var(--ui-fs-xs); list-style: none; }
+.cs-cp-more summary::-webkit-details-marker { display: none; }
+.cs-cp-more[open] summary { margin-bottom: 2px; }
+.cs-cp-more ul { margin: 2px 0 0; padding: 0; list-style: none; color: var(--text-secondary); }
+.cs-cp-more li { display: flex; justify-content: space-between; gap: var(--space-3); max-width: 360px; }
+.cs-cp-other, .cs-cp-mem { padding-top: var(--space-2); border-top: 1px solid var(--border-subtle); }
+.cs-cp-mem .ic { color: var(--text-helper); align-self: flex-start; margin-top: 2px; }
+.cs-cp-problem { gap: var(--space-1); }
+.cs-cp-problem .cs-cp-head { width: 100%; }
+.cs-cp-problem .cs-actions { display: flex; gap: var(--space-2); margin-top: var(--space-1); }
+.cs-cp-problem details summary { cursor: pointer; color: var(--text-helper); font-size: var(--ui-fs-xs); }
+.cs-cp-problem .ui-failed-detail { display: block; margin-top: 2px; color: var(--text-helper); font: 400 var(--ui-fs-xs) var(--font-mono); overflow-wrap: anywhere; }
 .cs-orgnote { display: flex; align-items: center; gap: 4px; margin: var(--space-2) 0; color: var(--text-helper); font-size: var(--ui-fs-xs); }
 .ui-ibtn.copy-failed { color: var(--support-error, #da1e28); }
 

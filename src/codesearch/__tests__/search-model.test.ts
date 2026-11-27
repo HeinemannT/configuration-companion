@@ -166,6 +166,9 @@ describe('sentences', () => {
     expect(indexText({ state: 'paused', syncedAt: null, objects: 3573, pending: 2173, progress: { read: 1400, toRead: 3573 } })).toBe('Copying stopped: 1,400 of 3,573 objects read. Resume continues it; searches read the server meanwhile.');
     expect(indexText({ state: 'failed', syncedAt: null, objects: 0, pending: 0, error: 'timed out' })).toBe('The copy could not be made: timed out. Searches read the server.');
     expect(indexText({ state: 'building', syncedAt: null, objects: 0, pending: 0, progress: { read: 400, toRead: 3573 } })).toBe('Making the copy: 400 of 3,573 objects read.');
+    // A read of the whole server: its roots are done only at the end, so it counts objects.
+    const undone = [{ key: 'portal', name: 'Portal', done: false }, { key: 'page', name: 'Page', done: false }];
+    expect(indexText({ state: 'building', syncedAt: null, objects: 0, pending: 0, roots: undone, progress: { read: 400, toRead: 3573 } })).toBe('Making the copy: 400 of 3,573 objects read.');
     expect(summaryText({ matchedObjects: 4, matches: 6, lines: 5, byType: {}, typeCounts: {}, propCounts: {}, kindCounts: {}, whereCounts: {}, rows: 4, more: false, ms: 1, coverage: { source: 'index', searched: 1, total: 1, complete: true } }, 'refs')).toBe('6 places on 5 lines in 4 objects');
   });
 });

@@ -8,6 +8,9 @@
   animation: crev-mark-blink 13s infinite;
 }
 .crev-mark .mark-look { transition: transform 160ms ease-out; }
+/* The body as one group for the click hop (lib/mark-reactions.ts, Web
+ * Animations): it squashes and stretches about the foot of the arc. */
+.crev-mark .mark-act { transform-box: view-box; transform-origin: 15px 24px; }
 .crev-mark[data-look="page"] .mark-look { transform: translateX(-1.5px); }
 .crev-mark[data-look="point"] .mark-look { transform: translate(var(--look-x, 0px), var(--look-y, 0px)); transition-duration: 70ms; }
 .crev-mark[data-mood="read"] .mark-eyes { animation: crev-mark-read 1.8s ease-in-out infinite; }

@@ -194,6 +194,9 @@ export interface CodeIndexStore {
   get(env: string, rid: string): Promise<IndexedObject | null>;
   /** Delete one environment, every environment of a profile, or all. */
   clear(filter?: { env?: string; profileId?: string }): Promise<void>;
+  /** Every environment with a stored meta (a copy, a paused build, an index
+   *  of the older builder), so the window can show and remove each. */
+  envs?(): Promise<string[]>;
 }
 
 function stampOf(o: IndexedCard | IndexedObject): StoredStamp {
@@ -340,6 +343,11 @@ export class IdbCodeIndexStore implements CodeIndexStore {
     return (await req(db.transaction(OBJECTS).objectStore(OBJECTS).get([env, rid])) as IndexedObject | undefined) ?? null;
   }
 
+  async envs(): Promise<string[]> {
+    const db = await this.open();
+    return (await req(db.transaction(META).objectStore(META).getAllKeys())) as string[];
+  }
+
   async clear(filter: { env?: string; profileId?: string } = {}): Promise<void> {
     const db = await this.open();
     const tx = db.transaction([OBJECTS, META, CARDS], 'readwrite');
@@ -404,6 +412,7 @@ export class MemoryCodeIndexStore implements CodeIndexStore {
     return Promise.resolve();
   }
   get(env: string, rid: string) { return Promise.resolve(this.objects.get(this.key(env, rid)) ?? null); }
+  envs() { return Promise.resolve([...this.meta.keys()]); }
   clear(filter: { env?: string; profileId?: string } = {}) {
     const hit = (env: string) => (!filter.env && !filter.profileId) || env === filter.env || (filter.profileId != null && profileOf(env) === filter.profileId);
     for (const [k, o] of this.objects) if (hit(o.env)) this.objects.delete(k);

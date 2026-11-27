@@ -41,6 +41,17 @@ import { copyText } from '../../lib/copy-feedback';
 import { VOICE_KEY, readVoicePrefs, type VoicePrefs } from '../../lib/point-tell/voice';
 import { statusFlash } from '../../lib/dom';
 import { emptyState } from '../../lib/empty-state';
+import { dropStaleHelpTip, helpTip } from '../../lib/help-tip';
+
+/** What each preference does, behind its "?" (lib/help-tip.ts). From what the
+ *  setting does in code: where it is read, and where the user sees it. */
+export const PREF_HELP = {
+  autoDetect: 'When the page in front belongs to one of your servers, the panel switches to that server. Turn it off to keep the server you chose.',
+  enrichAll: 'In Inspect mode, also badges objects that are links inside widgets, such as the rows of a table. Off, only widgets and page tabs get badges.',
+  voice: 'In Point and tell, speak a comment instead of typing it: press and hold still on the page, or press the microphone in a comment field (F2). The browser turns the speech into text, on this device when it can, else through its speech service.',
+  voiceLang: 'The language the browser listens for in voice comments. Browser language means German when the browser is set to German, else English.',
+  localData: 'Object names and types, and the local copies of Extended Code, kept in this browser so badges and search answer fast. Clear cached objects removes them; Reset Companion also clears the activity log and history, and keeps favorites and servers.',
+} as const;
 
 /** Settings after removing a server: the window falls back to the first remaining one. */
 export function settingsWithoutProfile(settings: InspectorSettings, profileId: string): InspectorSettings {
@@ -570,15 +581,13 @@ export class ConnectTab implements Tab {
 
     const prefs = h('div', { class: 'cx-sec-body' },
       this.settingRow('auto-detect', 'Auto-detect server from page URL',
-        null, shared.settings.autoDetect),
+        null, shared.settings.autoDetect, undefined, PREF_HELP.autoDetect),
       this.settingRow('enrich-all', 'Include non-widget objects',
-        'Also labels inline elements (tables, others)',
-        shared.settings.enrichMode === 'all'),
+        null, shared.settings.enrichMode === 'all', undefined, PREF_HELP.enrichAll),
       this.settingRow('voice-on', 'Voice comments',
-        "Speech is turned into text by the browser's speech service",
-        this.voice.on),
+        null, this.voice.on, undefined, PREF_HELP.voice),
       h('label', { class: 'setting-row', id: 'voice-lang-row' },
-        h('span', { class: 'setting-text' }, h('span', { class: 'setting-name' }, 'Voice language')),
+        h('span', { class: 'setting-text' }, h('span', { class: 'setting-name' }, 'Voice language', helpTip(PREF_HELP.voiceLang, 'Voice language'))),
         h('select', { class: 'field-input', id: 'voice-lang', 'aria-label': 'Voice language' },
           h('option', { value: 'auto' }, 'Browser language'),
           h('option', { value: 'en-US' }, 'English'),
@@ -604,6 +613,7 @@ export class ConnectTab implements Tab {
     );
 
     render(container, h('div', { class: 'cx ui' }, ...children));
+    dropStaleHelpTip(container.ownerDocument);
     if (keepFocus) container.querySelector<HTMLElement>(`[data-fk="${keepFocus.replace(/"/g, '')}"]`)?.focus();
 
     container.querySelectorAll<HTMLDetailsElement>('details[data-sec]').forEach((details) => {
@@ -1416,16 +1426,18 @@ export class ConnectTab implements Tab {
     hint: string | null,
     checked: boolean,
     hintTitle?: string,
+    help?: string,
   ): HTMLElement {
     return h('label', { class: 'setting-row' },
       h('span', { class: 'setting-text' },
-        h('span', { class: 'setting-name' }, name),
+        h('span', { class: 'setting-name' }, name, help ? helpTip(help, name) : null),
         hint
           ? h('span', { class: 'setting-hint', ...(hintTitle ? { title: hintTitle } : {}) }, hint)
           : null,
       ),
       h('span', { class: 'toggle' },
-        h('input', { type: 'checkbox', class: 'toggle-input', id, checked }),
+        // Named by its text alone: the "?" inside the label is not part of the name.
+        h('input', { type: 'checkbox', class: 'toggle-input', id, checked, ...(help ? { 'aria-label': name } : {}) }),
         h('span', { class: 'toggle-track', 'aria-hidden': 'true' }),
       ),
     );
@@ -1741,7 +1753,7 @@ export class ConnectTab implements Tab {
         : 'Stored in this browser';
     return h('div', { class: 'connect-local-data', role: 'group', 'aria-label': 'Local inspection data' },
       h('span', { class: 'setting-text' },
-        h('span', { class: 'setting-name' }, 'Local inspection data'),
+        h('span', { class: 'setting-name' }, 'Local inspection data', helpTip(PREF_HELP.localData, 'Local inspection data')),
         h('span', {
           class: 'setting-hint',
           title: this.cacheBytes != null ? `${this.cacheBytes.toLocaleString()} bytes of ~10 MB quota` : '',

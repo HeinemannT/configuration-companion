@@ -1014,6 +1014,18 @@ export interface SyncProgress {
   objects: number;
   /** The stage being built. */
   stage?: 'roots' | 'organisation' | 'check';
+  /** Listing: objects listed so far, and the source being listed (1-based)
+   *  of `sources` (code-copy). */
+  listed?: number;
+  source?: number;
+  sources?: number;
+  /** The place being read, in words (a root or a top-level organisation),
+   *  when the copy is read source by source. */
+  place?: string;
+  /** Characters of code listed (code-copy). */
+  chars?: number;
+  /** Requests sent so far in this sync. */
+  posts?: number;
 }
 
 /** Posts and time of one stage (measurement, status). */
@@ -1086,7 +1098,9 @@ export async function syncCodeIndex(
 ): Promise<SyncResult> {
   const now = opts.now ?? Date.now;
   const t0 = now();
-  const signal = backgroundSignal({ signal: opts.signal });
+  // Started only by the user (code-index-service startIndexSync): the
+  // script gauge does not refuse it (request-class `asked`).
+  const signal = backgroundSignal({ signal: opts.signal, asked: true });
   const alive = () => { signal.throwIfAborted(); };
   const pacer = opts.pacer ?? new Pacer();
   if (!(await client.ensureLookupSupport(signal))) {

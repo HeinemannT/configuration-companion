@@ -33,7 +33,7 @@ import { copyText } from '../lib/copy-feedback';
 import { statusFlash } from '../lib/dom';
 import { icon, mountShellSprites } from './icons';
 import { bandView, serverControlView } from './connection-view';
-import { applyServerControl, buildServerControl, glanceAtPage, setMarkWorking, showPanelInactive } from './server-control';
+import { applyServerControl, buildServerControl, glanceAtPage, reactToSwitcherClick, setMarkWorking, showPanelInactive } from './server-control';
 import { NextCheckClock, chromeNextCheckDeps } from './next-check';
 import { openBmp } from './open-bmp';
 import { installPanelShowInLog } from '../lib/show-in-log';
@@ -374,7 +374,12 @@ function buildApp(): void {
   app.querySelector('#toggle-blueprint')?.addEventListener('click', () => sendMessage({ type: 'BLUEPRINT_TOGGLE' }));
   app.querySelector('#toggle-point-tell')?.addEventListener('click', () => sendMessage({ type: 'TOGGLE_POINT_TELL' })); // Point and tell
   app.querySelector('#open-extended')?.addEventListener('click', () => sendMessage({ type: 'OPEN_EXTENDED' }));
-  app.querySelector('#header-status')?.addEventListener('click', (e) => showServerMenu(e.currentTarget as HTMLElement));
+  app.querySelector('#header-status')?.addEventListener('click', (e) => {
+    const control = e.currentTarget as HTMLElement;
+    showServerMenu(control);
+    // The menu first, then the mark's reaction (it never delays the menu).
+    reactToSwitcherClick(control);
+  });
   // Keyboard: ArrowDown on the switcher opens its menu.
   app.querySelector<HTMLElement>('#header-status')?.addEventListener('keydown', (e) => {
     if (e.key !== 'ArrowDown') return;

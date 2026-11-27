@@ -8,16 +8,46 @@ html, body { height: 100%; margin: 0; background: var(--bg); }
 .at [hidden] { display: none !important; }
 .at-grow { flex: 1; }
 .at-mono { font-family: var(--font-mono); }
+.at-line { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The arrow of a reference: from the type that has it to the type it holds. */
+.at .ic.at-arrow { width: 12px; height: 12px; margin: 0 4px; vertical-align: -1px; color: var(--text-helper); }
+.at .ic.at-arrow.sm { width: 10px; height: 10px; margin: 0 3px; vertical-align: 0; }
+.at .ic.at-arrow.down { transform: rotate(90deg); }
+.at-ref { min-width: 0; }
+.at-ref-n { overflow-wrap: anywhere; }
 
 /* ── head: the mark, the title, the server; then find and the three views ── */
-.at-head { flex: none; display: flex; align-items: center; gap: 10px; height: 48px; padding: 0 var(--inset); }
+.at-head { flex: none; display: flex; align-items: center; gap: 10px; height: 48px; padding: 0 var(--inset); min-width: 0; }
+.at-head > * { flex: none; }
+.at-head > .at-grow { flex: 1 1 0; min-width: 8px; }
 .at-mark { display: block; flex: none; width: 24px; height: 24px; }
 .at-mark > svg { display: block; width: 24px; height: 24px; overflow: visible; }
 .at-title { font-size: 14px; font-weight: 600; }
-.at-server { color: var(--text-secondary); font: 12px/16px var(--font-mono); }
-.at-read { font-size: var(--ui-fs-sm); color: var(--text-helper); white-space: nowrap; }
-.at.busy .at-read { color: var(--text-brand); }
-.at-top { flex: none; display: flex; align-items: center; gap: var(--space-3); height: 44px; padding: 0 var(--inset); border-top: 1px solid var(--border-subtle); border-bottom: 1px solid var(--border-subtle); }
+.at-head > .at-server { flex: 0 1 auto; min-width: 60px; color: var(--text-secondary); font: 12px/16px var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.at-head > .at-read { flex: 0 1 auto; min-width: 0; font-size: var(--ui-fs-sm); color: var(--text-helper); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── a read that runs: a quiet spinner, the step, its count, its time ── */
+.at-spin { flex: none; display: inline-block; width: 10px; height: 10px; box-sizing: border-box; border: 1.5px solid var(--brand-line); border-top-color: var(--brand); border-radius: 50%; animation: at-spin .9s linear infinite; }
+@keyframes at-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .at-spin { animation-duration: 2.4s; } }
+.at-el { flex: none; font: 400 11px/16px var(--font-mono); color: var(--text-helper); font-variant-numeric: tabular-nums; }
+.at-pbar { flex: none; display: block; height: 2px; background: var(--brand-line); overflow: hidden; }
+.at-pbar > i { display: block; height: 100%; width: 0; background: var(--brand); transition: width .25s ease-out; }
+.at-progress { position: relative; flex: none; display: flex; align-items: center; gap: var(--space-2); min-width: 0; padding: 6px var(--inset) 8px; background: var(--brand-bg); border-bottom: 1px solid var(--brand-line); font-size: var(--ui-fs-sm); line-height: 16px; color: var(--text-primary); }
+.at-progress .at-ptext { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.at-progress .at-pstep { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; color: var(--text-secondary); }
+.at-progress .at-pbar { position: absolute; left: 0; right: 0; bottom: 0; }
+.at-first .at-pbar.wide { width: 240px; margin: 10px 0 4px; border-radius: 1px; }
+.at-first .at-pstep { min-height: 17px; }
+.at-loading { display: flex; align-items: center; gap: var(--space-2); min-width: 0; margin: 10px 0 0; font-size: var(--ui-fs-sm); line-height: 17px; color: var(--text-helper); }
+.at-loading-t { flex: none; color: var(--text-secondary); }
+.at-loading-d { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.at-loading-d:empty, .at-loading-d:has(> :empty:only-child) { display: none; }
+.at-loading .at-el { margin-left: auto; }
+.at-sheet .at-loading { margin: 14px 0; }
+.at-tab-l { display: inline-flex; align-items: center; gap: 6px; }
+.at-top { flex: none; display: flex; align-items: center; gap: var(--space-3); min-width: 0; height: 44px; padding: 0 var(--inset); border-top: 1px solid var(--border-subtle); border-bottom: 1px solid var(--border-subtle); }
 .at-find { position: relative; flex: 0 1 260px; min-width: 140px; }
 .at-qf { height: 28px; gap: var(--space-2); padding: 0 var(--space-2); }
 .at-q { flex: 1; min-width: 0; height: 26px; padding: 0; font: 400 var(--ui-fs-base) var(--font-ui); }
@@ -32,10 +62,10 @@ html, body { height: 100%; margin: 0; background: var(--bg); }
 .at-seg-b:disabled { color: var(--text-disabled); background: none; cursor: default; }
 .at-start .at-seg-b { font: 400 var(--ui-fs-xs) var(--font-mono); padding: 0 var(--space-2); }
 .at-notice { flex: none; display: flex; align-items: center; gap: var(--space-2); padding: 6px var(--inset); background: var(--layer-01); border-bottom: 1px solid var(--border-subtle); font-size: var(--ui-fs-sm); color: var(--text-primary); }
-.at-notice span { flex: 1; }
+.at-notice span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 
 .at-body { flex: 1; min-height: 0; display: flex; }
-.at-main { position: relative; flex: 1; min-width: 0; overflow: auto; }
+.at-main { position: relative; flex: 1; min-width: 0; overflow: auto; container: atlas-main / inline-size; }
 .at-main > .ui-empty { margin-top: 12vh; }
 .at-g { flex: none; display: grid; place-items: center; color: var(--text-secondary); }
 .at-ct { flex: none; margin-left: auto; padding: 0 6px; border-radius: 9px; background: var(--layer-01); font: 500 11px/18px var(--font-mono); color: var(--text-secondary); }
@@ -45,13 +75,18 @@ html, body { height: 100%; margin: 0; background: var(--bg); }
 .at-bar.sm { width: 28px; }
 
 /* ── the right side: what is picked ───────────────────────────────── */
-.at-insp { flex: none; width: 300px; padding: 14px 16px 16px; border-left: 1px solid var(--border-subtle); overflow-y: auto; scrollbar-width: thin; }
+.at-insp { flex: none; width: clamp(260px, 20vw, 320px); min-width: 0; padding: 14px 16px 16px; border-left: 1px solid var(--border-subtle); overflow-y: auto; scrollbar-width: thin; }
 .at-k { font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--text-helper); }
-.at-h { margin: 2px 0 0; font-size: 15px; line-height: 21px; font-weight: 600; overflow-wrap: anywhere; }
+/* A heading is at most two lines; the whole text is its title. */
+.at-h { margin: 2px 0 0; font-size: 15px; line-height: 21px; font-weight: 600; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .at-h.at-mono { font-size: 15px; }
 .at-sub { margin: 2px 0 0; color: var(--text-helper); font-size: var(--ui-fs-sm); line-height: 17px; }
-.at-cap { display: flex; justify-content: space-between; margin: 18px 0 4px; font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--text-helper); }
-.at-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+.at-sub-ref { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+.at-cap { display: flex; justify-content: space-between; gap: 8px; min-width: 0; margin: 18px 0 4px; font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--text-helper); }
+.at-cap > span:last-child { flex: none; }
+.at-cap .at-cap-n { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.at-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; min-width: 0; }
+.at-acts .at-btn-n { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .at-fact { margin-top: 14px; padding: 10px 12px; border-radius: 6px; background: var(--layer-01); color: var(--text-secondary); }
 .at-fact b { font-size: 20px; line-height: 26px; color: var(--text-primary); }
 .at-fact small { display: block; margin-top: 2px; font-size: var(--ui-fs-sm); color: var(--text-helper); }
@@ -65,7 +100,9 @@ html, body { height: 100%; margin: 0; background: var(--bg); }
 .at-kv .at-pr-p { color: var(--text-secondary); }
 .at-pr-p { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .at-pr-n { width: 28px; text-align: right; color: var(--text-helper); font-size: 11px; }
-.at-grp { display: flex; justify-content: space-between; margin: 10px 0 0; font-size: 11.5px; color: var(--text-helper); }
+.at-grp { display: flex; justify-content: space-between; gap: 8px; min-width: 0; margin: 10px 0 0; font-size: 11.5px; color: var(--text-helper); }
+.at-grp-n { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.at-grp > span:last-child { flex: none; }
 .at-use { display: flex; align-items: center; gap: 8px; width: calc(100% + 16px); margin: 0 -8px; height: 26px; padding: 0 8px; border-radius: 5px; font-size: 12.5px; text-align: left; }
 .at-use-n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .at-use-w { flex: 0 1 auto; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-helper); font-size: 11.5px; }
@@ -74,8 +111,12 @@ html, body { height: 100%; margin: 0; background: var(--bg); }
 .at-hint { margin-top: 6px; padding: 12px; border: 1px dashed var(--border-strong); border-radius: 6px; font-size: 12.5px; line-height: 18px; color: var(--text-secondary); }
 .at-hint p { margin: 0; }
 .at-hint .ui-btn { margin-top: 10px; }
+/* The shared copy progress has its own frame: no second one around it. */
+.at-hint.at-copying { padding: 0; border: 0; }
 .at-rt { display: flex; align-items: center; gap: 8px; width: calc(100% + 16px); margin: 0 -8px; min-height: 30px; padding: 4px 8px; border-radius: 5px; text-align: left; }
-.at-rt-l { flex: 1; min-width: 0; font: 500 12px/17px var(--font-mono); overflow-wrap: anywhere; }
+.at-rt-l { flex: 1; min-width: 0; font: 500 12px/17px var(--font-mono); }
+.at-st { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+.at-rt.on .ic.at-arrow { color: var(--text-brand); }
 .at-rt-n { width: 46px; text-align: right; font: 400 11px var(--font-mono); color: var(--text-helper); }
 .at-rt.on { background: var(--brand-bg); color: var(--text-brand); }
 .at-rt.on .at-rt-n { color: var(--text-brand); }
@@ -103,19 +144,24 @@ html, body { height: 100%; margin: 0; background: var(--bg); }
 .at-cell.on { outline: 2px solid var(--brand); outline-offset: 1px; }
 
 /* ── one type: referenced by, the type, references ────────────────── */
-.at-star { position: relative; display: grid; grid-template-columns: minmax(180px, 250px) minmax(300px, 400px) minmax(180px, 250px); justify-content: center; column-gap: 64px; align-items: center; min-height: 100%; padding: 24px var(--inset); }
+/* Tracks follow the width of the page, never the content: long names end in an ellipsis. */
+.at-star { position: relative; display: grid; grid-template-columns: minmax(140px, 250px) minmax(220px, 400px) minmax(140px, 250px); justify-content: center; column-gap: clamp(24px, 3.5vw, 64px); align-items: center; min-height: 100%; padding: 24px var(--inset); }
 .at-lines { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .at-e { fill: none; stroke: var(--border-strong); stroke-width: 1.3; opacity: .55; stroke-linecap: round; }
 .at-e.dash { stroke-dasharray: 1 7; opacity: .8; }
 .at-e.hot { stroke: var(--brand); stroke-width: 2.6; opacity: 1; filter: drop-shadow(0 2px 4px rgb(124 58 237 / .3)); }
-.at-col { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 8px; }
-.at-colcap { font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--text-helper); }
-.at-card { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 10px; border: 1px solid var(--border-subtle); border-radius: 7px; background: var(--bg); text-align: left; box-shadow: var(--shadow-1); }
+.at-col { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.at-colcap { display: flex; justify-content: space-between; font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--text-helper); }
+.at-colcap-n { font-family: var(--font-mono); letter-spacing: 0; }
+.at-col > .at-more { align-self: flex-start; }
+.at-card { display: flex; align-items: center; gap: 8px; min-width: 0; height: 40px; padding: 0 10px; border: 1px solid var(--border-subtle); border-radius: 7px; background: var(--bg); text-align: left; box-shadow: var(--shadow-1); }
 .at-card:hover, .at-card.on { border-color: var(--brand); box-shadow: 0 0 0 2px var(--brand-line); }
 .at-card-n { flex: 1; min-width: 0; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .at-card-v { flex: none; font-size: 11px; color: var(--text-helper); }
 .at-card .at-ct { margin-left: 0; }
-.at-mid { position: relative; z-index: 1; }
+/* Narrow side columns: the name keeps the room; how many references is on the card that opens on hover. */
+@container atlas-main (max-width: 760px) { .at-card-v { display: none; } }
+.at-mid { position: relative; z-index: 1; min-width: 0; }
 .at-focus { border: 1.5px solid var(--brand); border-radius: 8px; background: var(--bg); box-shadow: 0 6px 18px rgb(124 58 237 / .14); overflow: hidden; }
 .at-focus-h { display: flex; align-items: center; gap: 8px; width: 100%; height: 46px; padding: 0 12px; background: var(--brand-bg); text-align: left; }
 .at-focus-h .at-g { color: var(--text-brand); }
@@ -129,16 +175,18 @@ html, body { height: 100%; margin: 0; background: var(--bg); }
 .at-row-p { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .at-row-n { width: 28px; text-align: right; font-size: 11px; color: var(--text-helper); }
 .at-row.on .at-row-n { color: var(--text-brand); }
+.at-focus .at-row-more { display: block; width: 100%; margin: 0; height: 28px; padding: 0 12px; border-top: 1px solid var(--border-subtle); text-align: left; }
 .at-row-none { padding: 8px 12px; border-top: 1px solid var(--border-subtle); font-size: var(--ui-fs-sm); color: var(--text-helper); }
 .at-tag { flex: none; padding: 0 6px; border-radius: 4px; background: var(--layer-01); font: 400 11px/18px var(--font-ui); color: var(--text-secondary); }
 
 /* ── route: the ways between two types, the chosen one lit ────────── */
 .at-route { display: flex; flex-direction: column; min-height: 100%; }
-.at-ends { flex: none; display: flex; align-items: center; gap: 8px; padding: 12px var(--inset) 0; font-size: var(--ui-fs-sm); color: var(--text-helper); }
-.at-sel { height: 28px; max-width: 260px; padding: 0 8px; border: 1px solid var(--border-strong); border-radius: var(--radius-2); background: var(--bg); font: 500 12.5px var(--font-ui); color: var(--text-primary); }
-.at-graph { position: relative; flex: none; display: grid; grid-template-columns: minmax(200px, 280px) minmax(200px, 260px) minmax(140px, 240px); justify-content: center; column-gap: 150px; align-items: center; padding: 28px var(--inset); background-image: radial-gradient(var(--border-subtle) 1px, transparent 1px); background-size: 22px 22px; }
+.at-ends { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; padding: 12px var(--inset) 0; font-size: var(--ui-fs-sm); color: var(--text-helper); }
+.at-sel { flex: 0 1 260px; min-width: 120px; height: 28px; max-width: 260px; text-overflow: ellipsis; padding: 0 8px; border: 1px solid var(--border-strong); border-radius: var(--radius-2); background: var(--bg); font: 500 12.5px var(--font-ui); color: var(--text-primary); }
+.at-graph { position: relative; flex: none; display: grid; grid-template-columns: minmax(150px, 280px) minmax(150px, 260px) minmax(130px, 240px); justify-content: center; column-gap: clamp(48px, 8vw, 150px); align-items: center; padding: 28px var(--inset); background-image: radial-gradient(var(--border-subtle) 1px, transparent 1px); background-size: 22px 22px; }
 .at-graph.has-direct { padding-top: 64px; }
-.at-gcol { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 14px; }
+.at-gcol { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.at-gcol > .at-gmore { align-self: center; margin: 0; padding: 0 10px; border-radius: 12px; background: var(--bg); }
 .at-pill { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px 0 9px; border: 1px solid var(--border-subtle); border-radius: 18px; background: var(--bg); font-size: 12.5px; color: var(--text-helper); text-align: left; min-width: 0; }
 button.at-pill:hover { border-color: var(--brand); color: var(--text-primary); }
 .at-pill-n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -148,28 +196,33 @@ button.at-pill:hover { border-color: var(--brand); color: var(--text-primary); }
 .at-pill.on small { color: var(--text-brand); }
 .at-glabels { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
 .at-glabel.quiet { color: var(--text-helper); font-family: var(--font-ui); font-weight: 400; }
-.at-glabel { position: absolute; transform: translateX(-50%); padding: 0 4px; border-radius: 3px; background: var(--bg); font: 500 11px/16px var(--font-mono); color: var(--text-brand); white-space: nowrap; }
-.at-sheet { flex: 1; min-height: 180px; display: flex; flex-direction: column; border-top: 1px solid var(--border-subtle); background: var(--bg); }
-.at-tabs { flex: none; display: flex; align-items: center; gap: 6px; height: 42px; padding: 0 var(--inset); border-bottom: 1px solid var(--border-subtle); }
+.at-glabel { position: absolute; transform: translateX(-50%); max-width: 160px; overflow: hidden; text-overflow: ellipsis; padding: 0 4px; border-radius: 3px; background: var(--bg); font: 500 11px/16px var(--font-mono); color: var(--text-brand); white-space: nowrap; }
+.at-sheet { flex: 1; min-width: 0; min-height: 180px; display: flex; flex-direction: column; border-top: 1px solid var(--border-subtle); background: var(--bg); }
+.at-tabs { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 42px; padding: 7px var(--inset); border-bottom: 1px solid var(--border-subtle); }
 .at-tabs .ui-btn { display: inline-flex; align-items: center; gap: var(--space-1); white-space: nowrap; }
 .at-tab { height: 26px; padding: 0 10px; border-radius: 4px; font-size: 12.5px; color: var(--text-secondary); }
 .at-tab:hover { background: var(--layer-hover); }
 .at-tab.on { background: var(--layer-01); color: var(--text-primary); font-weight: 600; }
-.at-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-.at-table th { text-align: left; font-weight: 500; color: var(--text-helper); font-size: 11.5px; height: 28px; padding: 0 var(--inset); border-bottom: 1px solid var(--border-subtle); }
-.at-table td { height: 30px; padding: 0 8px; border-bottom: 1px solid var(--border-subtle); white-space: nowrap; }
-.at-obj { height: 24px; padding: 0 8px; border-radius: 4px; text-align: left; max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
+.at-rows { min-width: 0; }
+/* Columns share the width equally: a long name ends in an ellipsis and never widens the page. */
+.at-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 12.5px; }
+.at-table th { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; font-weight: 500; color: var(--text-helper); font-size: 11.5px; height: 28px; padding: 0 var(--inset); border-bottom: 1px solid var(--border-subtle); }
+.at-table td { height: 30px; padding: 0 8px; border-bottom: 1px solid var(--border-subtle); white-space: nowrap; overflow: hidden; }
+.at-obj { display: inline-block; vertical-align: middle; height: 24px; padding: 0 8px; border-radius: 4px; text-align: left; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .at-obj:hover { background: var(--brand-bg); color: var(--text-brand); }
 .at-obj.same { color: var(--text-helper); }
 .at-code { margin: 0; padding: 12px var(--inset); font: 400 12px/18px var(--font-mono); color: var(--text-primary); white-space: pre; overflow: auto; }
 
 /* ── the card that opens when the pointer rests on a thing ────────── */
-.at-tip { position: fixed; z-index: 20; max-width: 360px; min-width: 260px; padding: 10px 12px; border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--bg); box-shadow: var(--shadow-2); font-size: var(--ui-fs-sm); line-height: 17px; color: var(--text-primary); pointer-events: none; }
+/* Placed once by placeCard (atlas-layout.ts) after it is measured unseen. It takes no pointer, so it never starts a leave and enter loop. */
+.at-tip { position: fixed; left: 0; top: 0; z-index: 20; box-sizing: border-box; width: max-content; max-width: min(360px, calc(100vw - 16px)); min-width: 260px; overflow: hidden; padding: 10px 12px; border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--bg); box-shadow: var(--shadow-2); font-size: var(--ui-fs-sm); line-height: 17px; color: var(--text-primary); pointer-events: none; }
 .at-tip-h { margin-bottom: 4px; }
-.at-tip-h b { display: block; font-size: 12.5px; font-weight: 600; }
-.at-tip-h span { display: block; font-size: 11px; color: var(--text-helper); }
+.at-tip-h b { display: block; font-size: 12.5px; font-weight: 600; overflow-wrap: anywhere; }
+.at-tip-h > span { display: block; font-size: 11px; color: var(--text-helper); }
 .at-tip-c { margin: 8px 0 2px; font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--text-helper); }
-.at-tip-l { display: flex; justify-content: space-between; gap: 16px; }
-.at-tip-l span:first-child { color: var(--text-secondary); }
-.at-tip-l span:last-child { text-align: right; }
+.at-tip-l { display: flex; justify-content: space-between; gap: 16px; min-width: 0; }
+.at-tip-l > :first-child { flex: 0 1 auto; min-width: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
+/* A label ("Linked to") keeps its line; a property name or route shares the room with its value. */
+.at-tip-l > :first-child:not(.at-mono) { flex: none; }
+.at-tip-l > :last-child { flex: 0 1 auto; min-width: 0; text-align: right; overflow-wrap: anywhere; }
 .at-tip-n { margin: 6px 0 0; color: var(--text-helper); }

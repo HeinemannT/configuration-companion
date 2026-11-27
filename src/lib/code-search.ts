@@ -1345,8 +1345,10 @@ export function serverSource(client: IndexClient, opts: { from?: string; map?: C
       const created: SharedRead = { subscribers: new Set(), controller, progress, promise: Promise.resolve(null as never) };
       // Low-priority user work: a user post (opening an object, a picker
       // query) goes between two of its posts (request-class). A local copy
-      // is background work, as before (load-governor's background budget).
-      const base = opts.background ? backgroundSignal({ signal: controller.signal }) : controller.signal;
+      // build (`background`) is background work, as before (load-governor's
+      // background budget); only the user starts one (`asked`), so the
+      // script gauge does not refuse it.
+      const base = opts.background ? backgroundSignal({ signal: controller.signal, asked: true }) : controller.signal;
       created.promise = listAndRead(lowPrioritySignal(base), pacer, objects => { for (const s of created.subscribers) s.emit(objects, { ...progress }); }, progress)
         .finally(() => { if (sharedReads.get(key) === created) sharedReads.delete(key); });
       // Every waiting search sees the failure; none left waiting is fine.

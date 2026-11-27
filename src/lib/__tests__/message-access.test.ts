@@ -88,6 +88,22 @@ describe('sender kinds', () => {
     expect(logged).toHaveLength(1);
     expect(logged[0][3]).toEqual({ category: 'system', action: 'message-refused' });
   });
+
+  it('"Server was restarted" is accepted from extension pages only (the Log): code search in a page and a content script are refused', async () => {
+    vi.resetModules();
+    mockChromeStorage();
+    const resetScriptCount = vi.fn(async () => {});
+    const ctx: any = { settingsReady: Promise.resolve(), logActivity: vi.fn(), settings: { profiles: [], activeProfileId: '' }, client: { governor: { resetScriptCount } } };
+    (await import('../sw-context')).setSwContext(ctx);
+    const router = await import('../message-router');
+    const frame = { id: 'test', url: 'chrome-extension://test/codesearch/codesearch.html', tab: { id: 3, url: 'https://bmp.test/Ws/' } as chrome.tabs.Tab, frameId: 2 } as chrome.runtime.MessageSender;
+    const page = { id: 'test', url: 'https://bmp.test/Ws/', tab: { id: 3, url: 'https://bmp.test/Ws/' } } as unknown as chrome.runtime.MessageSender;
+    const replies: unknown[] = [];
+    router.handleOneShotMessage({ type: 'RESET_SCRIPT_COUNT', profileId: 'other' }, frame, r => replies.push(r));
+    router.handleOneShotMessage({ type: 'RESET_SCRIPT_COUNT', profileId: 'other' }, page, r => replies.push(r));
+    expect(replies).toEqual([expect.objectContaining({ type: 'REQUEST_FAILED' }), expect.objectContaining({ type: 'REQUEST_FAILED' })]);
+    expect(resetScriptCount).not.toHaveBeenCalled();
+  });
 });
 
 describe('redactSettings', () => {

@@ -10,6 +10,7 @@
  * not found.
  */
 import type { CodeIndexStatus } from '../messages';
+import { copyProblemView } from '../copy-status-text';
 import type { CodeIndexStore, IndexedObject } from '../code-index-store';
 
 export interface UsageHit {
@@ -24,11 +25,11 @@ export interface UsageHit {
 }
 
 export type AtlasUsage =
-  /** The copy is being read. */
-  | { state: 'loading' }
+  /** The copy is being read: `read` of `toRead` objects (0 when the copy does not say), since `since`. */
+  | { state: 'loading'; read?: number; toRead?: number; since?: number }
   | { state: 'ready'; byProp: Record<string, UsageHit[]>; objects: number; at: number | null }
   /** No copy to read: `reason` in the words of the code search window; `canMake` when the user can make one; `making` while one is made. */
-  | { state: 'none'; reason: string; canMake: boolean; making?: { read: number; toRead: number } };
+  | { state: 'none'; reason: string; canMake: boolean; making?: { read: number; toRead: number }; resume?: boolean };
 
 const READ = /(?:\.(?!rref\()|\brref\(\s*)([A-Za-z_][A-Za-z0-9_]*)/g;
 
@@ -51,24 +52,24 @@ export function addUsage(byProp: Record<string, UsageHit[]>, batch: readonly Ind
 }
 
 /** Why there is no usage, from the state of the code copy. */
-export function noUsage(st: Pick<CodeIndexStatus, 'state' | 'progress' | 'error'> | null): Extract<AtlasUsage, { state: 'none' }> {
+export function noUsage(st: Pick<CodeIndexStatus, 'state' | 'progress' | 'error' | 'problem'> | null): Extract<AtlasUsage, { state: 'none' }> {
   switch (st?.state) {
     case 'building': return { state: 'none', reason: 'Making the code copy', canMake: false, making: { read: st.progress?.read ?? 0, toRead: st.progress?.toRead ?? 0 } };
-    case 'paused': return { state: 'none', reason: 'Code copy incomplete', canMake: true };
-    case 'failed': return { state: 'none', reason: st.error || 'Code copy failed', canMake: true };
+    case 'paused': return { state: 'none', reason: 'The code copy is not complete. It was stopped.', canMake: true, resume: true };
+    case 'failed': return { state: 'none', reason: st.problem ? copyProblemView(st.problem).sentence : st.error || 'Code copy failed', canMake: true };
     case 'unavailable': return { state: 'none', reason: 'No code copy possible on this server', canMake: false };
     case 'none': return { state: 'none', reason: 'No code copy of this server', canMake: true };
     default: return { state: 'none', reason: 'Code copy state unknown', canMake: false };
   }
 }
 
-/** Where each of `props` is used, from the copy `st` describes. */
-export async function readUsage(store: CodeIndexStore, st: CodeIndexStatus | null, props: Iterable<string>): Promise<AtlasUsage> {
+/** Where each of `props` is used, from the copy `st` describes. `onBatch` hears how many objects were read so far. */
+export async function readUsage(store: CodeIndexStore, st: CodeIndexStatus | null, props: Iterable<string>, onBatch?: (read: number) => void): Promise<AtlasUsage> {
   if (!st || (st.state !== 'ready' && st.state !== 'refreshing')) return noUsage(st);
   const wanted = new Set(props);
   const byProp: Record<string, UsageHit[]> = {};
   let objects = 0;
-  await store.scan(st.environment, batch => { objects += batch.length; addUsage(byProp, batch, wanted); }, 400);
+  await store.scan(st.environment, batch => { objects += batch.length; addUsage(byProp, batch, wanted); onBatch?.(objects); }, 400);
   return { state: 'ready', byProp, objects, at: st.syncedAt ?? st.builtAt };
 }
 

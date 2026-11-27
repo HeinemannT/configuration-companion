@@ -27,6 +27,12 @@ interface BackgroundMark {
   /** Aborting it removes a waiting post from the queue. A post in flight is
    *  not interrupted: its answer arrives and the caller discards it. */
   supersede?: AbortSignal;
+  /** Background work the user asked for (Make a copy or Resume of
+   *  the local code copy): paced, budgeted and stopped by an overload as
+   *  background work, but the script gauge never refuses it
+   *  (load-governor rule 6). A Refresh of a built copy is user work at low
+   *  priority (lowPrioritySignal), not this. */
+  asked?: boolean;
 }
 
 const marks = new WeakMap<AbortSignal, BackgroundMark>();
@@ -35,17 +41,26 @@ const marks = new WeakMap<AbortSignal, BackgroundMark>();
  * A signal that marks every post made with it as background work.
  * `signal` cancels the work at any time, as any caller signal does.
  * `supersede` only removes posts that are still waiting in the queue.
+ * `asked`: the user asked for this work (see BackgroundMark.asked).
  */
-export function backgroundSignal(options: { signal?: AbortSignal; supersede?: AbortSignal } = {}): AbortSignal {
+export function backgroundSignal(options: { signal?: AbortSignal; supersede?: AbortSignal; asked?: boolean } = {}): AbortSignal {
   const out = options.signal ? AbortSignal.any([options.signal]) : new AbortController().signal;
-  marks.set(out, { supersede: options.supersede });
+  marks.set(out, { supersede: options.supersede, ...(options.asked ? { asked: true } : {}) });
   return out;
+}
+
+/** Is a post made with `signal` background work the user asked for? */
+export function isAskedByUser(signal: AbortSignal | undefined): boolean {
+  return !!(signal && marks.get(signal)?.asked);
 }
 
 /** For work shared by several callers (a one-time probe): keep the class of
  *  `signal` but not its cancellation, so one caller cannot cancel the others. */
 export function inheritClass(signal: AbortSignal | undefined): AbortSignal | undefined {
-  return requestClassOf(signal).requestClass === 'background' ? backgroundSignal() : undefined;
+  // A probe the user's copy started stays work the user asked for: the
+  // script gauge must not refuse it and so fail the copy.
+  const c = requestClassOf(signal);
+  return c.requestClass === 'background' ? backgroundSignal(c.asked ? { asked: true } : {}) : undefined;
 }
 
 /** A user action now waits on work that started as background (a hover
@@ -90,7 +105,7 @@ export function queueWaitOf(signal: AbortSignal | undefined): number {
   return signal ? queueWaits.get(signal) ?? 0 : 0;
 }
 
-export function requestClassOf(signal: AbortSignal | undefined): { requestClass: RequestClass; supersede?: AbortSignal } {
+export function requestClassOf(signal: AbortSignal | undefined): { requestClass: RequestClass; supersede?: AbortSignal; asked?: boolean } {
   const mark = signal ? marks.get(signal) : undefined;
-  return mark ? { requestClass: 'background', supersede: mark.supersede } : { requestClass: 'user' };
+  return mark ? { requestClass: 'background', supersede: mark.supersede, ...(mark.asked ? { asked: true } : {}) } : { requestClass: 'user' };
 }

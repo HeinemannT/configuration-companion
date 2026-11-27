@@ -598,8 +598,10 @@ export function indexText(s: IndexTextInput, now = Date.now()): string {
   const nc = s.notCovered?.length ? ` Not searched: ${s.notCovered.join('; ')}.` : '';
   switch (s.state) {
     case 'building': {
+      // Root by root only once the organisation stage runs; a read of the
+      // whole server counts objects (the roots are all done only at its end).
       const cov = coverageLine(s.roots);
-      if (cov) return `Making the copy: ${cov}.${s.stage === 'organisation' ? ' Search covers what is ready.' : ''}`;
+      if (cov && (s.stage === 'organisation' || !p?.toRead)) return `Making the copy: ${cov}.${s.stage === 'organisation' ? ' Search covers what is ready.' : ''}`;
       return p?.toRead ? `Making the copy: ${fmt(p.read)} of ${plural(p.toRead, 'object')} read.` : 'Making the copy: listing objects.';
     }
     case 'paused': {

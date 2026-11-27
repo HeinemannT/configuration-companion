@@ -188,11 +188,14 @@ export type CacheMessage =
   // Exact RID or business ID typed into the search: one read or one EC lookup.
   | { type: 'BROWSE_RESOLVE'; query: string; gen: number }
   | { type: 'BROWSE_RESOLVE_RESULT'; query: string; gen: number; ok: boolean; object?: ObjectHit; error?: string }
-  // Scroll the first of `rids` found on the page into view and ring it. The
+  // Scroll the first of `rids` shown on the page into view and ring it. The
   // content script answers with the rid it found (an ancestor when the object
-  // itself has no element), or null.
-  | { type: 'LOCATE_ON_PAGE'; rids: string[] }
-  | { type: 'LOCATE_RESULT'; rid: string; found: string | null }
+  // itself has no element), or null. `tabs`: the page tabs on the object's
+  // path, outermost first; when the object is not shown the page is switched
+  // to them first. `tab` names the tab that holds it, `switched` says the
+  // page was switched, `why` says why nothing was ringed (lib/locate-plan.ts).
+  | { type: 'LOCATE_ON_PAGE'; rids: string[]; tabs?: import('./locate-plan').LocateTab[] }
+  | { type: 'LOCATE_RESULT'; rid: string; found: string | null; tab?: string; switched?: boolean; why?: import('./locate-plan').LocateWhy }
   | { type: 'CLEAR_CACHE' }
   // Reset everything except user-facing preferences (favorites, settings).
   // Use this when the extension is in a bad state and you want a clean slate
@@ -556,7 +559,9 @@ export type CodeSearchMessage =
   // SYNC starts (or joins) a refresh; STATUS answers at once and is also
   // broadcast while the index changes.
   | { type: 'CODE_INDEX_SYNC'; force?: boolean; user?: boolean; roots?: string[] }
-  | { type: 'CODE_INDEX_REMOVE' }
+  // `environment`: a copy of the same server for another server profile
+  // (CodeIndexStatus.others); without it, this window's own copy.
+  | { type: 'CODE_INDEX_REMOVE'; environment?: string }
   | { type: 'GET_SERVER_LOAD' }
   // "Server was restarted" in the Log: that one server's script count starts again.
   | { type: 'RESET_SCRIPT_COUNT'; profileId: string }
@@ -568,7 +573,8 @@ export type CodeSearchMessage =
   /** The load governor's state changed (load-governor.ts): waiting, slow, overloaded or ok. */
   | { type: 'SERVER_LOAD'; state: import('./load-governor').LoadState; sentence: string | null; notice?: string; profileId?: string }
   | { type: 'CODE_INDEX_GET_STATUS' }
-  | { type: 'CODE_INDEX_CANCEL' }
+  // `environment`: stop that server's copy (Atlas); without it, this window's own.
+  | { type: 'CODE_INDEX_CANCEL'; environment?: string }
   | { type: 'CODE_INDEX_STATUS'; status: CodeIndexStatus }
   // Objects with code under `rid` (one read-only post), for the scope chip.
   | { type: 'CODE_SEARCH_SCOPE'; rid: string; environment?: string }
@@ -613,7 +619,9 @@ export type AtlasMessage =
   // Open Atlas in its own tab for the sender's server, or bring that tab forward; on an object or a type when given.
   | { type: 'OPEN_ATLAS'; rid?: string; name?: string; objectType?: string }
   | { type: 'ATLAS_MODEL'; force?: boolean; environment?: string }
-  | { type: 'ATLAS_MODEL_DATA'; ok: boolean; environment: string; model?: import('./atlas/model').AtlasModel; fetchedAt?: number; error?: string }
+  | { type: 'ATLAS_MODEL_DATA'; ok: boolean; environment: string; model?: import('./atlas/model').AtlasModel; fetchedAt?: number; readMs?: number; error?: string }
+  // While the model is read: the step, and how many types of it are done (sent by the worker to the open Atlas page).
+  | { type: 'ATLAS_PROGRESS'; environment: string; progress: import('./atlas/progress').AtlasReadProgress }
   // One object's own ID, name and class.
   | { type: 'ATLAS_OBJECT'; rid: string; environment: string }
   | { type: 'ATLAS_OBJECT_DATA'; ok: boolean; rid: string; object?: import('./atlas/model').AtlasObjectRef; error?: string }
@@ -863,7 +871,24 @@ export interface CodeIndexStatus {
   codeProps?: number;
   /** What the index does not cover, in words. */
   notCovered?: string[];
-  progress?: { phase: 'listing' | 'reading' | 'done'; read: number; toRead: number };
+  progress?: CodeCopyProgress;
+  /** While a sync runs and the load governor holds its posts back: why and
+   *  until when (the window counts down). `budget`: Companion keeps its load
+   *  on the server low; `slow`: the server answers slowly. */
+  wait?: { kind: 'budget' | 'slow'; until: number };
+  /** Why the last sync did not start or did not finish, as a kind the
+   *  window words itself (CodeCopyProblem). Absent after a stop by the user. */
+  problem?: CodeCopyProblem;
+  /** Companion's parsed scripts in this server's memory (load-governor
+   *  rule 6), present once background work that needs a new script is held
+   *  back. They live on the server, not on this computer; a server restart
+   *  empties them, and Companion starts the count again when it sees one
+   *  (BmpClient.checkServerRestart). A copy the
+   *  user starts is never held back by them. */
+  serverScripts?: { entries: number; bytes: number; since: number | null; restartSeen: boolean };
+  /** Copies of the same server stored for other server profiles on this
+   *  computer (CODE_INDEX_REMOVE with `environment` removes one). */
+  others?: Array<{ environment: string; profile: string; objects: number; bytes: number; syncedAt: number | null; builtAt: number | null }>;
   /** Last sync: objects read (new or changed) and removed. */
   last?: {
     changed: number; removed: number; ms: number; posts: number; at: number; first?: boolean; unchanged?: boolean;
@@ -885,6 +910,42 @@ export interface CodeIndexStatus {
   copy?: boolean;
   /** The user stopped the last refresh of a complete copy: it is unchanged. */
   stopped?: boolean;
+}
+
+/** How far a sync of the local copy is (code-copy → code-index-service). */
+export interface CodeCopyProgress {
+  phase: 'listing' | 'reading' | 'done';
+  /** Objects read (or kept from a search's read) so far, of `toRead`. */
+  read: number;
+  toRead: number;
+  /** Listing: objects listed so far, and the source being listed (1-based)
+   *  of `sources`; source by source, the source being read. */
+  listed?: number;
+  source?: number;
+  sources?: number;
+  /** The place being read, in words, when the copy is read source by source. */
+  place?: string;
+  /** Characters of code listed. */
+  chars?: number;
+  /** Requests sent so far, and when the sync started (ms). */
+  posts?: number;
+  startedAt?: number;
+}
+
+/** Why a copy did not start or did not finish (the script gauge is never
+ *  the reason: a copy is work the user asked for, request-class `asked`):
+ *  - overload: the server answered like an overloaded one; Companion sends
+ *    no background work to it until `until`.
+ *  - unavailable: the server has no bulk read.
+ *  - too-large: `sources` alone hold more code than one read can hold.
+ *  - not-listed: the server did not list `sources`.
+ *  - busy: a copy of the same server for another server profile is being made.
+ *  - failed: anything else; `detail` is the reason as it came. */
+export interface CodeCopyProblem {
+  kind: 'overload' | 'unavailable' | 'too-large' | 'not-listed' | 'busy' | 'failed';
+  until?: number;
+  sources?: string[];
+  detail?: string;
 }
 
 /** What a local copy would cost (code-copy CopyEstimate): from the listing

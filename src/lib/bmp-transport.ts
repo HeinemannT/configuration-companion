@@ -8,7 +8,7 @@ import { BmpAuth } from './bmp-auth';
 import { classifyScript, scriptLimitProblem } from './script-kinds';
 import { log } from './logger';
 import { AUTH_TIMEOUT, EC_TIMEOUT } from './constants';
-import { BACKGROUND_TIMEOUT, isLowPriority, noteQueueWait, requestClassOf, type RequestClass } from './request-class';
+import { BACKGROUND_TIMEOUT, isAskedByUser, isLowPriority, noteQueueWait, requestClassOf, type RequestClass } from './request-class';
 import { governorFor, OVERLOAD_TEXT, scriptBudgetSentence, type LoadGovernor, type LoadState, type PostCost, type ScriptKey } from './load-governor';
 
 export type CommandIntent = 'read' | 'write';
@@ -38,7 +38,7 @@ export interface BmpTransportMetrics {
   /** Java command class (or compact batch summary), never EC source text. */
   operation: string;
   /** Low-cardinality product feature, never EC source or object identity. */
-  feature?: 'editor-context' | 'color-sets';
+  feature?: 'editor-context' | 'color-sets' | 'restart-check';
   commandCount: number;
   /** Requests already active/queued when this request entered the transport. */
   queueDepth: number;
@@ -64,6 +64,9 @@ interface QueuedRequest {
   requestClass(): RequestClass;
   /** Low-priority user work (request-class lowPrioritySignal). */
   low: boolean;
+  /** Background work the user asked for (request-class `asked`): the
+   *  script gauge does not refuse it. */
+  asked: boolean;
   start(waitedMs: number): void;
   /** Refused by the load governor (background work stopped). */
   refuse(error: Error): void;
@@ -199,6 +202,18 @@ export class BmpTransport {
 
   setLoadObserver(observer: ((state: LoadState) => void) | null): void { this.loadObserver = observer; }
 
+  /** The client's restart check (BmpClient.checkServerRestart), told when
+   *  a command session answered its first post (`session`) and when the
+   *  governor refused a background post for the script count (`refused`).
+   *  Called synchronously; it must not throw or wait. */
+  private restartCheck: ((why: 'session' | 'refused') => void) | null = null;
+  /** The command session whose first answer was reported. */
+  private reportedEpoch: number | null = null;
+  setRestartCheck(fn: ((why: 'session' | 'refused') => void) | null): void { this.restartCheck = fn; }
+  private callRestartCheck(why: 'session' | 'refused'): void {
+    try { this.restartCheck?.(why); } catch { /* a check must not stop posts */ }
+  }
+
   private publishLoad(): void {
     const st = this.governor.state();
     const key = st.state === 'waiting' ? `waiting:${Math.ceil(st.waitMs / 1000)}` : st.state;
@@ -265,6 +280,9 @@ export class BmpTransport {
       noteQueueWait(signal, common.queueWaitMs);
       try {
         const { buffer, attempts } = await this.sendRequestInternal(body, timeout, intent, sessionEpoch, signal);
+        // The first answer of a command session (connect, reconnect, a new
+        // worker): the client checks once whether the server restarted.
+        if (this.reportedEpoch !== sessionEpoch && sessionEpoch === this.auth.sessionEpoch) { this.reportedEpoch = sessionEpoch; this.callRestartCheck('session'); }
         const debit = this.governor.observe(requestClassOf(signal).requestClass, cost, { ok: true, durationMs: Math.max(0, Date.now() - startedAt), responseBytes: buffer.byteLength });
         this.governor.record({ op: meta.operation ?? 'SerializedCommand', cls: requestClassOf(signal).requestClass, commands: cost.commands, fullReads: cost.fullReads, bytes: buffer.byteLength, ms: Math.max(0, Date.now() - startedAt), heldMs: heldMs(), ok: true, debit });
         this.publishLoad();
@@ -358,6 +376,7 @@ export class BmpTransport {
       const job: QueuedRequest = {
         requestClass,
         low: isLowPriority(signals[0]),
+        asked: isAskedByUser(signals[0]),
         cost,
         refuse: (error: Error) => { detach(); this.pendingRequests = Math.max(0, this.pendingRequests - 1); reject(error); },
         start: (waitedMs: number) => {
@@ -395,11 +414,14 @@ export class BmpTransport {
     if (index < 0) index = 0;
     const job = this.queue[index];
     const cls = job.requestClass();
-    const wait = this.governor.admit(cls, job.cost);
+    const wait = this.governor.admit(cls, job.cost, job.asked);
     if (wait < 0) {
       // Background work is stopped after an overload signal: refused, the
       // caller sees why; user posts go on.
       this.queue.splice(index, 1);
+      // Refused for the script count: if the server restarted since, a
+      // check (rate-limited) lets the next attempt find the count emptied.
+      if (wait === -2) this.callRestartCheck('refused');
       const b = this.governor.backgroundBlocked();
       job.refuse(new BmpTransportError(wait === -2
         ? scriptBudgetSentence(this.governor.ledger.totals())

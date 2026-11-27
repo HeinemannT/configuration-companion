@@ -12,9 +12,13 @@
  * The mark's eyes move a little, all in styles/mark.css and transforms only: a
  * blink now and then, reading left to right while work runs
  * (`data-mood="read"`), and a glance at the page when its object changes
- * (`data-look="page"`). Nothing moves under reduced motion.
+ * (`data-look="page"`). A click on the switcher plays the mark's
+ * hop (lib/mark-reactions.ts); the body moves as one group
+ * (`.mark-act`), so the mark's own SVG is allowed to draw past its 28 px box
+ * (`overflow="visible"`). Nothing moves under reduced motion.
  */
 import { markSvg, setMarkMood } from '../lib/companion-mark';
+import { reactToClick } from '../lib/mark-reactions';
 import { h, svg } from '../lib/dom';
 import { icon } from './icons';
 import type { ServerControlView } from './connection-view';
@@ -23,7 +27,11 @@ import type { ServerControlView } from './connection-view';
 const RING_C = 2 * Math.PI * 17;
 const ARC = 24;
 
-const MARK = markSvg({ x: 4, y: 4 });
+/** The mark, with its body and eyes in one group a reaction can move. */
+const MARK = markSvg({ x: 4, y: 4 })
+  .replace('<svg ', '<svg overflow="visible" ')
+  .replace('<path ', '<g class="mark-act"><path ')
+  .replace(/<\/svg>$/, '</g></svg>');
 
 /** How long the eyes stay on the page after a glance. */
 const GLANCE_MS = 900;
@@ -80,6 +88,12 @@ export function glanceAtPage(control: HTMLElement): void {
   clearTimeout(glanceTimers.get(ring));
   ring.setAttribute('data-look', 'page');
   glanceTimers.set(ring, setTimeout(() => ring.removeAttribute('data-look'), GLANCE_MS));
+}
+
+/** A click on the switcher: the mark plays its next reaction. It never
+ *  delays the menu (the caller opens it first) and changes no markup. */
+export function reactToSwitcherClick(control: HTMLElement): void {
+  try { reactToClick(control.querySelector('.srv-ring')); } catch { /* a reaction is never worth an error */ }
 }
 
 /** Another panel took over this window: a neutral ring and the reason. */

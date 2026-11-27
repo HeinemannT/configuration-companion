@@ -133,6 +133,15 @@ button.bw-grp:hover { background: var(--layer-01); }
   mask-image: linear-gradient(to right, transparent, #000 var(--space-2));
 }
 .bw-row:hover .bw-acts, .bw-row.kf .bw-acts { display: flex; }
+/* A locate that waits for the page (a tab switch): the actions stay out and
+   Locate turns into a spinner until the page answers. */
+.bw-row.locating .bw-acts { display: flex; }
+.bw-row.locating [data-act="locate"] { position: relative; }
+.bw-row.locating [data-act="locate"] .ic { visibility: hidden; }
+.bw-row.locating [data-act="locate"]::after { content: ""; position: absolute; inset: 0; margin: auto; width: 12px; height: 12px; box-sizing: border-box; border: 1.5px solid var(--border-subtle); border-top-color: var(--brand); border-radius: 50%; animation: bw-spin .8s linear infinite; }
+/* What a locate that changed nothing on the page says, right under its row. */
+.bw-locnote { display: flex; align-items: flex-start; gap: var(--space-1); margin: 0 var(--ui-inset) var(--space-1); padding: 2px var(--space-2) 2px calc(var(--space-2) + var(--d, 0) * var(--ui-indent) + 20px); font-size: 12px; line-height: 16px; color: var(--text-secondary); }
+.bw-locnote .ic { flex: none; margin-top: 1px; color: var(--text-helper); }
 /* Where they would touch, the ID gives way, but stays a target: pointing at
    it brings it back and puts the actions away, so it can still be copied. */
 .bw-row.idc:is(:hover, .kf) .bw-id { opacity: 0; }
@@ -196,5 +205,5 @@ button.bw-grp:hover { background: var(--layer-01); }
 .bw-foot .off { opacity: .45; }
 
 @media (prefers-reduced-motion: reduce) {
-  .bw-sk i, .bw-spin, .bw-row.flash { animation: none; }
+  .bw-sk i, .bw-spin, .bw-row.flash, .bw-row.locating [data-act="locate"]::after { animation: none; }
 }

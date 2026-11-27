@@ -8,7 +8,7 @@ import { setCurrentIdentities } from './lib/command-actor';
 import { unknownIdentityMap } from './lib/identity-map';
 import { nextConnectionNotification } from './lib/connection-notification';
 import { traceConnectionDiagnostic } from './lib/connection-trace';
-import { extractUrlRids, scanPageWidgets, detectBmpPage, findTabButton, isTabActive, getAllRidElements } from './lib/dom-scanner';
+import { extractUrlRids, scanPageWidgets, detectBmpPage, findTabButton, isTabActive } from './lib/dom-scanner';
 import { resolvePageContext } from './lib/page-context';
 import { log } from './lib/logger';
 import { connectPort, disconnectPort, sendToSW, onPortMessage, onReconnect } from './lib/content-port';
@@ -27,6 +27,8 @@ import { hasStandaloneEditPage, renderedEditPageHosts } from './lib/edit-page-do
 import { scheduleTooltipForElement, hideTooltip, wireObjectPopover, TOOLTIP_Z_INDEX } from './content-tooltip';
 import { placeNewBadges, watchBadgeLayout } from './content-badge-layout';
 import { endLocate, locateElement, markCurrent } from './content-current';
+import { locateInPage } from './content-locate';
+import type { LocateAnswer, LocateTab } from './lib/locate-plan';
 import { scheduleHoverPrefetch, cancelHoverPrefetch } from './content-hover-prefetch';
 import { startObserver } from './content-observer';
 import { adoptMountedFrames, mountFrameOverlay, setFrameServer, teardownFrameOverlayModule } from './content-frame-overlay';
@@ -602,8 +604,10 @@ function oneShotMessageListener(msg: InspectorMessage, _sender: chrome.runtime.M
     return false;
   }
   if (msg.type === 'LOCATE_ON_PAGE') {
-    sendResponse({ found: locateOnPage(Array.isArray(msg.rids) ? msg.rids : []) });
-    return false;
+    // May switch the page's tab and wait for the object (content-locate.ts): answered later.
+    void locateOnPage(Array.isArray(msg.rids) ? msg.rids : [], Array.isArray(msg.tabs) ? msg.tabs : [])
+      .then(sendResponse, (e: unknown) => { log.swallow('content:locate', e); sendResponse({ found: null, why: 'not-shown' }); });
+    return true;
   }
   if (msg.type === 'COPY_TO_CLIPBOARD') {
     // Insecure pages have no async clipboard API: copyWithToast falls back and reports either way.
@@ -685,27 +689,22 @@ function scrollAndHighlight(rid: string): void {
   }
 }
 
-/** Browse's "Locate on page": scroll the first of `rids` that has an element
- *  into view, dim the page around it and pulse a ring (an edge flag points
- *  to it while it is off screen; content-current.ts). It becomes the current
- *  object. The list is the object followed by its ancestors, because objects
- *  inside a widget (inputs of an input set) have no element of their own.
- *  Prefers a visible element. Returns the rid found, or null. */
-function locateOnPage(rids: readonly unknown[]): string | null {
-  const all = getAllRidElements(true);
-  for (const rid of rids) {
-    if (typeof rid !== 'string' || !/^-?\d+$/.test(rid)) continue;
-    const labelled = document.querySelector(`.crev-label[data-crev-label="${rid}"]`)?.parentElement ?? null;
-    const hits = all.filter(e => e.rid === rid).map(e => e.element);
-    if (labelled) hits.unshift(labelled);
-    const el = hits.find(e => (e as HTMLElement).offsetParent !== null) ?? hits[0];
-    if (!(el instanceof HTMLElement)) continue;
+/** Browse's "Locate on page": scroll the first of `rids` that is shown into
+ *  view, dim the page around it and pulse a ring (an edge flag points to it
+ *  while it is off screen; content-current.ts). It becomes the current
+ *  object. The list is the object followed by the ancestors that may stand
+ *  in for it (objects inside a widget, such as inputs of an input set, have
+ *  no element of their own). When none is shown and the object is on a page
+ *  tab that is not open, the tab is opened first (content-locate.ts). */
+function locateOnPage(rids: readonly unknown[], tabs: readonly unknown[]): Promise<LocateAnswer> {
+  const ok = rids.filter((r): r is string => typeof r === 'string' && /^-?\d+$/.test(r));
+  const path = tabs.filter((t): t is LocateTab => !!t && typeof (t as LocateTab).rid === 'string' && /^-?\d+$/.test((t as LocateTab).rid))
+    .map(t => ({ rid: t.rid, name: typeof t.name === 'string' ? t.name : '' }));
+  return locateInPage(ok, path, (el, rid) => {
     ensureOverlayStyle();
     const known = s.enrichments.get(rid);
     locateElement(el, { rid, name: known?.name || known?.businessId || 'Located object', type: known?.type });
-    return rid;
-  }
-  return null;
+  });
 }
 
 /** Brief self-fading ring confirming a right-click context pick landed on this

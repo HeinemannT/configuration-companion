@@ -73,17 +73,27 @@ export interface ObjectHit {
 /** What the Browse tree of `root` shows besides the object itself: the
  *  presenting template of a data object (`presented` 'none' says no template
  *  presents it), and the direct children when the type has no structure rule
- *  and there is no template to show. */
-export function browsePlan(root: ObjectRootPayload): { presented: 'none' | null; templateRid: string | null; children: boolean } {
+ *  and there is no template to show. `selected` says the object names a
+ *  template selector (`templateExpression`): BMP may then present it with
+ *  another template than `template`, and only template-link.ts's rule says
+ *  which, so the caller asks the server and passes the answer to `withTemplate`. */
+export function browsePlan(root: ObjectRootPayload): { presented: 'none' | null; templateRid: string | null; children: boolean; selected: boolean } {
   let templateRid: string | null = null;
   let presented: 'none' | null = null;
+  let selected = false;
   if (isDataObject(root.root)) {
     presented = 'none';
     const tpl = root.root.references.template?.[0];
     if (tpl && isRidShaped(tpl)) templateRid = tpl;
+    selected = !!root.root.references.templateExpression?.[0];
   }
+  return withTemplate(root, { presented, templateRid, children: false, selected }, templateRid);
+}
+
+/** The plan with the template BMP really presents the object with. */
+export function withTemplate<P extends { templateRid: string | null; children: boolean }>(root: ObjectRootPayload, plan: P, templateRid: string | null): P {
   const children = !templateRid && !root.rows && !root.structureError && !typeInfo(root.root.type).structure;
-  return { presented, templateRid, children };
+  return { ...plan, templateRid, children };
 }
 
 export function flattenTree(root: ObjectRootPayload, presented: ObjectRootPayload | null): BrowseNode[] {

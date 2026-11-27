@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { browsePlan, buildAncestorsEc, flattenTree, idLookupPlan, isLookupableId, parseAncestors } from '../browse-tree';
+import { browsePlan, withTemplate, buildAncestorsEc, flattenTree, idLookupPlan, isLookupableId, parseAncestors } from '../browse-tree';
 import { buildRefRidsEc, groupRefExprs } from '../ref-rid';
 import { buildStructureEcMany, parseStructureRows } from '../object-structure';
 import type { FullObject } from '../object-read';
@@ -17,16 +17,24 @@ describe('browsePlan', () => {
 
   it('a ModelPage with a custom reference lists its children and has no "Presented by"', () => {
     const page = { ...o('5278622719348993479', 'ModelPage', 'Risk Management'), references: { '6872637887740031545': ['5100000000000000001'] } };
-    expect(browsePlan(unlisted(page))).toEqual({ presented: null, templateRid: null, children: true });
+    expect(browsePlan(unlisted(page))).toEqual({ presented: null, templateRid: null, children: true, selected: false });
   });
 
   it('a data object shows its presenting template, not its children', () => {
     const risk = { ...o('1', 'CeRiskAssessment', 'Risk'), references: { template: [TPL] } };
-    expect(browsePlan(unlisted(risk))).toEqual({ presented: 'none', templateRid: TPL, children: false });
+    expect(browsePlan(unlisted(risk))).toEqual({ presented: 'none', templateRid: TPL, children: false, selected: false });
   });
 
   it('a data object without a template says so and lists its children', () => {
-    expect(browsePlan(unlisted(o('1', 'CeIssue', 'Issue')))).toEqual({ presented: 'none', templateRid: null, children: true });
+    expect(browsePlan(unlisted(o('1', 'CeIssue', 'Issue')))).toEqual({ presented: 'none', templateRid: null, children: true, selected: false });
+  });
+
+  it('a data object that picks its template by expression is marked, and the picked template replaces the reference', () => {
+    const task = { ...o('1', 'CeTask', 'Action'), references: { template: [TPL], templateExpression: ['5100000000000000010'] } };
+    const plan = browsePlan(unlisted(task));
+    expect(plan).toEqual({ presented: 'none', templateRid: TPL, children: false, selected: true });
+    expect(withTemplate(unlisted(task), plan, '5100000000000000011')).toMatchObject({ templateRid: '5100000000000000011', children: false, selected: true });
+    expect(withTemplate(unlisted(task), plan, null)).toMatchObject({ templateRid: null, children: true });
   });
 
   it('a type with a structure rule keeps its listing', () => {

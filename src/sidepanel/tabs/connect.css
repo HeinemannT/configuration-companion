@@ -75,6 +75,10 @@
 
 .setting-text { min-width: 0; }
 
+/* Voice language: the name and its "?" keep one line; the list takes the rest. */
+#voice-lang-row .setting-text { flex: none; white-space: nowrap; }
+#voice-lang-row .field-input { flex: 0 1 180px; width: auto; min-width: 0; }
+
 .setting-name {
   display: block;
   font-size: var(--text-sm);

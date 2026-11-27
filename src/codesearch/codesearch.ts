@@ -17,7 +17,7 @@
 import { shortcutDef, shortcutLabels, whichShortcut, withShortcut, type ShortcutId } from '../lib/shortcuts';
 import { escapeLayers } from '../lib/escape-layers';
 import { installCheatSheetKey } from '../lib/cheat-sheet';
-import type { CodeCopyEstimate, CodeIndexStatus, CodeSearchObject, InspectorMessage } from '../lib/types';
+import type { CodeIndexStatus, CodeSearchObject, InspectorMessage } from '../lib/types';
 import type { CodeSearchFrameActivation, ConnectionState } from '../lib/types';
 import { installCloseHandshake } from '../lib/frame-close-handshake';
 import { pickerSearch } from '../lib/object-search-sources';
@@ -34,7 +34,7 @@ import { ALL_ROWS, PAGE_ROWS, ResultList, runAll } from './search-results';
 import { reconcileChildren } from './keyed-dom';
 import type { RefResolution } from '../lib/code-ref-resolve';
 import {
-  addRecent, charsText, chosenLabels, coverageText, durationText, familyTree, fmt, indexFacets, indexText, kindTree, LINES_SHOWN, navRows, optionsText,
+  addRecent, chosenLabels, coverageText, familyTree, fmt, indexFacets, indexText, kindTree, LINES_SHOWN, navRows, optionsText,
   parseRecents, plural, progressText, propLabel, removeRecent, rowKey, scopeText, step, summaryText, toggleEntry, topKinds, typeLabel, visibleLines, whereTree,
   type FeedNow, type Filters, type IndexFacets, type RecentSearch, type TreeEntry, type WhereRoot,
 } from './search-model';
@@ -49,6 +49,9 @@ import { attrs, btn, el, icon, type Kid } from '../lib/dom';
 import { startKeepAlive, type KeepAlive } from '../lib/keep-alive';
 import { createReplaceTab } from './replace-tab';
 import { askHeavySearch, isBroadPlace, loadMuted, needsWarning, placeKey, ReadPlaces, saveMuted } from './heavy-search';
+import { createCopyProgress } from '../lib/copy-progress';
+import { copyRunning } from '../lib/copy-status-text';
+import { copyPanel, hasCopy, lastRefreshText, problemNotice, retryLabel, type CopyEstimateState, type CopyPending, type CopyPress } from './copy-panel';
 
 installCloseHandshake();
 
@@ -237,10 +240,16 @@ const repSlot = el('div');
 const fieldMsg = attrs(el('div', 'cs-field-err'), { id: 'cs-field-err', role: 'alert' });
 fieldMsg.hidden = true;
 const qaEl = el('div', 'cs-qa', modesSlot, fieldSlot, fieldMsg, repSlot, progSlot, scopeSlot, pickSlot);
+/** The local copy: its progress (one component, never re-inserted, so its
+ *  motion does not restart), then its notice and its block. */
+const copyProgress = createCopyProgress({ onStop: () => sendFireForget({ type: 'CODE_INDEX_CANCEL' }) });
+const copyRest = el('div', 'cs-copy-rest');
+const copySlot = el('div', 'cs-copy', copyProgress.el, copyRest);
+copySlot.hidden = true;
 const sumEl = el('div', 'cs-sum');
 const resEl = attrs(el('div', 'cs-res'), { id: 'cs-results', role: 'tree', 'aria-label': 'Results', tabindex: '-1' });
 const statusEl = el('footer', 'cs-status');
-const shell = attrs(el('section', 'cs ui', qaEl, sumEl, resEl, statusEl, live), { 'aria-label': 'Search code' });
+const shell = attrs(el('section', 'cs ui', qaEl, copySlot, sumEl, resEl, statusEl, live), { 'aria-label': 'Search code' });
 root.append(shell);
 
 let typeTimer = 0;
@@ -332,6 +341,7 @@ function onStatus(s: CodeIndexStatus): void {
   adoptEnvironment(s.environment);
   const prev = status;
   status = s;
+  noteCopyEnd(prev, s);
   if (prev && prev.environment !== s.environment) snapshot = null;
   const nowUsable = indexUsable();
   const changed = !!prev && snapshotKey(prev) !== snapshotKey(s);
@@ -349,6 +359,7 @@ function onStatus(s: CodeIndexStatus): void {
   applyDefaultWhere();
   renderStatus();
   renderQa();
+  renderCopy();
 }
 
 /** The keep-alive port (keep-alive.ts) keeps the worker running, with the
@@ -462,7 +473,7 @@ async function search(quiet = false, fresh = false): Promise<void> {
 
 /** The places this window read from the server lately (the worker keeps the code). */
 const readPlaces = new ReadPlaces();
-let heavyAsking = false;
+let heavyAsking: Promise<boolean> | null = null;
 /** The latest search asked for: an older one waiting on the note gives way. */
 let searchTurn = 0;
 
@@ -475,9 +486,10 @@ async function confirmServerRead(req: CodeSearchRequest): Promise<boolean> {
   const readLately = readPlaces.recent(key);
   const muted = broad && !readLately && await loadMuted();
   if (!needsWarning({ readsServer: true, broad, readLately, muted })) { readPlaces.note(key); return true; }
-  if (heavyAsking) return false;
-  heavyAsking = true;
-  try {
+  // The note is open for an earlier press: this search takes its answer
+  // (the earlier one gives way to it), so neither press ends in nothing.
+  if (heavyAsking) return heavyAsking;
+  const ask = (async () => {
     const { choice, dontAsk } = await askHeavySearch(
       { parent: () => (document.querySelector('.cs') ?? document.body) as HTMLElement, escape: layer => escLayers.register(layer) },
       { canCopy: status?.state !== 'unavailable' },
@@ -487,7 +499,9 @@ async function confirmServerRead(req: CodeSearchRequest): Promise<boolean> {
     if (choice !== 'search') { input.focus(); return false; }
     readPlaces.note(key);
     return true;
-  } finally { heavyAsking = false; }
+  })();
+  heavyAsking = ask;
+  try { return await ask; } finally { heavyAsking = null; }
 }
 
 /** Names resolved for this window's server, kept while the window is open
@@ -643,7 +657,7 @@ const rep = createReplaceTab({
   typeLabel,
   render: renderAll,
   openEditor: (rid, prop, line) => sendFireForget({ type: 'OPEN_EDITOR', rid, property: prop, ...(line ? { scrollToLine: line } : {}) }),
-  keepCopy: () => { setMode('text'); instantOpen = true; void loadEstimate(); renderAll(); },
+  keepCopy: () => { setMode('text'); openCopyPanel(); renderAll(); },
   announce: text => { live.textContent = text; },
   escape: layer => { escLayers.register(layer); },
 });
@@ -708,9 +722,14 @@ function renderQa(): void {
   else fieldSlot.replaceChildren(targetRow());
   if (mode === 'replace') { if (repSlot.firstChild !== rep.field) repSlot.replaceChildren(rep.field); }
   else repSlot.replaceChildren();
-  if (searching || status?.state === 'building' || status?.state === 'refreshing') {
+  // The copy has its own progress (copy-progress); this bar is the search's.
+  if (searching) {
+    // Before the first progress (a local search, the first server request)
+    // nothing is known: an honest running band, not a made-up share.
     const p = progressFraction();
-    progSlot.replaceChildren(attrs(el('div', 'cs-prog', Object.assign(el('i'), { style: `width:${Math.round(p * 100)}%` }) as HTMLElement), { role: 'progressbar', 'aria-label': 'Search progress', 'aria-valuenow': String(Math.round(p * 100)) }));
+    progSlot.replaceChildren(p == null
+      ? attrs(el('div', 'cs-prog ind', el('i')), { role: 'progressbar', 'aria-label': 'Search progress', 'aria-valuetext': 'Searching' })
+      : attrs(el('div', 'cs-prog', Object.assign(el('i'), { style: `width:${Math.round(p * 100)}%` }) as HTMLElement), { role: 'progressbar', 'aria-label': 'Search progress', 'aria-valuenow': String(Math.round(p * 100)) }));
   } else progSlot.replaceChildren();
   // The row is rebuilt: focus (an open menu's item or filter field) stays
   // on the same control.
@@ -732,12 +751,10 @@ function renderQa(): void {
   if (pickerBox) { if (pickSlot.firstChild !== pickerBox) pickSlot.replaceChildren(pickerBox); } else pickSlot.replaceChildren();
 }
 
-function progressFraction(): number {
+/** How far the running search is (null: not known yet). */
+function progressFraction(): number | null {
   const sp = run?.searching ? run.list.progress : undefined;
-  if (sp) return searchFraction(sp);
-  const p = status?.progress;
-  if ((status?.state === 'building' || status?.state === 'refreshing') && p?.toRead) return p.read / p.toRead;
-  return 0.3;
+  return sp ? searchFraction(sp) : null;
 }
 
 /** Each mode keeps its last results: switching to "Used in code" to pick
@@ -1214,7 +1231,6 @@ function renderResults(): void {
   }
   if (!run) { resEl.replaceChildren(...startScreen()); return; }
   if (groupsOf !== run) { groupsOf = run; groupNodes = new WeakMap(); }
-  if (instantOpen) kids.push(instantPanel());
   // The pattern could not be searched: what is shown is the previous search.
   if (patternError) kids.push(attrs(el('div', 'cs-note cs-prev', icon('i-info'), el('span', '', 'These results are from the previous search: ', el('b', '', run.label.replace(/^Search: /, '')), '.')), { role: 'status' }));
   if (run.error) {
@@ -1228,7 +1244,7 @@ function renderResults(): void {
     // Too much code on this server to search this way: the local copy is the way.
     const needsCopy = run.error === NEEDS_INDEX_TEXT;
     kids.push(el('div', 'cs-actions', needsCopy
-      ? btn('ui-btn primary', undefined, () => { instantOpen = true; void loadEstimate(); renderResults(); }, 'Keep a copy on this computer')
+      ? btn('ui-btn primary', undefined, () => { openCopyPanel(); }, 'Keep a copy on this computer')
       : btn('ui-btn primary', undefined, () => { void refreshConnection().then(() => { if (!connection) void search(false, true); }); }, stopped ? 'Search again' : 'Retry'),
       ...(stopped || needsCopy ? [] : [detailsBtn])));
     if (run.hits.length) kids.push(el('div', 'cs-sub-h', stopped ? 'Found so far' : 'Found before it stopped'));
@@ -1466,54 +1482,102 @@ function contextBlock(h: CodeSearchHit, prop: string, line: number, ranges: Read
 
 // ── start screen ──────────────────────────────────────────────────
 
-/** "Keep a copy on this computer": the index panel, opened by the user. */
+/** "Keep a copy on this computer": the copy's block, opened by the user. */
 let instantOpen = false;
-let estimate: { value?: CodeCopyEstimate; error?: string } | null = null;
+/** What a copy would cost: not asked (undefined), being listed (null), answered. */
+let estimate: CopyEstimateState = undefined;
+/** The press the window waits on, and the press the worker did not answer. */
+let copyPending: CopyPending = null;
+let copyNoAnswer: CopyPress | null = null;
+/** The problem the user hid (until another one comes). */
+let hiddenProblem = '';
+/** A short note after a refresh or a build ended (what it did). */
+let copyNote: { text: string; until: number } | null = null;
+let copyTimer = 0;
 
 async function loadEstimate(): Promise<void> {
   if (estimate && !estimate.error) return;
   estimate = null;
-  renderResults();
+  renderCopy();
   try {
     const r = await sendRequestBounded<Msg<'CODE_INDEX_ESTIMATE_RESULT'>>({ type: 'CODE_INDEX_ESTIMATE' }, { timeoutMs: 120_000 });
     estimate = r?.type === 'CODE_INDEX_ESTIMATE_RESULT' && r.ok && r.estimate ? { value: r.estimate } : { error: r?.type === 'CODE_INDEX_ESTIMATE_RESULT' ? r.error ?? 'No answer' : 'No answer' };
   } catch (e) { estimate = { error: e instanceof Error ? e.message : String(e) }; }
+  renderCopy();
+}
+
+/** Open the copy's block; without a copy, say what one costs (the user asked). */
+function openCopyPanel(): void {
+  instantOpen = true;
+  if (!hasCopy(status) && status?.state !== 'unavailable') void loadEstimate();
+  renderCopy();
   renderResults();
 }
 
-function instantPanel(): HTMLElement {
-  const box = el('div', 'cs-instant');
-  box.append(el('h3', '', 'Keep a copy on this computer'),
-    el('p', '', 'A copy saves this server\'s Extended Code on this computer. Searches then start at once, also after the browser restarts. Without it, the code is read from the server at the first search and kept only while this window is open; a server with very much code is narrowed on the server first.'),
-    el('p', '', 'The copy is made with the same read as a search, paced so the server keeps working. It does not change by itself: Refresh in the footer asks the server what changed and reads only that.'));
-  if (!estimate) { box.append(el('p', 'cs-muted', 'Listing the code on the server, as a search does…')); return box; }
-  if (estimate.error) box.append(el('p', 'cs-muted', `The cost could not be estimated: ${estimate.error}`));
-  const e = estimate.value;
-  if (e) {
-    const failed = e.failedSources?.length ? ` Not listed: ${e.failedSources.join(', ')}.` : '';
-    const how = e.perSource ? ' Too much code to read in one go: it is read source by source.' : '';
-    box.append(el('div', 'cs-instant-row', el('span', 'grow', `${plural(e.objects, 'object')} with code (${charsText(e.chars)} characters) · about ${plural(e.posts, 'request')}, ${durationText(e.seconds)}.${how}${failed}`),
-      btn('ui-btn primary', 'Make a copy of this server\'s code on this computer', () => { instantOpen = false; void syncIndex(status?.state === 'ready', true); }, status?.state === 'ready' ? 'Make again' : 'Make copy')));
-  }
-  if (status && status.state !== 'none') {
-    box.append(el('div', 'cs-instant-row', el('span', 'grow cs-muted', 'Remove the copy on this computer. Searches then read the code from the server again.'),
-      btn('ui-btn', 'Delete the copy of this server\'s code on this computer', () => { instantOpen = false; void removeIndex(); }, 'Remove copy')));
-  }
-  return box;
+/** A refresh or a build that ended: say what it did for a moment, so a
+ *  refresh with nothing to read does not look as if nothing happened. */
+function noteCopyEnd(prev: CodeIndexStatus | null, s: CodeIndexStatus): void {
+  // A sync that ended since the last status (a quick refresh may end before
+  // the window ever saw it run): its result is new.
+  if (!prev || prev.environment !== s.environment || copyRunning(s)) return;
+  if (s.state !== 'ready' || !s.last || s.stopped || s.problem || s.last.at === prev.last?.at) return;
+  const text = s.last.first ? `The copy is ready: ${plural(s.objects, 'object')} with code.` : `Refreshed. ${lastRefreshText(s.last)}`;
+  copyNote = { text, until: Date.now() + 8_000 };
 }
 
-async function removeIndex(): Promise<void> {
+const problemKey = (s: CodeIndexStatus | null) => s?.problem ? `${s.problem.kind}|${s.problem.until ?? ''}|${s.problem.detail ?? ''}` : '';
+
+const copyActions = {
+  sync: (force: boolean) => { void syncIndex(force, true); },
+  remove: (environment?: string) => { void removeIndex(environment); },
+  estimate: () => { void loadEstimate(); },
+  close: () => { instantOpen = false; renderCopy(); renderResults(); },
+  dismiss: () => { hiddenProblem = problemKey(status); copyNoAnswer = null; renderCopy(); },
+};
+
+/** The copy's progress, its notice and its block (copySlot). */
+function renderCopy(): void {
+  const now = Date.now();
+  // While it runs the progress shows; a stopped one only in the open block.
+  copyProgress.update(status && (copyRunning(status) || instantOpen) && !connection ? status : null);
+  const kids: Node[] = [];
+  if (!connection) {
+    if (copyNote && copyNote.until > now && !copyRunning(status)) kids.push(attrs(el('div', 'cs-note cs-cp-done', icon('i-info'), el('span', '', copyNote.text)), { role: 'status' }));
+    const key = problemKey(status);
+    if (key !== hiddenProblem || copyNoAnswer) {
+      const notice = problemNotice(status, copyActions, { pending: copyPending, noAnswer: copyNoAnswer, now });
+      if (notice) kids.push(notice);
+    }
+    if (instantOpen && mode !== 'replace') kids.push(copyPanel(status, copyActions, { estimate, pending: copyPending, now }));
+  }
+  // A status comes several times a second while a copy runs: an expander
+  // the user opened stays open.
+  const open = new Set([...copyRest.querySelectorAll<HTMLElement>('details[open][data-k]')].map(d => d.dataset.k));
+  copyRest.replaceChildren(...kids);
+  for (const d of copyRest.querySelectorAll<HTMLDetailsElement>('details[data-k]')) if (open.has(d.dataset.k)) d.open = true;
+  copySlot.hidden = copyProgress.el.hidden && !kids.length;
+  // Draw again when a note ends or a cool-down passes.
+  window.clearTimeout(copyTimer);
+  const due = [copyNote?.until, status?.problem?.until].filter((t): t is number => t != null && t > now);
+  if (due.length) copyTimer = window.setTimeout(() => renderCopy(), Math.min(...due) - now + 50);
+}
+
+async function removeIndex(environment?: string): Promise<void> {
+  copyPending = 'remove';
+  copyNoAnswer = null;
+  renderCopy();
+  const press: CopyPress = { kind: 'remove', ...(environment ? { environment } : {}) };
   try {
-    const r = await sendRequestBounded<Msg<'CODE_INDEX_STATUS'>>({ type: 'CODE_INDEX_REMOVE' }, { timeoutMs: 20_000 });
-    snapshot = null;
-    if (r?.type === 'CODE_INDEX_STATUS') onStatus(r.status);
-  } catch { /* the status broadcast follows */ }
+    const r = await sendRequestBounded<Msg<'CODE_INDEX_STATUS'>>({ type: 'CODE_INDEX_REMOVE', ...(environment ? { environment } : {}) }, { timeoutMs: 20_000 });
+    if (!environment) snapshot = null;
+    if (r?.type === 'CODE_INDEX_STATUS') onStatus(r.status); else copyNoAnswer = press;
+  } catch { copyNoAnswer = press; }
+  copyPending = null;
   renderAll();
 }
 
 function startScreen(): Node[] {
   const out: Node[] = [];
-  if (instantOpen) out.push(instantPanel());
   if (mode === 'refs' && !target) {
     out.push(emptyState({
       title: 'Used in code', titleTag: 'h3', className: 'cs-empty',
@@ -1591,20 +1655,31 @@ function renderStatus(): void {
   if (status && mode === 'replace' && (status.state === 'ready' || status.state === 'refreshing') && status.syncedAt) {
     facts.push(el('span', 'idx', `Copy of ${new Date(status.syncedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`));
   } else if (status && !(run && status.state === 'none')) facts.push(el('span', 'idx', indexText(status)));
-  if (mode !== 'replace' && status && (status.state === 'none' || (status.state === 'ready' && !status.roots?.some(r => r.key === ORG))) && !connection) {
-    const tip = status.state === 'none'
-      ? `${indexText(status)} Keep a copy on this computer: what it gives and what it costs.`
-      : 'Save a copy of this server\'s code on this computer: what it gives and what it costs';
-    facts.push(btn('cs-link', tip, () => { instantOpen = !instantOpen; if (instantOpen) void loadEstimate(); renderResults(); }, status.state === 'none' ? 'Keep a copy on this computer' : 'Copy options'));
+  if (mode !== 'replace' && status && status.state !== 'unavailable' && !connection) {
+    // The copy's block: what it gives and costs, or what the copy holds.
+    const none = status.state === 'none';
+    const tip = none ? `${indexText(status)} Keep a copy on this computer: what it gives and what it costs.` : 'The copy on this computer: where it is kept, what it holds, when it was made';
+    const toggle = btn('cs-link', tip, () => { if (instantOpen) copyActions.close(); else openCopyPanel(); }, none ? 'Keep a copy on this computer' : 'Copy details');
+    toggle.setAttribute('aria-expanded', String(instantOpen));
+    facts.push(toggle);
   }
   if (status && status.state !== 'unavailable' && status.state !== 'none' && !connection) {
     const st = status.state;
+    const waiting = copyPending === 'sync';
+    const go = (label: string, tip: string, force: boolean) => {
+      const b = btn('cs-link', tip, () => { void syncIndex(force, true); }, label);
+      b.disabled = waiting;
+      return b;
+    };
+    const label = retryLabel(status);
     facts.push(st === 'building' ? btn('cs-link', 'Stop copying (it can be resumed)', () => sendFireForget({ type: 'CODE_INDEX_CANCEL' }), 'Stop')
-      : st === 'refreshing' ? btn('cs-link', status.copy ? 'Stop the refresh; the copy stays as it is' : 'Stop copying (it can be resumed)', () => sendFireForget({ type: 'CODE_INDEX_CANCEL' }), 'Stop')
-      : st === 'paused' ? btn('cs-link', 'Continue making the copy', () => { void syncIndex(false, true); }, 'Resume')
-      : btn('cs-link', status.copy ? 'Ask the server what changed since this copy and read only that' : 'List every object again and read what changed (paced; asks the server again which properties hold code)', () => { void syncIndex(true, true); }, 'Refresh'));
-    // A copy can be removed from the footer: complete, stopped or failed.
-    if (mode !== 'replace' && (st === 'paused' || st === 'failed' || (st === 'ready' && status.copy))) facts.push(btn('cs-link', 'Delete the copy of this server\'s code on this computer', () => { void removeIndex(); }, 'Remove copy'));
+      : st === 'refreshing' ? btn('cs-link', status.copy ? 'Stop the refresh. The copy stays usable.' : 'Stop copying (it can be resumed)', () => sendFireForget({ type: 'CODE_INDEX_CANCEL' }), 'Stop')
+      : st === 'paused' ? go('Resume', 'Continue making the copy', false)
+      : label === 'Refresh' ? go('Refresh', status.copy ? 'Ask the server what changed since this copy and read only that' : 'List every object again and read what changed (paced; asks the server again which properties hold code)', true)
+      : go(label, 'Make the copy again', false));
+    // A copy can be removed from the footer: complete (also one of the
+    // older builder), stopped or failed with something stored.
+    if (mode !== 'replace' && !copyRunning(status) && hasCopy(status)) facts.push(btn('cs-link', 'Delete the copy of this server\'s code on this computer', () => { void removeIndex(); }, 'Remove copy'));
   }
   const line = el('div', 'facts', ...facts);
   line.title = facts.map(f => (f instanceof HTMLElement && !(f instanceof HTMLButtonElement) ? f.textContent : '')).filter(Boolean).join(' ');
@@ -1617,6 +1692,7 @@ function renderStatus(): void {
 }
 
 function renderAll(): void {
+  renderCopy();
   // Plain state on the shell (tests and assistive styling read it).
   shell.dataset.state = !run ? 'idle' : run.searching ? 'searching' : run.error ? (isQuietEnd(run.error) ? 'stopped' : 'error') : 'done';
   if (run?.outcome) { shell.dataset.objects = String(run.outcome.matchedObjects); shell.dataset.ms = String(Math.round(performance.now() - run.started)); }
@@ -1695,10 +1771,14 @@ async function refreshConnection(retry = false): Promise<void> {
 /** The user's Make copy, Refresh or Resume: the worker builds or
  *  refreshes the copy (nothing else starts one). */
 async function syncIndex(force = false, user = force, roots?: string[]): Promise<void> {
+  // The press shows at once (Asking…); the answer is the status of the copy
+  // (a sync under way, or why none started). No answer is said too.
+  if (user) { copyPending = 'sync'; copyNoAnswer = null; hiddenProblem = ''; renderCopy(); renderStatus(); }
   try {
     const res = await sendRequestBounded<Msg<'CODE_INDEX_STATUS'>>({ type: 'CODE_INDEX_SYNC', ...(force ? { force: true } : {}), ...(user ? { user: true } : {}), ...(roots?.length ? { roots } : {}) }, { timeoutMs: 10_000 });
-    if (res?.type === 'CODE_INDEX_STATUS') onStatus(res.status);
-  } catch { /* the status broadcast follows */ }
+    if (res?.type === 'CODE_INDEX_STATUS') onStatus(res.status); else if (user) copyNoAnswer = { kind: 'sync', force };
+  } catch { if (user) copyNoAnswer = { kind: 'sync', force }; }
+  if (user) { copyPending = null; renderCopy(); renderStatus(); }
 }
 
 /** The index's state (opening, reconnecting): read locally by the worker,

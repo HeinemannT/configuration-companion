@@ -11,8 +11,9 @@
  * feed, no check by age. The one change made without the server is the
  * user's own save through this extension (applySavedCode).
  *
- * Build: background work (load-governor's background budget, a 10 s limit
- * per post, refused during an overload cool-down), paced like the older
+ * Build: background work the user asked for (load-governor's background
+ * budget, a 10 s limit per post, refused during an overload cool-down, never
+ * refused by the script gauge: request-class `asked`), paced like the older
  * builder (index-budget Pacer: a pause after each post as long as the post
  * took, at least 500 ms). The change summary first (one post, before the
  * listing, so a change made during the read shows at the next refresh),
@@ -91,6 +92,17 @@ export interface CopyOptions {
   onProgress?: (p: SyncProgress) => void;
 }
 
+/** A copy that cannot be completed: a source that alone holds more code
+ *  than one read can hold (`too-large`), or sources the server did not list
+ *  (`not-listed`). `sources` names them; the window says so in its own
+ *  words and offers what helps. */
+export class CopyIncompleteError extends Error {
+  constructor(message: string, readonly reason: 'too-large' | 'not-listed', readonly sources: readonly string[]) {
+    super(message);
+    this.name = 'CopyIncompleteError';
+  }
+}
+
 /** Objects written per store transaction. */
 const WRITE_BATCH = 500;
 
@@ -152,7 +164,9 @@ export async function syncCopy(client: IndexClient, o: CopyOptions): Promise<Syn
   // An index of the older builder is replaced by a copy.
   const copyPrev = prev?.copy ? prev : null;
   const built = !!copyPrev?.builtAt;
-  const signal = built ? lowPrioritySignal(o.signal) : backgroundSignal({ signal: o.signal });
+  // Only the user starts a copy (code-index-service): a build is background
+  // work they asked for, so the script gauge never refuses it.
+  const signal = built ? lowPrioritySignal(o.signal) : backgroundSignal({ signal: o.signal, asked: true });
   const pacer = o.pacer ?? new Pacer(built ? { minPauseMs: 0, maxPauseMs: 0, firstReadObjects: BUDGET.readObjects } : { firstReadObjects: BUDGET.readObjects });
   const today = new Date(now()).toISOString().slice(0, 10);
   const stages: StageCost[] = [];
@@ -174,7 +188,7 @@ export async function syncCopy(client: IndexClient, o: CopyOptions): Promise<Syn
     signal.throwIfAborted();
     const meta: CodeIndexMeta = { ...copyPrev!, syncedAt: now(), summary: summary!, summaryDay: day };
     await o.store.putMeta(meta);
-    o.onProgress?.({ phase: 'done', read: 0, toRead: 0, objects: meta.objects });
+    o.onProgress?.({ phase: 'done', read: 0, toRead: 0, objects: meta.objects, posts: pacer.log.length });
     stages.push({ stage: 'check', posts: pacer.log.length, ms: now() - t0, read: 0 });
     return result(meta, { unchanged: true });
   }
@@ -199,9 +213,16 @@ export async function syncCopy(client: IndexClient, o: CopyOptions): Promise<Syn
   if (!built) { signal.throwIfAborted(); await o.store.putMeta(meta); }
 
   let last: CodeSearchProgress | null = null;
+  /** Source by source: the place being read and its number. */
+  let part: { place?: string; source: number; sources: number } | null = null;
   const progress = (p: CodeSearchProgress) => {
     last = p;
-    o.onProgress?.({ phase: p.phase === 'scan' ? 'listing' : 'reading', read: Math.min(p.total ?? p.candidates, p.searched ?? p.read), toRead: p.total ?? p.candidates, objects: meta.objects });
+    o.onProgress?.({
+      phase: p.phase === 'scan' ? 'listing' : 'reading', read: Math.min(p.total ?? p.candidates, p.searched ?? p.read), toRead: p.total ?? p.candidates, objects: meta.objects,
+      ...(p.listed != null ? { listed: p.listed } : {}), ...(p.chars != null ? { chars: p.chars } : {}),
+      ...(part ? { source: part.source, sources: part.sources, ...(part.place ? { place: part.place } : {}) } : p.sources ? { source: p.source ?? 1, sources: p.sources } : {}),
+      posts: pacer.log.length,
+    });
   };
   const keepProgress = async () => {
     const p = last as CodeSearchProgress | null;
@@ -237,7 +258,7 @@ export async function syncCopy(client: IndexClient, o: CopyOptions): Promise<Syn
       failedSources.push(...read.failedSources);
       signal.throwIfAborted();
       // A refresh with a source that could not be listed keeps the copy as it is.
-      if (built && failedSources.length) throw new Error(`The code of ${failedSources.join(', ')} could not be listed. The copy is unchanged; Refresh tries again.`);
+      if (built && failedSources.length) throw new CopyIncompleteError(`The code of ${failedSources.join(', ')} could not be listed. The copy is unchanged; Refresh tries again.`, 'not-listed', failedSources);
       // A source that could not be listed keeps what the copy had of it; an
       // object that could not be read keeps its stored code.
       const skip = new Set(unread);
@@ -251,12 +272,13 @@ export async function syncCopy(client: IndexClient, o: CopyOptions): Promise<Syn
       // Too much code to read in one go: source by source.
       meta.copy = { ...meta.copy, perSource: true, sourcesDone: built ? [] : [...(meta.copy?.sourcesDone ?? [])] };
       if (!built) await o.store.putMeta(meta);
-      for (const s of place.sources) {
+      for (const [i, s] of place.sources.entries()) {
         if (meta.copy.sourcesDone!.includes(sourceKey(s))) continue;
+        part = { source: i + 1, sources: place.sources.length, ...(s.label ? { place: s.label } : {}) };
         const one = copySource(client, o, [s], pacer, built);
         let r;
         try { r = await one.readAll(signal, progress); } catch (e) { await keepProgress(); throw e; }
-        if (!r.readAll) throw new Error(`${s.label ?? s.from} alone holds ${(r.chars / 1e6).toFixed(1)} M characters of code, more than one read can hold (${Math.round(READ_ALL_CHARS / 1e6)} M with what is counted per object): the copy cannot be completed.`);
+        if (!r.readAll) throw new CopyIncompleteError(`${s.label ?? s.from} alone holds ${(r.chars / 1e6).toFixed(1)} M characters of code, more than one read can hold (${Math.round(READ_ALL_CHARS / 1e6)} M with what is counted per object): the copy cannot be completed.`, 'too-large', [s.label ?? s.from]);
         readCount += r.read;
         unread.push(...r.unread);
         failedSources.push(...r.failedSources);
@@ -298,9 +320,9 @@ export async function syncCopy(client: IndexClient, o: CopyOptions): Promise<Syn
     // Not complete: never searched as a complete copy.
     if (!built) { meta.objects = stored.size; signal.throwIfAborted(); await o.store.putMeta(meta); }
     else await keepRefreshed();
-    throw new Error(built
+    throw new CopyIncompleteError(built
       ? `The code of ${failedSources.join(', ')} could not be listed; the copy keeps what it had of it. Refresh tries again.`
-      : `The code of ${failedSources.join(', ')} could not be listed, so the copy is not complete. Resume tries again.`);
+      : `The code of ${failedSources.join(', ')} could not be listed, so the copy is not complete. Resume tries again.`, 'not-listed', failedSources);
   }
   if (meta.copy?.perSource) meta.copy = { ...meta.copy, sourcesDone: [] };
   meta.syncedAt = at;
@@ -308,7 +330,7 @@ export async function syncCopy(client: IndexClient, o: CopyOptions): Promise<Syn
   meta.lastFullAt = at;
   signal.throwIfAborted();
   await o.store.putMeta(meta);
-  o.onProgress?.({ phase: 'done', read: readCount, toRead: readCount, objects: meta.objects });
+  o.onProgress?.({ phase: 'done', read: readCount, toRead: readCount, objects: meta.objects, posts: pacer.log.length });
   return result(meta, { changed, removed, failed: unread.length });
 }
 

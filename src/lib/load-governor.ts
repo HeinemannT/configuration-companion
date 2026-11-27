@@ -50,13 +50,20 @@
  *     Companion's window of that cache per server, across worker restarts.
  *     Background posts that carry a NEW text are refused while Companion
  *     holds SCRIPT_COST.backgroundEntries entries or backgroundBytes of
- *     estimated memory (repeats still go); user posts are never held back;
+ *     estimated memory (repeats still go); user posts are never held back,
+ *     and neither is background work the user asked for (request-class
+ *     `asked`: the build of the local code copy, Make a copy and Resume),
+ *     which keeps its pacing, its background budget and the overload stop
+ *     (a Refresh of a built copy is user work at low priority);
  *     past noticeEntries / noticeBytes the side panel says so. With the
  *     server option `noCache` on, nothing is kept and no budget applies.
  *     GET_SERVER_LOAD reports it; the Log states the background limit once
  *     per server when it starts and when it ends (kept across worker
  *     restarts). A change-feed pack id going back (a server restart) empties
  *     the window, so the count is an estimate since the last restart seen.
+ *     The pack id is read at the start of every command session and, at
+ *     most once per GOVERNOR.restartCheckMs, when the count holds
+ *     background work back (BmpClient.checkServerRestart).
  *
  * Pure logic with an injectable clock; the transport calls `admit`,
  * `charge` and `observe`.
@@ -101,6 +108,9 @@ export const GOVERNOR = {
    *  costs one per command, as before. */
   measured: { slowMsPerCommand: 200, historyMs: 30_000 },
   cooldownMs: 30 * 60_000,
+  /** At most one restart check (BmpClient.checkServerRestart) per server
+   *  in this time when the script count holds background work back. */
+  restartCheckMs: 5 * 60_000,
 } as const;
 
 /** Commands a post debits when it starts: every command counts one, except
@@ -262,7 +272,7 @@ export class LoadGovernor {
   private slowUntil = 0;
   private overloadUntil = 0;
   private overloadDetail = '';
-  private waiting: { waitMs: number } | null = null;
+  private waiting: { waitMs: number; at: number } | null = null;
   private readonly listeners = new Set<() => void>();
   /** Called when waiting posts must be looked at again (an overload). */
   subscribe(fn: () => void): () => void { this.listeners.add(fn); return () => this.listeners.delete(fn); }
@@ -324,7 +334,26 @@ export class LoadGovernor {
    *  scripts any more (script-ledger.ts). No request of its own. */
   async noteServerCounter(packId: string): Promise<void> {
     this.lastPackId = packId;
-    if (await this.ledger.noteServerCounter(packId)) this.notices(true);
+    if (await this.ledger.noteServerCounter(packId)) { this.notices(true); this.restartSeen(); }
+  }
+  private readonly restartListeners = new Set<() => void>();
+  /** Called when the count starts again (a restart seen, or the user's
+   *  "Server was restarted"): statuses that carry the count are stale. */
+  onRestart(fn: () => void): () => void { this.restartListeners.add(fn); return () => this.restartListeners.delete(fn); }
+  private restartSeen(): void {
+    for (const fn of this.restartListeners) { try { fn(); } catch { /* a listener must not stop the others */ } }
+  }
+  /** When the change feed was last read for this server, or a restart
+   *  check was last claimed (this worker life). */
+  private restartCheckAt = Number.NEGATIVE_INFINITY;
+  /** May a restart check go now? At most one per GOVERNOR.restartCheckMs
+   *  per server (a clock set back allows one); true claims it. `force`:
+   *  claim it regardless (a feed read, a new session). */
+  claimRestartCheck(force = false): boolean {
+    const t = this.now();
+    if (!force && t >= this.restartCheckAt && t - this.restartCheckAt < GOVERNOR.restartCheckMs) return false;
+    this.restartCheckAt = t;
+    return true;
   }
   /** The last change-feed pack id this worker saw for the server. */
   private lastPackId: string | null = null;
@@ -335,6 +364,7 @@ export class LoadGovernor {
   async resetScriptCount(): Promise<void> {
     await this.ledger.resetByUser(this.lastPackId);
     this.notices(true);
+    this.restartSeen();
   }
 
   private hourScriptChars(t: number): number {
@@ -429,11 +459,12 @@ export class LoadGovernor {
 
   /** How long a post of `cost` must wait before it may start (0: now). A
    *  background post during an overload cool-down is refused (-1); one that
-   *  carries new script text once today's script budget is used, too (-2). */
-  admit(cls: LoadClass, cost: PostCost): number {
+   *  carries new script text once the script budget is used, too (-2),
+   *  unless the user asked for it (`asked`, request-class). */
+  admit(cls: LoadClass, cost: PostCost, asked = false): number {
     const t = this.now();
     if (cls === 'background' && t < this.overloadUntil) return -1;
-    if (cls === 'background' && this.scriptBudgetUsed() && this.newScriptChars(cost.scripts) > 0) return -2;
+    if (cls === 'background' && !asked && this.scriptBudgetUsed() && this.newScriptChars(cost.scripts) > 0) return -2;
     // Bytes are charged after the answer: a budget in debt delays the next post.
     const debit = this.startDebit(cls, cost);
     const parts = [this.shared.commands.waitFor(debit, t), this.shared.fullReads.waitFor(cost.fullReads, t), this.shared.bytes.waitFor(1, t)];
@@ -442,7 +473,7 @@ export class LoadGovernor {
       if (t < this.slowUntil) parts.push(this.slowUntil - t);
     }
     const wait = Math.max(0, ...parts);
-    this.waiting = wait ? { waitMs: wait } : null;
+    this.waiting = wait ? { waitMs: wait, at: t } : null;
     return wait;
   }
 
@@ -534,7 +565,9 @@ export class LoadGovernor {
   state(): LoadState {
     const t = this.now();
     if (t < this.overloadUntil) return { state: 'overloaded', until: this.overloadUntil, detail: this.overloadDetail };
-    if (this.waiting) return { state: 'waiting', waitMs: this.waiting.waitMs, reason: 'budget' };
+    // What is left of the wait (the post may still be held when this is read).
+    const left = this.waiting ? this.waiting.at + this.waiting.waitMs - t : 0;
+    if (left > 0) return { state: 'waiting', waitMs: left, reason: 'budget' };
     if (t < this.slowUntil) return { state: 'slow', until: this.slowUntil };
     return { state: 'ok' };
   }
